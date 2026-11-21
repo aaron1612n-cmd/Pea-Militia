@@ -22,5 +22,4 @@ touch orbit and pinch; console errors; and turntable plus close-up renders saved
 
 ## Deploy
 
-Pushes to `main` run `.github/workflows/deploy.yml`, which needs the repo secrets
-`CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`.
+Deploys run from Claude sessions with `npm run deploy` (no GitHub Actions deploy). PRs run the check suite in CI.
