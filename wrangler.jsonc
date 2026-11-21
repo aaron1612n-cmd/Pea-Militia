@@ -1,0 +1,10 @@
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  // Site is built by `npm run build`, which embeds dist/ into worker/assets.gen.js.
+  "name": "pea-militia",
+  "main": "worker/index.js",
+  "compatibility_date": "2026-11-01",
+  "account_id": "62a9a890d6685457576c106533d98e3c",
+  "workers_dev": true,
+  "preview_urls": false
+}
