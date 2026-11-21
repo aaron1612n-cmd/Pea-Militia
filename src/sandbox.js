@@ -189,7 +189,22 @@ export class Sandbox {
       this.ts.add(d);
       this.tcam = new THREE.PerspectiveCamera(30, 1, 0.05, 100);
     }
-    for (const it of todo) {
+    // one thumbnail per frame so opening the panel never stalls input
+    const gen = (this.thumbGen = (this.thumbGen || 0) + 1);
+    this.render();
+    const next = () => {
+      if (gen !== this.thumbGen) return;
+      const it = todo.shift();
+      if (!it) return;
+      if (!this.thumbs.has(this.thumbKey(it))) this.thumbOne(it);
+      this.render();
+      if (todo.length) setTimeout(next, 30);
+    };
+    setTimeout(next, 30);
+  }
+
+  thumbOne(it) {
+    {
       let obj, size;
       if (it.kind === 'unit' || it.kind === 'squad') {
         const kinds = it.kind === 'squad' ? KINDS.gunner : KINDS[it.id];
@@ -219,6 +234,5 @@ export class Sandbox {
       this.thumbs.set(this.thumbKey(it), this.tc.toDataURL('image/png'));
       this.ts.remove(obj);
     }
-    this.render();
   }
 }

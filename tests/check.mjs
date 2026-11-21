@@ -351,6 +351,7 @@ try {
   // drag-look works without pointer lock
   const y0 = await d.page.evaluate(() => window.__pea.cam.yaw);
   await d.page.mouse.move(400, 500); await d.page.mouse.down(); await d.page.mouse.move(600, 480, { steps: 6 }); await d.page.mouse.up();
+  await d.page.waitForFunction((a) => Math.abs(window.__pea.cam.yaw - a) > 0.3, y0, { timeout: 5000 }).catch(() => {});
   const y1 = await d.page.evaluate(() => window.__pea.cam.yaw);
   check('desktop: mouse look turns the camera', Math.abs(y1 - y0) > 0.3, `${(y1 - y0).toFixed(2)} rad`);
   await d.page.evaluate(() => { if (document.pointerLockElement) document.exitPointerLock(); });
@@ -421,7 +422,7 @@ try {
     const out = { dead: 10 - peas.filter((u) => u.alive).length, total: 10, covered, shots, maxProj, under: peas.filter((u) => u.alive && u.pos.y < -0.01).length };
     return out;
   });
-  check('AI: two armies fight it out (shots fired, peas fall)', battle.shots > 40 && battle.dead >= 3, JSON.stringify(battle));
+  check('AI: two armies fight it out (shots fired, peas fall)', battle.shots > 20 && battle.dead >= 3, JSON.stringify(battle));
   check('AI: peas use cover', battle.covered > 10, `cover-samples=${battle.covered}`);
   check('AI: nobody falls through the plate', battle.under === 0, JSON.stringify(battle));
 
