@@ -1,40 +1,36 @@
-/* Allotment palette: oat sky, sandstone plate, pea green subject, one tomato accent. */
+/* Plain: concrete greys, system type, no accent colour. */
 :root {
-  --oat: #e9e1cd;
-  --ink: #26281d;
-  --ink-soft: rgba(38, 40, 29, 0.62);
-  --tomato: #d9472b;
-  --chip: rgba(250, 246, 236, 0.82);
+  --bg: #d3d4d1;
+  --ink: #1e1f1d;
+  --ink-soft: rgba(30, 31, 29, 0.72);
+  --line: rgba(30, 31, 29, 0.25);
   --gutter: max(16px, env(safe-area-inset-left));
 }
 * { box-sizing: border-box; }
-html, body { margin: 0; height: 100%; overflow: hidden; background: var(--oat); color: var(--ink); }
-body { font-family: 'IBM Plex Mono', ui-monospace, monospace; -webkit-tap-highlight-color: transparent; }
+html, body { margin: 0; height: 100%; overflow: hidden; background: var(--bg); color: var(--ink); }
+body { font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif; -webkit-tap-highlight-color: transparent; }
 #scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; outline: none; }
 
 .mark {
   position: fixed;
-  top: max(14px, env(safe-area-inset-top));
+  top: max(16px, env(safe-area-inset-top));
   left: var(--gutter);
-  font: 800 22px/1 'Bricolage Grotesque', system-ui, sans-serif;
-  letter-spacing: -0.02em;
+  margin: 0;
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   pointer-events: none;
   user-select: none;
 }
-.mark span { color: var(--tomato); }
 
 .hint {
   position: fixed;
-  left: 50%;
-  bottom: max(18px, env(safe-area-inset-bottom));
-  transform: translateX(-50%);
+  left: var(--gutter);
+  bottom: max(16px, env(safe-area-inset-bottom));
   margin: 0;
-  padding: 7px 11px;
-  font-size: 11px;
-  letter-spacing: 0.04em;
+  font-size: 12px;
   color: var(--ink-soft);
-  background: var(--chip);
-  border-radius: 6px;
   pointer-events: none;
   white-space: nowrap;
   transition: opacity 0.6s ease;
@@ -47,28 +43,23 @@ body { font-family: 'IBM Plex Mono', ui-monospace, monospace; -webkit-tap-highli
 .btn {
   position: fixed;
   right: max(16px, env(safe-area-inset-right));
-  bottom: max(14px, env(safe-area-inset-bottom));
+  bottom: max(16px, env(safe-area-inset-bottom));
   width: 44px;
   height: 44px;
   display: grid;
   place-items: center;
   padding: 0;
-  border: 1.5px solid rgba(38, 40, 29, 0.18);
-  border-radius: 10px;
-  background: var(--chip);
+  border: 1px solid var(--line);
+  border-radius: 2px;
+  background: transparent;
   color: var(--ink);
   cursor: pointer;
   touch-action: manipulation;
 }
-.btn svg { width: 22px; height: 22px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linecap: round; }
-.btn:hover { color: var(--tomato); }
-.btn:focus-visible { outline: 2px solid var(--tomato); outline-offset: 2px; }
-.btn:active { transform: translateY(1px); }
+.btn svg { width: 20px; height: 20px; fill: none; stroke: currentColor; stroke-width: 1.5; }
+.btn:hover { background: rgba(30, 31, 29, 0.06); }
+.btn:focus-visible { outline: 2px solid var(--ink); outline-offset: 2px; }
 
-@media (max-width: 480px) {
-  .mark { font-size: 19px; }
-  .hint { bottom: max(24px, env(safe-area-inset-bottom)); }
-}
 @media (prefers-reduced-motion: reduce) {
   .hint { transition: none; }
 }

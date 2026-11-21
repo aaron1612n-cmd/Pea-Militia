@@ -1,25 +1,28 @@
 import * as THREE from 'three';
 import { ellipsoid, taperedTube, paint, ensureOutward, mergeByPosition } from './geo.js';
 
-// Proportions (metres-ish). Body centre height; ground top is y = 0.
+// Proportions (metres-ish), modelled at full size then scaled by PEA_SCALE.
+// Body centre height; ground top is y = 0.
+export const PEA_SCALE = 0.78;
 export const BODY_R = 0.5;
 export const BODY_Y = 0.62;
 const BODY_SY = 1.03;
 
+// Muted field colours: a real pea's dull green, worn olive kit, no bright accents.
 const COL = {
-  peaTop: new THREE.Color('#a4d65e'),
-  peaMid: new THREE.Color('#82b844'),
-  peaLow: new THREE.Color('#4f8a2a'),
-  helmet: '#56603d',
-  helmetDark: '#3f472c',
-  brass: '#d9a441',
-  boot: '#3a2a1f',
-  sole: '#1e1611',
-  glove: '#efe6cf',
-  sclera: '#fbfaf4',
-  pupil: '#1f2418',
-  mouth: '#3b1a14',
-  blush: '#e98a6a',
+  peaTop: new THREE.Color('#7f9a4c'),
+  peaMid: new THREE.Color('#677f3a'),
+  peaLow: new THREE.Color('#44562a'),
+  helmet: '#4a4f3a',
+  helmetDark: '#33372a',
+  badge: '#5c5546',
+  boot: '#2b2520',
+  sole: '#151311',
+  glove: '#3d3a2f',
+  eye: '#121410',
+  brow: '#3e4f25',
+  mouth: '#2a3319',
+  strap: '#38392c',
 };
 
 const mat = (color, opts = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.6, ...opts });
@@ -109,6 +112,7 @@ function helmetGeometry() {
 export function createPea() {
   const root = new THREE.Group();
   root.name = 'pea';
+  root.scale.setScalar(PEA_SCALE);
 
   // Upper body pivots at the hips so breathing never lifts the feet.
   const upper = new THREE.Group();
@@ -130,89 +134,89 @@ export function createPea() {
     const t = (v.y / (BODY_R * BODY_SY) + 1) / 2;
     if (t > 0.5) c.copy(COL.peaMid).lerp(COL.peaTop, (t - 0.5) * 2);
     else c.copy(COL.peaLow).lerp(COL.peaMid, t * 2);
+    // low-frequency mottling so the skin reads as a real, slightly bruised pea
+    const n = Math.sin(v.x * 23.1 + v.y * 7.3) * Math.sin(v.z * 19.7 - v.y * 11.9) + 0.5 * Math.sin(v.x * 41 + v.z * 37 + v.y * 29);
+    c.multiplyScalar(1 + 0.05 * n);
   });
-  const bodyMat = new THREE.MeshPhysicalMaterial({ vertexColors: true, roughness: 0.42, clearcoat: 0.35, clearcoatRoughness: 0.4, sheen: 0.3, sheenColor: new THREE.Color('#d8f0a0') });
-  const limbMat = new THREE.MeshPhysicalMaterial({ color: COL.peaMid.clone().lerp(COL.peaLow, 0.25), roughness: 0.45, clearcoat: 0.3, clearcoatRoughness: 0.4 });
+  const bodyMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.68 });
+  const limbMat = new THREE.MeshStandardMaterial({ color: COL.peaMid.clone().lerp(COL.peaLow, 0.35), roughness: 0.7 });
   const bodyMesh = part('body', bodyGeo, bodyMat);
   body.add(bodyMesh);
 
-  // ---- face ----
+  // ---- face: small, hooded eyes under a flat brow ridge; a set, straight mouth ----
+  // Face parts ride on the body mesh so they breathe with it and never float off.
   const face = new THREE.Group();
   face.name = 'face';
-  body.add(face);
+  bodyMesh.add(face);
   const eyes = [];
+  const surf = (x, y, lift) => onBody(new THREE.Vector3(x, y, Math.sqrt(Math.max(0, 1 - x * x - y * y))), lift);
   for (const s of [-1, 1]) {
-    const dir = new THREE.Vector3(0.2 * s, 0.16, 0.96).normalize();
+    const tag = s < 0 ? 'L' : 'R';
+    const dir = new THREE.Vector3(0.17 * s, 0.13, 0.977).normalize();
     const eye = new THREE.Group();
-    eye.name = s < 0 ? 'eyeL' : 'eyeR';
-    eye.position.copy(onBody(dir, -0.035));
+    eye.name = `eye${tag}Rig`;
+    eye.position.copy(onBody(dir, -0.018));
     eye.lookAt(eye.position.clone().add(dir));
-    const sclera = part(`sclera${s < 0 ? 'L' : 'R'}`, ellipsoid(0.1, 0.125, 0.075, 40, 28), mat(COL.sclera, { roughness: 0.25 }));
-    eye.add(sclera);
-    const pupil = part(`pupil${s < 0 ? 'L' : 'R'}`, ellipsoid(0.05, 0.064, 0.03, 32, 20), mat(COL.pupil, { roughness: 0.15 }));
-    pupil.position.set(-0.012 * s, -0.008, 0.056);
-    eye.add(pupil);
-    const glint = part(`glint${s < 0 ? 'L' : 'R'}`, ellipsoid(0.016, 0.018, 0.008, 16, 12), new THREE.MeshBasicMaterial({ color: '#ffffff' }));
-    glint.position.set(0.016, 0.022, 0.026);
-    pupil.add(glint);
+    // almond-shaped eye, mostly sunk into the skin
+    const eyeMesh = part(`eye${tag}`, ellipsoid(0.05, 0.022, 0.03, 36, 20, (v) => { v.y *= 1 - 0.35 * v.x * v.x; }), mat(COL.eye, { roughness: 0.55 }));
+    eye.add(eyeMesh);
     face.add(eye);
     eyes.push(eye);
 
-    // determined brow: tube hugging the surface above the eye
+    // brow ridge: a level, even bar that shows nothing
     const browPts = [];
-    for (let i = 0; i <= 6; i++) {
-      const u = i / 6;
-      const x = (0.09 + 0.2 * u) * s;
-      const y = 0.33 - 0.06 * (1 - u) + 0.03 * Math.sin(u * Math.PI);
-      const d = new THREE.Vector3(x, y, Math.sqrt(Math.max(0, 1 - x * x - y * y)));
-      browPts.push(onBody(d, 0.006));
+    for (let i = 0; i <= 8; i++) {
+      const u = i / 8;
+      browPts.push(surf((0.075 + 0.17 * u) * s, 0.215, 0.002));
     }
-    const brow = part(`brow${s < 0 ? 'L' : 'R'}`, taperedTube(new THREE.CatmullRomCurve3(browPts), (t) => 0.02 * (0.7 + 0.5 * Math.sin(t * Math.PI)), 24, 10).geometry, mat('#2f4a1b', { roughness: 0.8 }));
+    const brow = part(`brow${tag}`, taperedTube(new THREE.CatmullRomCurve3(browPts), (t) => 0.017 * (0.85 + 0.15 * Math.sin(t * Math.PI)), 28, 12).geometry, mat(COL.brow, { roughness: 0.85 }));
     face.add(brow);
-
-    // cheek blush, a flattened lens half-sunk into the skin
-    const cdir = new THREE.Vector3(0.42 * s, -0.16, 0.89).normalize();
-    const cheek = part(`cheek${s < 0 ? 'L' : 'R'}`, ellipsoid(0.062, 0.04, 0.02, 28, 16), mat(COL.blush, { roughness: 0.7 }));
-    cheek.position.copy(onBody(cdir, -0.008));
-    cheek.lookAt(cheek.position.clone().add(cdir));
-    face.add(cheek);
   }
-  // smirk
+  // mouth: a short, straight line
   const mouthPts = [];
   for (let i = 0; i <= 8; i++) {
     const u = i / 8 - 0.5;
-    const x = u * 0.26;
-    const y = -0.13 - 0.05 * Math.cos(u * Math.PI) + 0.03 * u;
-    mouthPts.push(onBody(new THREE.Vector3(x, y, Math.sqrt(1 - x * x - y * y)), 0.0));
+    mouthPts.push(surf(u * 0.13, -0.17, 0.0));
   }
-  const mouth = part('mouth', taperedTube(new THREE.CatmullRomCurve3(mouthPts), (t) => 0.016 * (0.6 + 0.6 * Math.sin(t * Math.PI)), 28, 10).geometry, mat(COL.mouth, { roughness: 0.5 }));
+  const mouth = part('mouth', taperedTube(new THREE.CatmullRomCurve3(mouthPts), (t) => 0.007 * (0.75 + 0.3 * Math.sin(t * Math.PI)), 28, 10).geometry, mat(COL.mouth, { roughness: 0.7 }));
   face.add(mouth);
 
-  // ---- helmet ----
+  // chin strap: one webbing strap from under the brim on each side, round under the chin
+  const strapDirs = [];
+  const A = new THREE.Vector3(-1, 0.39, 0.06).normalize(), M = new THREE.Vector3(0, -0.66, 0.75).normalize(), B = new THREE.Vector3(1, 0.39, 0.06).normalize();
+  const slerp = (a, b, t) => { const w = Math.acos(THREE.MathUtils.clamp(a.dot(b), -1, 1)); return a.clone().multiplyScalar(Math.sin((1 - t) * w)).addScaledVector(b, Math.sin(t * w)).divideScalar(Math.sin(w)); };
+  for (let i = 0; i <= 16; i++) { const u = i / 16; strapDirs.push(u < 0.5 ? slerp(A, M, u * 2) : slerp(M, B, u * 2 - 1)); }
+  const strapCurve = new THREE.CatmullRomCurve3(strapDirs.map((d) => onBody(d, 0.004)));
+  const strapGeo = taperedTube(strapCurve, () => 0.012, 64, 10).geometry;
+  // flatten the round tube into a webbing band hugging the skin
+  const sp = strapGeo.attributes.position, q = new THREE.Vector3();
+  for (let i = 0; i < sp.count; i++) {
+    q.fromBufferAttribute(sp, i);
+    const r = q.length();
+    const near = onBody(q, 0).length();
+    q.setLength(near + (r - near) * 0.45);
+    sp.setXYZ(i, q.x, q.y, q.z);
+  }
+  strapGeo.computeVertexNormals();
+  face.add(part('strap', strapGeo, mat(COL.strap, { roughness: 0.9 })));
+
+  // ---- helmet: set square and low over the brow ----
   const helmet = new THREE.Group();
   helmet.name = 'helmetRig';
-  helmet.rotation.x = -0.14;
-  helmet.rotation.z = 0.06;
+  helmet.rotation.x = -0.03;
   body.add(helmet);
-  const helmetMesh = part('helmet', helmetGeometry(), mat('#ffffff', { vertexColors: true, roughness: 0.85, metalness: 0.05 }));
+  const helmetMesh = part('helmet', helmetGeometry(), mat('#ffffff', { vertexColors: true, roughness: 0.9, metalness: 0.02 }));
   helmet.add(helmetMesh);
-  const bdir = new THREE.Vector3(0, 0.62, 0.78).normalize();
-  const badge = part('badge', ellipsoid(0.065, 0.065, 0.022, 32, 16), mat(COL.brass, { roughness: 0.35, metalness: 0.6 }));
-  badge.position.copy(bdir.clone().multiplyScalar(0.54));
+  // small stamped plate, the same dull metal as the kit
+  const bdir = new THREE.Vector3(0, 0.55, 0.835).normalize();
+  const badge = part('badge', ellipsoid(0.042, 0.05, 0.016, 28, 14, (v) => { v.y *= 1 - 0.3 * Math.max(0, -v.y); }), mat(COL.badge, { roughness: 0.7, metalness: 0.3 }));
+  badge.position.copy(bdir.clone().multiplyScalar(0.548));
   badge.lookAt(badge.position.clone().add(bdir));
   helmet.add(badge);
-  // little sprout poking out the top: the pea's stem
-  const sproutPts = [new THREE.Vector3(0, 0.5, 0), new THREE.Vector3(0.01, 0.6, -0.01), new THREE.Vector3(0.05, 0.66, -0.03), new THREE.Vector3(0.1, 0.68, -0.03)];
-  const sprout = part('sprout', taperedTube(new THREE.CatmullRomCurve3(sproutPts), (t) => THREE.MathUtils.lerp(0.024, 0.012, t), 20, 10).geometry, mat('#6a9c34', { roughness: 0.6 }));
-  helmet.add(sprout);
-  const leaf = part('leaf', ellipsoid(0.06, 0.012, 0.032, 24, 12, (v) => { v.y += 0.6 * v.x * v.x; }), mat('#7fb446', { roughness: 0.55 }));
-  leaf.position.set(0.14, 0.685, -0.03);
-  leaf.rotation.z = 0.35;
-  helmet.add(leaf);
 
   // ---- arms (skinned) with mitten hands ----
   const arms = [];
-  const gloveMat = mat(COL.glove, { roughness: 0.75 });
+  const gloveMat = mat(COL.glove, { roughness: 0.85 });
   for (const s of [-1, 1]) {
     const pts = [
       new THREE.Vector3(0.38 * s, 0.02, 0.0),
@@ -240,7 +244,7 @@ export function createPea() {
 
   // ---- legs (skinned) with boots ----
   const legs = [];
-  const bootMat = mat('#ffffff', { vertexColors: true, roughness: 0.7 });
+  const bootMat = mat('#ffffff', { vertexColors: true, roughness: 0.8 });
   for (const s of [-1, 1]) {
     const pts = [
       new THREE.Vector3(0.17 * s, 0.34, 0.0),
@@ -289,7 +293,7 @@ export function createPea() {
     // blink: quick squash on a ~3.6s loop
     const bt = (t % 3.6) - (state.blinkAt % 3.6);
     const blink = bt > 0 && bt < 0.16 ? Math.sin((bt / 0.16) * Math.PI) : 0;
-    eyes.forEach((e) => e.scale.set(1, 1 - 0.88 * blink, 1));
+    eyes.forEach((e) => e.scale.set(1, 1 - 0.85 * blink, 1));
     root.updateMatrixWorld(true);
   }
   setPhase(0);
@@ -305,4 +309,4 @@ export function collectParts(root) {
 }
 
 // Collision volume for the pea: vertical capsule around body + limbs.
-export const PEA_COLLIDER = { a: new THREE.Vector3(0, 0.3, 0), b: new THREE.Vector3(0, 1.05, 0), r: 0.78 };
+export const PEA_COLLIDER = { a: new THREE.Vector3(0, 0.3, 0).multiplyScalar(PEA_SCALE), b: new THREE.Vector3(0, 1.05, 0).multiplyScalar(PEA_SCALE), r: 0.78 * PEA_SCALE };

@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import './style.css';
-import { createPea, PEA_COLLIDER, BODY_Y } from './pea.js';
+import { createPea, PEA_COLLIDER, BODY_Y, PEA_SCALE } from './pea.js';
 import { createBaseplate, createSky, PLATE_COLLIDER } from './world.js';
 import { OrbitCam } from './controls.js';
 
@@ -16,10 +16,10 @@ renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 1.05;
+renderer.toneMappingExposure = 1.0;
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog('#e9e1cd', 30, 90);
+scene.fog = new THREE.Fog('#c9cbc8', 26, 80);
 scene.add(createSky());
 
 const plate = createBaseplate();
@@ -28,8 +28,9 @@ scene.add(plate);
 const pea = createPea();
 scene.add(pea);
 
-scene.add(new THREE.HemisphereLight('#f4efe2', '#8a7a5c', 1.4));
-const sun = new THREE.DirectionalLight('#fff3dc', 2.6);
+// Flat overcast light: neutral sky fill, one cool key, no warm glow.
+scene.add(new THREE.HemisphereLight('#e4e7e8', '#6d6e68', 1.3));
+const sun = new THREE.DirectionalLight('#f2f3f0', 2.3);
 sun.position.set(4, 7, 5);
 sun.castShadow = true;
 sun.shadow.mapSize.set(2048, 2048);
@@ -37,14 +38,14 @@ Object.assign(sun.shadow.camera, { left: -3, right: 3, top: 3, bottom: -3, near:
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.02;
 scene.add(sun);
-const rim = new THREE.DirectionalLight('#cfe3ff', 0.8);
+const rim = new THREE.DirectionalLight('#d8dde0', 0.5);
 rim.position.set(-5, 3, -6);
 scene.add(rim);
 
 const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 500);
 const controls = new OrbitCam(camera, canvas, {
   colliders: { capsules: [PEA_COLLIDER], groundY: PLATE_COLLIDER.max.y },
-  focus: { center: new THREE.Vector3(0, BODY_Y - 0.06, 0), radius: 0.8 },
+  focus: { center: new THREE.Vector3(0, (BODY_Y - 0.06) * PEA_SCALE, 0), radius: 0.8 * PEA_SCALE },
 });
 
 function resize() {

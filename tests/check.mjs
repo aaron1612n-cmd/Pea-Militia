@@ -114,9 +114,9 @@ const geometryChecks = () => {
   const clipPairs = [
     ['mittL', 'body'], ['mittR', 'body'], ['thumbL', 'body'], ['thumbR', 'body'],
     ['bootL', 'bootR'], ['legL', 'legR'], ['mittL', 'legL'], ['mittR', 'legR'],
-    ['helmet', 'scleraL'], ['helmet', 'scleraR'], ['helmet', 'browL'], ['helmet', 'browR'],
-    ['cheekL', 'scleraL'], ['cheekR', 'scleraR'], ['mouth', 'scleraL'], ['mouth', 'scleraR'],
-    ['badge', 'sprout'], ['leaf', 'helmet'],
+    ['helmet', 'eyeL'], ['helmet', 'eyeR'], ['helmet', 'browL'], ['helmet', 'browR'],
+    ['browL', 'eyeL'], ['browR', 'eyeR'], ['mouth', 'eyeL'], ['mouth', 'eyeR'], ['strap', 'mouth'],
+    ['strap', 'armL'], ['strap', 'armR'], ['strap', 'mittL'], ['strap', 'mittR'],
   ];
   out.phases = [];
   for (const t of phases) {
@@ -300,7 +300,11 @@ try {
 
   // turntable + close-ups
   const shots = [];
+  // shot distances/targets are authored for a full-size pea; scale them with the model
+  const S = await d.page.evaluate(() => window.__pea.pea.scale.x);
   const shoot = async (name, yaw, pitch, dist, target) => {
+    dist *= S;
+    if (target) target = target.map((x) => x * S);
     await d.page.evaluate(([yaw, pitch, dist, target]) => {
       const c = window.__pea.controls;
       const t = target ? new window.__pea.THREE.Vector3(...target) : c.focus.center.clone();
