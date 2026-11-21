@@ -293,27 +293,35 @@ export function createPea() {
   const gloveMat = mat(COL.glove, { roughness: 0.85 });
   for (const s of [-1, 1]) {
     const pts = [
-      // fists on hips: elbow flared out and slightly back, wrist tucked onto the hip
-      new THREE.Vector3(0.42 * s, 0.03, -0.02),
-      new THREE.Vector3(0.58 * s, -0.04, -0.06),
-      new THREE.Vector3(0.62 * s, -0.11, -0.06),
-      new THREE.Vector3(0.535 * s, -0.21, 0.02),
+      // relaxed stand: shoulder slopes off the round body, upper arm hangs close
+      // along the side, soft elbow bend lets the forearm drift a little forward
+      new THREE.Vector3(0.45 * s, 0.13, -0.005),
+      new THREE.Vector3(0.548 * s, -0.005, -0.012),
+      new THREE.Vector3(0.556 * s, -0.12, -0.008),
+      new THREE.Vector3(0.515 * s, -0.245, 0.05),
     ];
     const limb = skinnedLimb(`arm${s < 0 ? 'L' : 'R'}`, pts, 0.046, 0.036, limbMat);
     body.add(limb.mesh);
     const hand = new THREE.Group();
     hand.name = `hand${s < 0 ? 'L' : 'R'}Rig`;
-    hand.position.set(0.004 * s, -0.045, 0.006);
+    // hand hangs in line with the forearm, tipped a touch forward, palm toward the thigh
+    hand.position.set(-0.004 * s, -0.04, 0.012);
+    hand.rotation.set(-0.22, 0.12 * s, 0.06 * s);
     limb.bones[2].add(hand);
-    const mitt = part(`mitt${s < 0 ? 'L' : 'R'}`, ellipsoid(0.07, 0.08, 0.058, 32, 24, (v) => { v.z *= 1 - 0.25 * Math.max(0, -v.y); }), gloveMat);
+    // loosely curled hand: flat across the palm, fingers rolling in toward the body
+    const mitt = part(`mitt${s < 0 ? 'L' : 'R'}`, ellipsoid(0.05, 0.078, 0.062, 32, 24, (v) => {
+      const d = Math.max(0, -v.y);
+      v.x -= s * 0.45 * d * d; // fingertips curl toward the palm side
+      v.z *= 1 - 0.18 * d;
+    }), gloveMat);
     hand.add(mitt);
-    const thumb = part(`thumb${s < 0 ? 'L' : 'R'}`, ellipsoid(0.026, 0.042, 0.026, 20, 14), gloveMat);
-    // thumb wraps forward over the fist so it stays clear of the hip
-    thumb.position.set(0.012 * s, 0.006, 0.05);
-    thumb.rotation.set(0.5, 0, -0.25 * s);
+    const thumb = part(`thumb${s < 0 ? 'L' : 'R'}`, ellipsoid(0.022, 0.04, 0.024, 20, 14), gloveMat);
+    // thumb rests along the front of the curled fingers
+    thumb.position.set(-0.01 * s, -0.012, 0.05);
+    thumb.rotation.set(0.25, 0, 0.12 * s);
     hand.add(thumb);
-    const cuff = part(`cuff${s < 0 ? 'L' : 'R'}`, ellipsoid(0.058, 0.026, 0.052, 28, 12), gloveMat);
-    cuff.position.set(0, 0.06, 0);
+    const cuff = part(`cuff${s < 0 ? 'L' : 'R'}`, ellipsoid(0.054, 0.026, 0.056, 28, 12), gloveMat);
+    cuff.position.set(0, 0.058, 0);
     hand.add(cuff);
     arms.push(limb);
   }
@@ -361,11 +369,11 @@ export function createPea() {
     bodyMesh.scale.set(1 + 0.008 * breathe, 1 + 0.012 * breathe, 1 + 0.008 * breathe);
     arms.forEach((a, i) => {
       const s = i === 0 ? -1 : 1;
-      const sway = motion ? Math.sin((t / 3.2) * Math.PI * 2 + 0.6) : 0;
-      // elbows breathe outward a touch; fists stay planted on the hips
-      a.bones[0].rotation.z = rest.arm[i][0].z + s * 0.025 * sway;
-      a.bones[1].rotation.z = rest.arm[i][1].z - s * 0.03 * sway;
-      a.bones[1].rotation.x = -0.02 * sway;
+      const sway = motion ? Math.sin((t / 3.2) * Math.PI * 2 + 0.5) : 0;
+      // arms ride the breath: a faint swing that lags the chest, elbows stay soft
+      a.bones[0].rotation.x = rest.arm[i][0].x - 0.018 * sway;
+      a.bones[0].rotation.z = rest.arm[i][0].z + s * 0.008 * sway;
+      a.bones[1].rotation.x = rest.arm[i][1].x - 0.012 * sway;
     });
     // blink: quick squash on a ~3.6s loop
     const bt = (t % 3.6) - (state.blinkAt % 3.6);
