@@ -117,6 +117,7 @@ const geometryChecks = () => {
     ['helmet', 'eyeL'], ['helmet', 'eyeR'], ['helmet', 'browL'], ['helmet', 'browR'],
     ['browL', 'eyeL'], ['browR', 'eyeR'], ['mouth', 'eyeL'], ['mouth', 'eyeR'], ['strap', 'mouth'],
     ['strap', 'armL'], ['strap', 'armR'], ['strap', 'mittL'], ['strap', 'mittR'],
+    ['buckle', 'mouth'], ['buckle', 'armR'], ['buckle', 'mittR'],
   ];
   out.phases = [];
   for (const t of phases) {
@@ -179,7 +180,7 @@ const geometryChecks = () => {
       n.normalize();
       const d = n.dot(A);
       const key = `${Math.round(n.x * 50)},${Math.round(n.y * 50)},${Math.round(n.z * 50)},${Math.round(d * 1000)}`;
-      tris.push({ m: m.name, key, n, d, box: new THREE.Box3().setFromPoints([A.clone(), B.clone(), C.clone()]) });
+      tris.push({ m: m.name, key, n, d, c: A.clone().add(B).add(C).divideScalar(3), box: new THREE.Box3().setFromPoints([A.clone(), B.clone(), C.clone()]) });
     }
   }
   const buckets = new Map();
@@ -190,7 +191,9 @@ const geometryChecks = () => {
     if (names.size < 2) continue;
     for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
       const a = list[i], b = list[j];
-      if (a.m === b.m || a.n.dot(b.n) < 0.9995 || Math.abs(a.d - b.d) > 2e-4) continue;
+      // distance measured at the triangles themselves, not at the origin: two nearly parallel
+      // planes can share d at the origin while sitting millimetres apart where the faces are
+      if (a.m === b.m || a.n.dot(b.n) < 0.9995 || Math.abs(b.n.dot(a.c) - b.d) > 2e-4 || Math.abs(a.n.dot(b.c) - a.d) > 2e-4) continue;
       const ia = a.box.clone().intersect(b.box);
       const s = ia.getSize(new THREE.Vector3());
       if (!ia.isEmpty() && [s.x, s.y, s.z].filter((x) => x > 1e-4).length >= 2) zf.add([a.m, b.m].sort().join('/'));
@@ -323,9 +326,12 @@ try {
   await shoot('closeup-boots', 0.5, 0.15, 1.1, [0, 0.12, 0.05]);
   await shoot('closeup-helmet', 2.4, 0.5, 1.2, [0, 1.05, 0]);
   await shoot('closeup-hand', 1.3, 0.1, 1.1, [0.66, 0.3, 0.1]);
+  await shoot('closeup-strap-front', 0, -0.02, 1.6, [0, 0.68, 0]);
+  await shoot('closeup-strap-side', 1.2, 0.02, 1.6, [0, 0.68, 0]);
+  await shoot('closeup-strap-low', 0.6, -0.3, 1.6, [0, 0.62, 0]);
   await d.page.evaluate(() => { window.__pea.pause(2.48); window.__pea.render(); });
   await shoot('closeup-blink', 0, 0.08, 1.2, [0, 0.66, 0]);
-  check('turntable + close-up renders saved', shots.length === 15, `${OUT}/`);
+  check('turntable + close-up renders saved', shots.length === 18, `${OUT}/`);
 
   // desktop button: mouse click (no pointer lock in this build; verify the hit target is the button)
   await d.page.evaluate(() => { window.__pea.resume(); const c = window.__pea.controls; c.goal.yaw = 3; c.goal.dist = 9; });

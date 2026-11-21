@@ -22,7 +22,7 @@ const COL = {
   eye: '#121410',
   brow: '#3e4f25',
   mouth: '#2a3319',
-  strap: '#38392c',
+  strap: '#3d3e2f',
 };
 
 const mat = (color, opts = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.6, ...opts });
@@ -109,6 +109,76 @@ function helmetGeometry() {
   return m;
 }
 
+// The sculpted body surface for a unit direction u (matches the body geometry's shape fn).
+function bodySurface(u, out = new THREE.Vector3()) {
+  const seam = 0.012 * Math.exp(-((u.x * 6) ** 2)) * THREE.MathUtils.smoothstep(-u.z, 0, 0.4);
+  const belly = u.z > 0 && u.y < 0 ? 0.03 * u.z * -u.y : 0;
+  const k = 1 - seam + belly;
+  return out.set(u.x * k * BODY_R, u.y * k * BODY_R * BODY_SY, u.z * k * BODY_R);
+}
+function bodyNormal(p) {
+  return new THREE.Vector3(p.x / BODY_R ** 2, p.y / (BODY_R * BODY_SY) ** 2, p.z / BODY_R ** 2).normalize();
+}
+
+// Circle on the unit sphere through a, m, b; returns t in [0,1] -> unit direction, a -> m -> b.
+function arcOnSphere(a, m, b) {
+  [a, m, b] = [a, m, b].map((v) => v.clone().normalize());
+  const n = b.clone().sub(a).cross(m.clone().sub(a)).normalize();
+  const c = n.clone().multiplyScalar(n.dot(a));
+  const rho = Math.sqrt(1 - c.lengthSq());
+  const e1 = a.clone().sub(c).normalize();
+  let e2 = n.clone().cross(e1);
+  const ang = (v) => { const d = v.clone().sub(c); return (Math.atan2(d.dot(e2), d.dot(e1)) + Math.PI * 2) % (Math.PI * 2); };
+  if (ang(m) > ang(b)) e2.negate();
+  const end = ang(b);
+  return (t) => c.clone().addScaledVector(e1, rho * Math.cos(t * end)).addScaledVector(e2, rho * Math.sin(t * end)).normalize();
+}
+
+// Closed band lying on the body: rounded-rectangle section (half-width hw, from h0 below the
+// skin to h1 above it), every vertex projected onto the body surface, ends fanned shut.
+function surfaceRibbon(path, t0, t1, { hw, h0, h1, r }, segs) {
+  const prof = [];
+  const arc = (cx, cy, a0) => { for (let k = 0; k <= 3; k++) { const a = a0 + (k / 3) * (Math.PI / 2); prof.push([cx + r * Math.cos(a), cy + r * Math.sin(a)]); } };
+  arc(hw - r, h1 - r, 0); prof.push([0, h1]);
+  arc(-(hw - r), h1 - r, Math.PI / 2);
+  arc(-(hw - r), h0 + r, Math.PI); prof.push([0, h0]);
+  arc(hw - r, h0 + r, Math.PI * 1.5);
+  const P = prof.length;
+  const pos = [], idx = [];
+  const p = new THREE.Vector3(), q = new THREE.Vector3(), tmp = new THREE.Vector3();
+  for (let i = 0; i <= segs; i++) {
+    const t = THREE.MathUtils.lerp(t0, t1, i / segs);
+    bodySurface(path(t), p);
+    const T = bodySurface(path(Math.min(1, t + 1e-3)), new THREE.Vector3()).sub(bodySurface(path(Math.max(0, t - 1e-3)), tmp)).normalize();
+    const across = T.clone().cross(bodyNormal(p)).normalize();
+    for (const [x, h] of prof) {
+      bodySurface(q.copy(p).addScaledVector(across, x).normalize(), q);
+      q.addScaledVector(bodyNormal(q), h);
+      pos.push(q.x, q.y, q.z);
+    }
+  }
+  for (let i = 0; i < segs; i++) for (let j = 0; j < P; j++) {
+    const a = i * P + j, b = i * P + ((j + 1) % P), c = a + P, d = b + P;
+    idx.push(a, b, c, b, d, c);
+  }
+  for (const end of [0, segs]) {
+    const ctr = pos.length / 3;
+    const cx = [0, 0, 0];
+    for (let j = 0; j < P; j++) for (let k = 0; k < 3; k++) cx[k] += pos[(end * P + j) * 3 + k] / P;
+    pos.push(...cx);
+    for (let j = 0; j < P; j++) {
+      const a = end * P + j, b = end * P + ((j + 1) % P);
+      if (end === 0) idx.push(b, a, ctr); else idx.push(a, b, ctr);
+    }
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setIndex(idx);
+  ensureOutward(g);
+  g.computeVertexNormals();
+  return g;
+}
+
 export function createPea() {
   const root = new THREE.Group();
   root.name = 'pea';
@@ -181,24 +251,28 @@ export function createPea() {
   const mouth = part('mouth', taperedTube(new THREE.CatmullRomCurve3(mouthPts), (t) => 0.007 * (0.75 + 0.3 * Math.sin(t * Math.PI)), 28, 10).geometry, mat(COL.mouth, { roughness: 0.7 }));
   face.add(mouth);
 
-  // chin strap: one webbing strap from under the brim on each side, round under the chin
-  const strapDirs = [];
-  const A = new THREE.Vector3(-1, 0.39, 0.06).normalize(), M = new THREE.Vector3(0, -0.66, 0.75).normalize(), B = new THREE.Vector3(1, 0.39, 0.06).normalize();
-  const slerp = (a, b, t) => { const w = Math.acos(THREE.MathUtils.clamp(a.dot(b), -1, 1)); return a.clone().multiplyScalar(Math.sin((1 - t) * w)).addScaledVector(b, Math.sin(t * w)).divideScalar(Math.sin(w)); };
-  for (let i = 0; i <= 16; i++) { const u = i / 16; strapDirs.push(u < 0.5 ? slerp(A, M, u * 2) : slerp(M, B, u * 2 - 1)); }
-  const strapCurve = new THREE.CatmullRomCurve3(strapDirs.map((d) => onBody(d, 0.004)));
-  const strapGeo = taperedTube(strapCurve, () => 0.012, 64, 10).geometry;
-  // flatten the round tube into a webbing band hugging the skin
-  const sp = strapGeo.attributes.position, q = new THREE.Vector3();
-  for (let i = 0; i < sp.count; i++) {
-    q.fromBufferAttribute(sp, i);
-    const r = q.length();
-    const near = onBody(q, 0).length();
-    q.setLength(near + (r - near) * 0.45);
-    sp.setXYZ(i, q.x, q.y, q.z);
+  // chin strap: a flat webbing band that tucks up inside the helmet shell in front of each
+  // ear, lies flat on the skin and cups under the mouth. Built as a ribbon whose every vertex
+  // is projected onto the real (sculpted) body surface, so it hugs with no gap and no clipping.
+  const strapPath = arcOnSphere(
+    new THREE.Vector3(-0.7, 0.55, 0.455),
+    new THREE.Vector3(0, -0.36, 0.933),
+    new THREE.Vector3(0.7, 0.55, 0.455),
+  );
+  face.add(part('strap', surfaceRibbon(strapPath, 0, 1, { hw: 0.021, h0: -0.003, h1: 0.0065, r: 0.003 }, 96), mat(COL.strap, { roughness: 0.92 })));
+  // a small slide buckle on the right cheek, sitting proud of the webbing
+  {
+    const t = 0.796, c = bodySurface(strapPath(t)), n = bodyNormal(c);
+    const along = bodySurface(strapPath(t + 1e-3)).sub(bodySurface(strapPath(t - 1e-3))).normalize();
+    const across = along.clone().cross(n).normalize();
+    along.crossVectors(n, across);
+    // squared-off slide, sculpted from a sphere so it stays one closed, smooth shell
+    const geo = ellipsoid(0.029, 0.022, 0.011, 40, 24, (v) => { v.x = Math.sign(v.x) * Math.abs(v.x) ** 0.6; v.y = Math.sign(v.y) * Math.abs(v.y) ** 0.6; });
+    const buckle = part('buckle', geo, mat(COL.badge, { roughness: 0.55, metalness: 0.35 }));
+    buckle.position.copy(c).addScaledVector(n, 0.003);
+    buckle.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(across, along, n));
+    face.add(buckle);
   }
-  strapGeo.computeVertexNormals();
-  face.add(part('strap', strapGeo, mat(COL.strap, { roughness: 0.9 })));
 
   // ---- helmet: set square and low over the brow ----
   const helmet = new THREE.Group();
@@ -219,10 +293,10 @@ export function createPea() {
   const gloveMat = mat(COL.glove, { roughness: 0.85 });
   for (const s of [-1, 1]) {
     const pts = [
-      new THREE.Vector3(0.38 * s, 0.02, 0.0),
-      new THREE.Vector3(0.56 * s, -0.08, 0.03),
-      new THREE.Vector3(0.64 * s, -0.22, 0.07),
-      new THREE.Vector3(0.66 * s, -0.33, 0.09),
+      new THREE.Vector3(0.4 * s, 0.04, 0.0),
+      new THREE.Vector3(0.56 * s, -0.04, 0.03),
+      new THREE.Vector3(0.55 * s, -0.15, 0.05),
+      new THREE.Vector3(0.52 * s, -0.28, 0.08),
     ];
     const limb = skinnedLimb(`arm${s < 0 ? 'L' : 'R'}`, pts, 0.046, 0.036, limbMat);
     body.add(limb.mesh);
