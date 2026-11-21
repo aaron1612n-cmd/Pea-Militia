@@ -7,6 +7,11 @@ export const PEA_SCALE = 0.78;
 export const BODY_R = 0.5;
 export const BODY_Y = 0.62;
 const BODY_SY = 1.03;
+const HIP_Y = 0.34; // upper body pivots here: leans, bobs and twists over the legs
+
+// Walk gait (per leg phase q, 0 = heel strike). Stance is longer than swing, so both feet are
+// down for a moment twice a cycle, as in a real walk.
+export const GAIT = { stance: 0.62, cadence: 2.3 };
 
 // Muted field colours: a real pea's dull green, worn olive kit, no bright accents.
 const COL = {
@@ -187,9 +192,10 @@ export function createPea() {
   // Upper body pivots at the hips so breathing never lifts the feet.
   const upper = new THREE.Group();
   upper.name = 'upper';
+  upper.position.y = HIP_Y;
   root.add(upper);
   const body = new THREE.Group();
-  body.position.y = BODY_Y;
+  body.position.y = BODY_Y - HIP_Y;
   upper.add(body);
 
   // ---- body: slightly egg-shaped pea with a crease ----
@@ -352,38 +358,144 @@ export function createPea() {
     paint(bootGeo, (v, c) => c.set(v.y < SOLE + 0.025 ? COL.sole : COL.boot));
     const boot = part(`boot${s < 0 ? 'L' : 'R'}`, bootGeo, bootMat);
     foot.add(boot);
-    legs.push({ ...limb, foot, s });
+    legs.push({ ...limb, foot, s, bootGeo });
   }
 
-  // ---- idle animation ----
+  // ---- animation: idle, walk, jump, land ----
   const rest = {
     arm: arms.map((a) => a.bones.map((b) => b.rotation.clone())),
   };
   const reduced = typeof matchMedia !== 'undefined' && matchMedia('(prefers-reduced-motion: reduce)').matches;
   const state = { blinkAt: 2.4 };
+  const { sin, cos, PI, max, min } = Math;
+  const smooth = (a, b, x) => THREE.MathUtils.smoothstep(x, a, b);
+  const lerp = THREE.MathUtils.lerp;
 
-  function setPhase(t, motion = !reduced) {
-    const breathe = motion ? Math.sin((t / 3.2) * Math.PI * 2) : 0;
+  // Two-bone leg IK in the side (y/z) plane, knee bending forward like a real knee.
+  for (const L of legs) {
+    const [b0, b1, b2] = L.bones;
+    const H = b0.position.clone(), K = H.clone().add(b1.position), A = K.clone().add(b2.position);
+    L.H0 = H;
+    L.A0 = A;
+    L.l1 = Math.hypot(K.y - H.y, K.z - H.z);
+    L.l2 = Math.hypot(A.y - K.y, A.z - K.z);
+    L.p1 = Math.atan2(K.z - H.z, -(K.y - H.y));
+    L.p2 = Math.atan2(A.z - K.z, -(A.y - K.y));
+    // lowest point of the boot for each foot pitch, so a tilted foot rolls on heel or toe
+    // instead of sinking into the ground
+    const pos = L.bootGeo.attributes.position;
+    L.low = [];
+    for (let i = 0; i <= 80; i++) {
+      const th = -0.8 + (i / 80) * 1.6;
+      let lo = Infinity;
+      for (let k = 0; k < pos.count; k++) lo = min(lo, pos.getY(k) * cos(th) - pos.getZ(k) * sin(th));
+      L.low.push(lo);
+    }
+  }
+  const rollLift = (L, th) => {
+    const f = THREE.MathUtils.clamp((th + 0.8) / 1.6 * 80, 0, 80);
+    const i = Math.floor(f), j = min(80, i + 1);
+    return L.low[40] - lerp(L.low[i], L.low[j], f - i);
+  };
+  function solveLeg(L, hipDy, hipDz, ty, tz, pitch) {
+    const [b0, b1] = L.bones;
+    const hy = L.H0.y + hipDy, hz = L.H0.z + hipDz;
+    b0.position.set(L.H0.x, hy, hz);
+    const dy = ty - hy, dz = tz - hz;
+    const d = THREE.MathUtils.clamp(Math.hypot(dy, dz), Math.abs(L.l1 - L.l2) + 1e-3, L.l1 + L.l2 - 1e-4);
+    const pD = Math.atan2(dz, -dy);
+    const a = Math.acos(THREE.MathUtils.clamp((L.l1 ** 2 + d ** 2 - L.l2 ** 2) / (2 * L.l1 * d), -1, 1));
+    const p1 = pD + a;
+    const ky = hy - L.l1 * cos(p1), kz = hz + L.l1 * sin(p1);
+    const ay = hy - d * cos(pD), az = hz + d * sin(pD);
+    const p2 = Math.atan2(az - kz, -(ay - ky));
+    b0.rotation.x = -(p1 - L.p1);
+    b1.rotation.x = -(p2 - L.p2) + (p1 - L.p1);
+    L.foot.rotation.x = pitch + (p2 - L.p2);
+  }
+
+  // Foot path for one leg over a walk cycle: planted and rolling heel-to-toe in stance,
+  // lifted and carried forward in swing.
+  function gaitFoot(q, F) {
+    const ST = GAIT.stance;
+    if (q < ST) {
+      const s = q / ST;
+      const pitch = -0.22 * (1 - smooth(0, 0.16, s)) + 0.5 * smooth(0.58, 1, s);
+      return { z: F * (1 - 2 * s), lift: 0, pitch };
+    }
+    const u = (q - ST) / (1 - ST);
+    const z = -F * cos(PI * u);
+    const lift = 0.055 * sin(PI * u ** 0.8);
+    const pitch = lerp(0.5, -0.22, smooth(0, 0.75, u));
+    return { z, lift, pitch };
+  }
+
+  // st: { t, walk 0..1, cycle 0..1, stride (model units), air 0..1, rise -1..1, land 0..1, crouch 0..1 }
+  function pose(st = {}, motion = !reduced) {
+    const t = st.t || 0;
+    const walk = (st.walk || 0) * (1 - (st.air || 0));
+    const air = st.air || 0, rise = st.rise || 0, land = st.land || 0, crouch = st.crouch || 0;
+    const q = ((st.cycle || 0) % 1 + 1) % 1;
+    const F = st.stride ?? 0.13;
+
     // breathing: body swells a touch and rises, pivoting around the hips
-    body.position.y = BODY_Y + 0.008 * breathe;
-    bodyMesh.scale.set(1 + 0.008 * breathe, 1 + 0.012 * breathe, 1 + 0.008 * breathe);
+    const breathe = motion ? sin((t / 3.2) * PI * 2) : 0;
+    body.position.y = BODY_Y - HIP_Y + 0.008 * breathe;
+    const squash = land * 0.05 + crouch * 0.04 - air * 0.03 * max(0, rise);
+    bodyMesh.scale.set(1 + 0.008 * breathe + squash * 0.5, 1 + 0.012 * breathe - squash, 1 + 0.008 * breathe + squash * 0.5);
+
+    // whole upper body: bob lowest at each heel strike, sway over the stance foot, shoulders
+    // counter-rotate with the arms, lean into the walk; drop into landings and the jump crouch
+    const reach = Math.sqrt(max(0, (legs[0].l1 + legs[0].l2 - 0.003) ** 2 - F ** 2));
+    const need = max(0, legs[0].H0.y - legs[0].A0.y - reach);
+    const bob = -walk * (need + 0.006) * (0.5 + 0.5 * cos(4 * PI * q));
+    const drop = bob - 0.06 * land - 0.05 * crouch;
+    upper.position.set(-0.018 * walk * sin(2 * PI * q), HIP_Y + drop, 0);
+    upper.rotation.set(0.055 * walk + 0.08 * land + 0.06 * crouch + 0.04 * air, -0.07 * walk * cos(2 * PI * q), 0.02 * walk * sin(2 * PI * q));
+
+    // legs
+    legs.forEach((L, i) => {
+      const lq = (q + (i === 0 ? 0 : 0.5)) % 1;
+      const g = gaitFoot(lq, F);
+      let z = g.z * walk, lift = g.lift * walk, pitch = g.pitch * walk;
+      if (air > 0) {
+        // in the air: one knee comes up and forward, the other trails; both reach down to land
+        const tuck = 0.35 + 0.65 * max(0, rise);
+        const front = i === 0;
+        z = lerp(z, (front ? 0.05 : -0.035) * tuck, air);
+        lift = lerp(lift, (front ? 0.075 : 0.045) * tuck, air);
+        pitch = lerp(pitch, 0.25 * tuck, air);
+      }
+      const ty = L.A0.y + lift + rollLift(L, pitch);
+      solveLeg(L, drop, 0, ty, L.A0.z + z, pitch);
+    });
+
+    // arms: swing opposite the legs, a little further forward than back, elbows bending more
+    // on the forward swing; out and up for balance in the air; forward to absorb a landing
     arms.forEach((a, i) => {
       const s = i === 0 ? -1 : 1;
-      const sway = motion ? Math.sin((t / 3.2) * Math.PI * 2 + 0.5) : 0;
-      // arms ride the breath: a faint swing that lags the chest, elbows stay soft
-      a.bones[0].rotation.x = rest.arm[i][0].x - 0.018 * sway;
-      a.bones[0].rotation.z = rest.arm[i][0].z + s * 0.008 * sway;
-      a.bones[1].rotation.x = rest.arm[i][1].x - 0.012 * sway;
+      const sway = motion ? sin((t / 3.2) * PI * 2 + 0.5) : 0;
+      const oq = (q + (s > 0 ? 0 : 0.5) - 0.04) % 1;
+      const f = cos(2 * PI * oq);
+      const swing = walk * (0.06 + 0.28 * f);
+      const flex = walk * (0.12 + 0.14 * (1 + f));
+      const up = air * (0.35 + 0.25 * max(0, rise));
+      const out = air * (0.25 + 0.2 * max(0, -rise));
+      a.bones[0].rotation.x = rest.arm[i][0].x - 0.018 * sway - swing - up - 0.14 * land - 0.1 * crouch;
+      a.bones[0].rotation.z = rest.arm[i][0].z + s * (0.008 * sway + walk * (0.03 + 0.04 * max(0, f)) + out + 0.12 * land + 0.05 * crouch);
+      a.bones[1].rotation.x = rest.arm[i][1].x - 0.012 * sway - flex - air * 0.35 - 0.22 * land - 0.15 * crouch;
     });
+
     // blink: quick squash on a ~3.6s loop
     const bt = (t % 3.6) - (state.blinkAt % 3.6);
-    const blink = bt > 0 && bt < 0.16 ? Math.sin((bt / 0.16) * Math.PI) : 0;
+    const blink = bt > 0 && bt < 0.16 ? sin((bt / 0.16) * PI) : 0;
     eyes.forEach((e) => e.scale.set(1, 1 - 0.85 * blink, 1));
     root.updateMatrixWorld(true);
   }
+  const setPhase = (t, motion = !reduced) => pose({ t }, motion);
   setPhase(0);
 
-  root.userData = { setPhase, parts: () => collectParts(root) };
+  root.userData = { setPhase, pose, parts: () => collectParts(root) };
   return root;
 }
 
@@ -394,4 +506,4 @@ export function collectParts(root) {
 }
 
 // Collision volume for the pea: vertical capsule around body + limbs.
-export const PEA_COLLIDER = { a: new THREE.Vector3(0, 0.3, 0).multiplyScalar(PEA_SCALE), b: new THREE.Vector3(0, 1.05, 0).multiplyScalar(PEA_SCALE), r: 0.78 * PEA_SCALE };
+export const PEA_COLLIDER = { a: new THREE.Vector3(0, 0.3, 0).multiplyScalar(PEA_SCALE), b: new THREE.Vector3(0, 1.05, 0).multiplyScalar(PEA_SCALE), r: 0.84 * PEA_SCALE };

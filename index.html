@@ -8,13 +8,13 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   </head>
   <body>
-    <canvas id="scene" aria-label="A pea in a helmet standing on a stone baseplate"></canvas>
+    <canvas id="scene" aria-label="A pea soldier on a stone baseplate"></canvas>
     <h1 class="mark">Pea Militia</h1>
-    <p id="hint" class="hint">
-      <span class="m">Drag to look. Scroll to zoom. Right-drag to pan.</span><span class="t">Drag to look. Pinch to zoom.</span>
-    </p>
-    <button id="recenter" class="btn" type="button" aria-label="Recenter camera" title="Recenter (R)">
-      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8V3h5M16 3h5v5M21 16v5h-5M8 21H3v-5" /></svg>
+    <p id="prompt" class="prompt" aria-live="polite"></p>
+    <button id="help" class="btn help" type="button" aria-label="Replay controls" title="Replay controls (H)">?</button>
+    <div id="stick" class="stick" aria-hidden="true"><div id="knob" class="knob"></div></div>
+    <button id="jump" class="btn jump" type="button" aria-label="Jump">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15l7-7 7 7" /></svg>
     </button>
     <script type="module" src="/src/main.js"></script>
   </body>

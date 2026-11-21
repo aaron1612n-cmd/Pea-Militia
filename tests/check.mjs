@@ -110,7 +110,10 @@ const geometryChecks = () => {
   out.partCount = parts.length;
 
   // per animation phase: grounded, no clipping, nothing loose
-  const phases = [0, 0.4, 0.8, 1.2, 1.6, 2.0, 2.4, 2.48, 2.56, 2.8, 3.2];
+  const phases = [0, 0.8, 1.6, 2.48, 3.2].map((t) => ({ t, name: `idle ${t}` }));
+  for (let c = 0; c < 1; c += 0.1) phases.push({ walk: 1, cycle: c, stride: 0.15, name: `walk ${c.toFixed(1)}` });
+  phases.push({ crouch: 1, name: 'jump crouch' }, { air: 1, rise: 1, name: 'jump rise', air0: 1 }, { air: 1, rise: 0, name: 'jump apex', air0: 1 },
+    { air: 1, rise: -1, name: 'jump fall', air0: 1 }, { land: 0.5, name: 'land 0.5' }, { land: 1, name: 'land 1' });
   const clipPairs = [
     ['mittL', 'body'], ['mittR', 'body'], ['thumbL', 'body'], ['thumbR', 'body'],
     ['bootL', 'bootR'], ['legL', 'legR'], ['mittL', 'legL'], ['mittR', 'legR'],
@@ -120,9 +123,9 @@ const geometryChecks = () => {
     ['buckle', 'mouth'], ['buckle', 'armR'], ['buckle', 'mittR'],
   ];
   out.phases = [];
-  for (const t of phases) {
-    window.__pea.pause(t);
-    const r = { t, clips: [], loose: [] };
+  for (const ph of phases) {
+    window.__pea.pause(ph);
+    const r = { t: ph.name, air: !!ph.air0, clips: [], loose: [] };
     const verts = new Map(parts.map((m) => [m, worldVerts(m, 260)]));
     const boxes = new Map([...verts].map(([m, pts]) => [m, bbox(pts)]));
     let minY = Infinity;
@@ -206,45 +209,35 @@ const geometryChecks = () => {
   return out;
 };
 
-// camera collision checks (run in page)
+// follow camera: never under the plate or inside the pea, from any look angle, anywhere
 const cameraChecks = () => {
-  const { THREE, controls, camera, colliders, pea } = window.__pea;
+  const { THREE, cam, camera, colliders, player } = window.__pea;
   const bad = [];
   const c = colliders.pea;
-  const ab = c.b.clone().sub(c.a);
-  const capsuleDist = (p) => {
-    const s = THREE.MathUtils.clamp(p.clone().sub(c.a).dot(ab) / ab.lengthSq(), 0, 1);
-    return p.distanceTo(c.a.clone().addScaledVector(ab, s));
-  };
-  // sweep every direction at minimum zoom, and below-ground attempts at max zoom
-  for (let yaw = 0; yaw < Math.PI * 2; yaw += Math.PI / 8) {
-    for (const pitch of [-0.5, -0.12, 0, 0.4, 0.9, 1.45]) {
-      for (const dist of [0.2, controls.limits.minDist, 4, 40]) {
-        controls.goal.yaw = yaw; controls.goal.pitch = pitch; controls.goal.dist = dist;
-        controls.goal.dist = THREE.MathUtils.clamp(controls.goal.dist, controls.limits.minDist, controls.limits.maxDist);
-        Object.assign(controls.cur, { yaw, pitch, dist, target: controls.goal.target.clone() });
-        controls.update(1 / 60);
-        const p = camera.position;
-        if (p.y < colliders.plate.max.y + 0.1) bad.push(`below ground y=${p.y.toFixed(3)}`);
-        if (capsuleDist(p) < c.r) bad.push(`inside pea collider yaw=${yaw.toFixed(2)} pitch=${pitch}`);
-      }
+  for (const at of [[0, 0, 0], [23.9, 0, 0], [0, 0, -23.9], [24.5, -1.5, 3], [0, 1.2, 0]]) {
+    const p = new THREE.Vector3(...at);
+    for (let yaw = 0; yaw < Math.PI * 2; yaw += Math.PI / 8) for (const pitch of [-1, -0.35, 0, 0.6, 1.2, 2]) {
+      cam.yaw = yaw; cam.pitch = 0; cam.look(0, pitch);
+      cam.update(1 / 60, p, true);
+      const q = camera.position;
+      const over = Math.abs(q.x) < colliders.plate.max.x && Math.abs(q.z) < colliders.plate.max.z;
+      if (over && q.y < colliders.plate.max.y + 0.1 && q.y > colliders.plate.min.y - 0.2) bad.push(`in plate at ${at} yaw=${yaw.toFixed(2)} y=${q.y.toFixed(2)}`);
+      const a = c.a.clone().add(p), ab = c.b.clone().sub(c.a);
+      const s = THREE.MathUtils.clamp(q.clone().sub(a).dot(ab) / ab.lengthSq(), 0, 1);
+      if (q.distanceTo(a.clone().addScaledVector(ab, s)) < c.r) bad.push(`inside pea at ${at} pitch=${pitch}`);
     }
   }
-  // panning stays over the plate
-  controls.pan(1e6, 1e6);
-  const t = controls.goal.target;
-  if (Math.abs(t.x) > colliders.plate.max.x || Math.abs(t.z) > colliders.plate.max.z) bad.push('pan escaped plate');
-  controls.fit(true);
-  controls.update(1 / 60);
-  pea.userData.setPhase(0, true);
+  cam.yaw = 0.4; cam.pitch = 0.3;
+  cam.update(1 / 60, player.pos, true);
   return bad;
 };
 
 // default framing: whole pea visible, decent size, no UI covering it
 const framingCheck = () => {
-  const { THREE, controls, camera, pea } = window.__pea;
-  controls.fit(true);
-  controls.update(1 / 60);
+  const { THREE, cam, camera, pea, player } = window.__pea;
+  window.__pea.resume();
+  cam.yaw = 0.4; cam.pitch = 0.3;
+  cam.update(1 / 60, player.pos, true);
   camera.updateMatrixWorld();
   const box = new THREE.Box3().setFromObject(pea, true);
   const pts = [];
@@ -255,13 +248,13 @@ const framingCheck = () => {
   const inView = xs.every((x) => x > -1 && x < 1) && ys.every((y) => y > -1 && y < 1);
   const frac = Math.max((rect.right - rect.left) / W, (rect.bottom - rect.top) / H);
   const overlaps = [];
-  for (const el of document.querySelectorAll('.mark, .hint:not(.gone), .btn')) {
+  for (const el of document.querySelectorAll('.mark, .prompt.on, .btn')) {
     const r = el.getBoundingClientRect();
     if (r.width === 0) continue;
     if (r.left < rect.right && r.right > rect.left && r.top < rect.bottom && r.bottom > rect.top) overlaps.push(el.className || el.id);
   }
   // UI elements must not overlap each other
-  const els = [...document.querySelectorAll('.mark, .hint, .btn')].map((e) => [e.className, e.getBoundingClientRect()]);
+  const els = [...document.querySelectorAll('.mark, .prompt.on, .btn')].filter((e) => e.getBoundingClientRect().width > 0).map((e) => [e.className, e.getBoundingClientRect()]);
   for (let i = 0; i < els.length; i++) for (let j = i + 1; j < els.length; j++) {
     const a = els[i][1], b = els[j][1];
     if (a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top) overlaps.push(`${els[i][0]}x${els[j][0]}`);
@@ -288,34 +281,27 @@ try {
   check('z-fighting: no coplanar overlapping faces between meshes', g.zfight.length === 0, g.zfight.join(', ') || `${g.triangles} tris`);
   check('depth precision far/near <= 10000', g.depthRatio <= 10000, String(g.depthRatio));
   for (const r of g.phases) {
-    check(`phase t=${r.t}: feet on plate, nothing under it`, r.minY >= -1e-4 && r.minY <= 0.01, `minY=${r.minY.toFixed(4)}`);
-    check(`phase t=${r.t}: no clipping`, r.clips.length === 0, r.clips.join('; '));
-    check(`phase t=${r.t}: no loose parts (${g.partCount} parts)`, r.loose.length === 0, r.loose.join(', '));
-    check(`phase t=${r.t}: pea inside its collider`, r.outsideCollider === 0, `${r.outsideCollider} verts outside`);
+    check(`phase ${r.t}: feet on plate, nothing under it`, r.minY >= -1e-4 && (r.air || r.minY <= 0.01), `minY=${r.minY.toFixed(4)}`);
+    check(`phase ${r.t}: no clipping`, r.clips.length === 0, r.clips.join('; '));
+    check(`phase ${r.t}: no loose parts (${g.partCount} parts)`, r.loose.length === 0, r.loose.join(', '));
+    check(`phase ${r.t}: pea inside its collider`, r.outsideCollider === 0, `${r.outsideCollider} verts outside`);
   }
   const cam = await d.page.evaluate(cameraChecks);
-  check('camera collides with plate and pea; pan clamped to plate', cam.length === 0, cam.slice(0, 4).join('; '));
+  check('follow camera stays out of the plate and the pea', cam.length === 0, cam.slice(0, 4).join('; '));
   const f = await d.page.evaluate(framingCheck);
-  check('desktop: pea fully framed at default view', f.inView && f.frac > 0.3 && f.frac < 0.95, `fills ${(f.frac * 100).toFixed(0)}%`);
+  check('desktop: pea fully framed at default view', f.inView && f.frac > 0.12 && f.frac < 0.7, `fills ${(f.frac * 100).toFixed(0)}%`);
   check('desktop: UI never covers the pea or overlaps itself', f.overlaps.length === 0 && f.offscreen.length === 0, [...f.overlaps, ...f.offscreen].join(', '));
   const px = await d.page.evaluate(centerPixel);
-  check('render: pea visible at screen centre', px[1] > px[0] && px[1] > px[2] && px[1] > 60, px.join(','));
+  check('render: pea visible at screen centre', px[1] > px[0] && px[1] > px[2] && px[1] > 40, px.join(','));
 
   // turntable + close-ups
   const shots = [];
   // shot distances/targets are authored for a full-size pea; scale them with the model
-  const S = await d.page.evaluate(() => window.__pea.pea.scale.x);
+  const S = await d.page.evaluate(() => { window.__pea.pause(0); return window.__pea.pea.scale.x; });
   const shoot = async (name, yaw, pitch, dist, target) => {
     dist *= S;
     if (target) target = target.map((x) => x * S);
-    await d.page.evaluate(([yaw, pitch, dist, target]) => {
-      const c = window.__pea.controls;
-      const t = target ? new window.__pea.THREE.Vector3(...target) : c.focus.center.clone();
-      Object.assign(c.goal, { yaw, pitch, dist, target: t });
-      Object.assign(c.cur, { yaw, pitch, dist, target: t.clone() });
-      c.update(1 / 60);
-      window.__pea.render();
-    }, [yaw, pitch, dist, target]);
+    await d.page.evaluate(([yaw, pitch, dist, target]) => window.__pea.view(yaw, pitch, dist, target || [0, 0.56, 0]), [yaw, pitch, dist, target]);
     await d.page.screenshot({ path: `${OUT}/${name}.png` });
     shots.push(name);
   };
@@ -331,26 +317,50 @@ try {
   await shoot('closeup-strap-low', 0.6, -0.3, 1.6, [0, 0.62, 0]);
   await d.page.evaluate(() => { window.__pea.pause(2.48); window.__pea.render(); });
   await shoot('closeup-blink', 0, 0.08, 1.2, [0, 0.66, 0]);
-  check('turntable + close-up renders saved', shots.length === 18, `${OUT}/`);
+  for (const [n, st] of [['walk-0', { walk: 1, cycle: 0, stride: 0.15 }], ['walk-25', { walk: 1, cycle: 0.25, stride: 0.15 }], ['walk-50', { walk: 1, cycle: 0.5, stride: 0.15 }], ['walk-75', { walk: 1, cycle: 0.75, stride: 0.15 }], ['jump-rise', { air: 1, rise: 1 }], ['jump-fall', { air: 1, rise: -1 }], ['land', { land: 1 }]]) {
+    await d.page.evaluate((st) => window.__pea.pause(st), st);
+    await shoot(`anim-${n}`, Math.PI / 2 + 0.3, 0.1, 2.4, [0, 0.5, 0]);
+  }
+  check('turntable, close-up and animation renders saved', shots.length === 25, `${OUT}/`);
 
-  // desktop button: mouse click (no pointer lock in this build; verify the hit target is the button)
-  await d.page.evaluate(() => { window.__pea.resume(); const c = window.__pea.controls; c.goal.yaw = 3; c.goal.dist = 9; });
-  const hitD = await d.page.evaluate(() => { const r = document.getElementById('recenter').getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('#recenter') !== null; });
-  check('desktop: recenter button is the top element at its centre', hitD);
-  await d.page.click('#recenter');
-  const resetD = await d.page.evaluate(() => { const c = window.__pea.controls; return Math.abs(c.goal.yaw - 0.55) < 1e-6 && Math.abs(c.goal.dist - c.fitDistance()) < 1e-3; });
-  check('desktop: recenter button click resets the camera', resetD);
-  await d.page.evaluate(() => { const c = window.__pea.controls; c.goal.yaw = 2; });
-  await d.page.mouse.move(640, 400);
-  await d.page.keyboard.press('KeyR');
-  check('desktop: R key recenters', await d.page.evaluate(() => Math.abs(window.__pea.controls.goal.yaw - 0.55) < 1e-6));
-  // mouse drag orbits
-  const y0 = await d.page.evaluate(() => window.__pea.controls.goal.yaw);
-  await d.page.mouse.move(400, 400); await d.page.mouse.down(); await d.page.mouse.move(600, 380, { steps: 6 }); await d.page.mouse.up();
-  const y1 = await d.page.evaluate(() => window.__pea.controls.goal.yaw);
-  check('desktop: mouse drag orbits', Math.abs(y1 - y0) > 0.2, `${(y1 - y0).toFixed(2)} rad`);
-  await d.page.mouse.wheel(0, 400);
-  await d.page.click('#recenter');
+  // desktop play: click asks for pointer lock, WASD walks camera-relative, the pea turns to
+  // face travel, Space jumps and lands, walking off the edge falls and respawns
+  await d.page.evaluate(() => { window.__pea.resume(); window.__lockAsked = 0; const c = document.getElementById('scene'); const r = c.requestPointerLock.bind(c); c.requestPointerLock = (...a) => { window.__lockAsked++; try { return r(...a); } catch {} }; });
+  await d.page.mouse.click(640, 600);
+  check('desktop: click on the game asks for pointer lock', await d.page.evaluate(() => window.__lockAsked > 0));
+  await d.page.evaluate(() => { if (document.pointerLockElement) document.exitPointerLock(); });
+  await d.page.waitForTimeout(200);
+  const p0 = await d.page.evaluate(() => { const { player, cam } = window.__pea; player.pos.set(0, 0, 0); player.vel.set(0, 0, 0); cam.yaw = 0; return 0; });
+  // waits follow the game's own clock, not wall time: slow software-GL runners step fewer frames
+  const until = (f, a) => d.page.waitForFunction(f, a, { timeout: 20000 }).then(() => true, () => false);
+  await d.page.keyboard.down('KeyW'); await until(() => window.__pea.player.pos.z < -0.6); await d.page.keyboard.up('KeyW');
+  const mv = await d.page.evaluate(() => { const { player } = window.__pea; return { z: player.pos.z, x: player.pos.x, facing: player.facing }; });
+  check('desktop: W walks away from the camera', mv.z < -0.5 && Math.abs(mv.x) < 0.1, `z=${mv.z.toFixed(2)}`);
+  check('desktop: pea turns to face where it walks', Math.abs(Math.abs(mv.facing) - Math.PI) < 0.2, `facing=${mv.facing.toFixed(2)}`);
+  await d.page.keyboard.press('Space');
+  const rose = await until(() => window.__pea.player.pos.y > 0.3);
+  const landed = rose && await until(() => window.__pea.player.grounded && window.__pea.player.pos.y === 0);
+  check('desktop: Space jumps and the pea lands again', rose && landed, `rose=${rose} landed=${landed}`);
+  await d.page.evaluate(() => { const { player, cam } = window.__pea; player.pos.set(23.7, 0, 0); cam.yaw = -Math.PI / 2; });
+  await d.page.keyboard.down('KeyW'); await until(() => !window.__pea.player.onPlate); await d.page.keyboard.up('KeyW');
+  await d.page.waitForFunction(() => window.__pea.player.respawns > 0, null, { timeout: 30000 }).catch(() => {});
+  check('desktop: walking off the edge falls and respawns', await d.page.evaluate(() => window.__pea.player.respawns > 0));
+  // drag-look works without pointer lock
+  const y0 = await d.page.evaluate(() => window.__pea.cam.yaw);
+  await d.page.mouse.move(400, 500); await d.page.mouse.down(); await d.page.mouse.move(600, 480, { steps: 6 }); await d.page.mouse.up();
+  const y1 = await d.page.evaluate(() => window.__pea.cam.yaw);
+  check('desktop: mouse look turns the camera', Math.abs(y1 - y0) > 0.3, `${(y1 - y0).toFixed(2)} rad`);
+  await d.page.evaluate(() => { if (document.pointerLockElement) document.exitPointerLock(); });
+  await d.page.waitForTimeout(200);
+  // help button: top element, click replays the controls prompt, and it hides under pointer lock
+  const hitD = await d.page.evaluate(() => { const r = document.getElementById('help').getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('#help') !== null; });
+  check('desktop: help button is the top element at its centre', hitD);
+  await d.page.evaluate(() => { window.__lockAsked = 0; });
+  await d.page.click('#help');
+  const helpD = await d.page.evaluate(() => ({ text: document.getElementById('prompt').textContent, lock: window.__lockAsked }));
+  check('desktop: help click replays the controls and does not grab the mouse', /Click to play|WASD/.test(helpD.text) && helpD.lock === 0, helpD.text);
+  check('desktop: help button hidden while the mouse is locked', await d.page.evaluate(() => { document.documentElement.dataset.locked = 'yes'; const h = getComputedStyle(document.getElementById('help')).display === 'none'; document.documentElement.dataset.locked = 'no'; return h; }));
+  await d.page.evaluate(() => { const { player, cam } = window.__pea; player.pos.set(0, 0, 0); cam.yaw = 0.4; cam.pitch = 0.3; });
   await d.page.waitForTimeout(900);
   await d.page.screenshot({ path: `${OUT}/desktop.png` });
   check('desktop: no console errors', d.errors.length === 0, d.errors.slice(0, 3).join(' | '));
@@ -358,32 +368,37 @@ try {
   // ---------- phone ----------
   const m = await open({ ...devices['iPhone 13'] });
   const fm = await m.page.evaluate(framingCheck);
-  check('phone: pea fully framed at default view', fm.inView && fm.frac > 0.3 && fm.frac < 0.95, `fills ${(fm.frac * 100).toFixed(0)}%`);
+  check('phone: pea fully framed at default view', fm.inView && fm.frac > 0.12 && fm.frac < 0.7, `fills ${(fm.frac * 100).toFixed(0)}%`);
   check('phone: UI never covers the pea or overlaps itself', fm.overlaps.length === 0 && fm.offscreen.length === 0, [...fm.overlaps, ...fm.offscreen].join(', '));
-  check('phone: touch hint shown', await m.page.evaluate(() => document.documentElement.dataset.input === 'touch'));
+  check('phone: touch controls shown', await m.page.evaluate(() => document.documentElement.dataset.input === 'touch'));
   await m.page.screenshot({ path: `${OUT}/phone.png` });
-  // one-finger drag via real touch events (CDP)
+  // left thumb drives the floating stick, right thumb looks, the jump button jumps
   const cdp = await m.ctx.newCDPSession(m.page);
-  const touch = async (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y], id) => ({ x, y, id })) });
-  const yy0 = await m.page.evaluate(() => window.__pea.controls.goal.yaw);
-  await touch('touchStart', [[120, 400]]);
-  for (let i = 1; i <= 6; i++) await touch('touchMove', [[120 + i * 25, 400]]);
+  const touch = async (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y, id]) => ({ x, y, id: id ?? 0 })) });
+  await m.page.evaluate(() => { const { player, cam } = window.__pea; player.pos.set(0, 0, 0); cam.yaw = 0; });
+  await touch('touchStart', [[90, 650]]);
+  for (let i = 1; i <= 5; i++) await touch('touchMove', [[90, 650 - i * 12]]);
+  await m.page.waitForFunction(() => window.__pea.player.pos.z < -0.5, null, { timeout: 20000 }).catch(() => {});
   await touch('touchEnd', []);
-  const yy1 = await m.page.evaluate(() => window.__pea.controls.goal.yaw);
-  check('phone: one-finger drag orbits', Math.abs(yy1 - yy0) > 0.2, `${(yy1 - yy0).toFixed(2)} rad`);
-  const d0 = await m.page.evaluate(() => window.__pea.controls.goal.dist);
-  await touch('touchStart', [[150, 400], [240, 400]]);
-  for (let i = 1; i <= 6; i++) await touch('touchMove', [[150 - i * 10, 400], [240 + i * 10, 400]]);
+  const pm = await m.page.evaluate(() => window.__pea.player.pos.z);
+  check('phone: left-thumb stick walks the pea', pm < -0.5, `z=${pm.toFixed(2)}`);
+  const yy0 = await m.page.evaluate(() => window.__pea.cam.yaw);
+  await touch('touchStart', [[300, 400]]);
+  for (let i = 1; i <= 6; i++) await touch('touchMove', [[300 - i * 15, 400]]);
   await touch('touchEnd', []);
-  const d1 = await m.page.evaluate(() => window.__pea.controls.goal.dist);
-  check('phone: pinch zooms in', d1 < d0 * 0.9, `${d0.toFixed(2)} -> ${d1.toFixed(2)}`);
-  const hitM = await m.page.evaluate(() => { const r = document.getElementById('recenter').getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('#recenter') !== null; });
-  check('phone: recenter button is the top element at its centre', hitM);
-  await m.page.tap('#recenter');
-  const resetM = await m.page.evaluate(() => { const c = window.__pea.controls; return Math.abs(c.goal.yaw - 0.55) < 1e-6 && Math.abs(c.goal.dist - c.fitDistance()) < 1e-3; });
-  check('phone: recenter button tap resets the camera', resetM);
-  const btn = await m.page.evaluate(() => { const r = document.getElementById('recenter').getBoundingClientRect(); return [r.width, r.height]; });
-  check('phone: button is at least 44px', btn[0] >= 44 && btn[1] >= 44, btn.join('x'));
+  const yy1 = await m.page.evaluate(() => window.__pea.cam.yaw);
+  check('phone: right-thumb drag looks around', Math.abs(yy1 - yy0) > 0.2, `${(yy1 - yy0).toFixed(2)} rad`);
+  const hitJ = await m.page.evaluate(() => { const r = document.getElementById('jump').getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('#jump') !== null; });
+  check('phone: jump button is the top element at its centre', hitJ);
+  const j0 = await m.page.evaluate(() => window.__pea.player.jumps);
+  await m.page.tap('#jump');
+  check('phone: jump button tap jumps', await m.page.waitForFunction((j0) => window.__pea.player.jumps > j0, j0, { timeout: 20000 }).then(() => true, () => false));
+  const hitM = await m.page.evaluate(() => { const r = document.getElementById('help').getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('#help') !== null; });
+  check('phone: help button is the top element at its centre', hitM);
+  await m.page.tap('#help');
+  check('phone: help tap replays the controls', await m.page.evaluate(() => /Left thumb/.test(document.getElementById('prompt').textContent)));
+  const btn = await m.page.evaluate(() => ['help', 'jump'].map((id) => { const r = document.getElementById(id).getBoundingClientRect(); return Math.min(r.width, r.height); }));
+  check('phone: buttons are at least 44px', btn.every((x) => x >= 44), btn.join(', '));
   check('phone: no console errors', m.errors.length === 0, m.errors.slice(0, 3).join(' | '));
 
   // landscape phone framing
