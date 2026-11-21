@@ -4,10 +4,10 @@
   "description": "Pea Militia browser game",
   "scripts": {
     "dev": "vite",
-    "build": "vite build",
+    "build": "vite build && node scripts/embed.mjs",
     "preview": "vite preview --port 4173 --strictPort",
     "check": "node tests/check.mjs",
-    "deploy": "vite build && wrangler deploy"
+    "deploy": "npm run build && wrangler deploy"
   },
   "repository": {
     "type": "git",

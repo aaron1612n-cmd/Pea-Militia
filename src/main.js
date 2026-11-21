@@ -5,6 +5,8 @@ import { createBaseplate, createSky, PLATE_COLLIDER } from './world.js';
 import { OrbitCam } from './controls.js';
 
 const canvas = document.getElementById('scene');
+const hint = document.getElementById('hint');
+let hinted = false;
 const touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 document.documentElement.dataset.input = touch ? 'touch' : 'mouse';
@@ -42,7 +44,7 @@ scene.add(rim);
 const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 500);
 const controls = new OrbitCam(camera, canvas, {
   colliders: { capsules: [PEA_COLLIDER], groundY: PLATE_COLLIDER.max.y },
-  focus: { center: new THREE.Vector3(0, BODY_Y - 0.06, 0), radius: 0.72 },
+  focus: { center: new THREE.Vector3(0, BODY_Y - 0.06, 0), radius: 0.8 },
 });
 
 function resize() {
@@ -50,7 +52,7 @@ function resize() {
   renderer.setSize(w, h, false);
   camera.aspect = w / h;
   camera.updateProjectionMatrix();
-  controls.fit(false);
+  if (!hinted) controls.fit(false); // keep the player's view once they've moved it
 }
 addEventListener('resize', resize);
 resize();
@@ -64,8 +66,6 @@ if (!reduced) {
 }
 
 // UI
-const hint = document.getElementById('hint');
-let hinted = false;
 controls.onInteract = () => {
   if (hinted) return;
   hinted = true;

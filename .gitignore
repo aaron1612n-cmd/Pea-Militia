@@ -4,3 +4,4 @@ dist/
 .env
 .dev.vars
 test-output/
+worker/assets.gen.js

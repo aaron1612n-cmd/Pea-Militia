@@ -65,7 +65,7 @@ export class OrbitCam {
       }
     });
     d.addEventListener('wheel', (e) => { e.preventDefault(); this.zoom(Math.exp(e.deltaY * 0.0012)); this.ping(); }, { passive: false });
-    addEventListener('keydown', (e) => { if (e.target.closest && e.target.closest('button')) return; this.keys.add(e.code); if (e.code === 'KeyR') this.fit(); this.ping(); });
+    addEventListener('keydown', (e) => { this.keys.add(e.code); if (e.code === 'KeyR') this.fit(); this.ping(); });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
     addEventListener('blur', () => this.keys.clear());
   }

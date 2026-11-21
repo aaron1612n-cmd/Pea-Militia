@@ -121,7 +121,7 @@ export function createPea() {
   // ---- body: slightly egg-shaped pea with a crease ----
   const bodyGeo = ellipsoid(BODY_R, BODY_R * BODY_SY, BODY_R, 96, 64, (v) => {
     // soft seam where a pea sits in its pod, plus a gentle belly
-    const seam = Math.exp(-((v.x * 6) ** 2)) * (v.z < 0 ? 0.012 : 0.0);
+    const seam = 0.012 * Math.exp(-((v.x * 6) ** 2)) * THREE.MathUtils.smoothstep(-v.z, 0, 0.4);
     const belly = v.z > 0 && v.y < 0 ? 0.03 * v.z * -v.y : 0;
     const k = 1 - seam + belly;
     v.multiplyScalar(k);
@@ -171,8 +171,8 @@ export function createPea() {
     face.add(brow);
 
     // cheek blush, a flattened lens half-sunk into the skin
-    const cdir = new THREE.Vector3(0.36 * s, -0.08, 0.93).normalize();
-    const cheek = part(`cheek${s < 0 ? 'L' : 'R'}`, ellipsoid(0.07, 0.045, 0.02, 28, 16), mat(COL.blush, { roughness: 0.7, transparent: false }));
+    const cdir = new THREE.Vector3(0.42 * s, -0.16, 0.89).normalize();
+    const cheek = part(`cheek${s < 0 ? 'L' : 'R'}`, ellipsoid(0.062, 0.04, 0.02, 28, 16), mat(COL.blush, { roughness: 0.7 }));
     cheek.position.copy(onBody(cdir, -0.008));
     cheek.lookAt(cheek.position.clone().add(cdir));
     face.add(cheek);
@@ -182,7 +182,7 @@ export function createPea() {
   for (let i = 0; i <= 8; i++) {
     const u = i / 8 - 0.5;
     const x = u * 0.26;
-    const y = -0.1 - 0.05 * Math.cos(u * Math.PI) + 0.03 * u;
+    const y = -0.13 - 0.05 * Math.cos(u * Math.PI) + 0.03 * u;
     mouthPts.push(onBody(new THREE.Vector3(x, y, Math.sqrt(1 - x * x - y * y)), 0.0));
   }
   const mouth = part('mouth', taperedTube(new THREE.CatmullRomCurve3(mouthPts), (t) => 0.016 * (0.6 + 0.6 * Math.sin(t * Math.PI)), 28, 10).geometry, mat(COL.mouth, { roughness: 0.5 }));
