@@ -1,0 +1,95 @@
+import * as THREE from 'three';
+import './style.css';
+import { createPea, PEA_COLLIDER, BODY_Y } from './pea.js';
+import { createBaseplate, createSky, PLATE_COLLIDER } from './world.js';
+import { OrbitCam } from './controls.js';
+
+const canvas = document.getElementById('scene');
+const touch = matchMedia('(pointer: coarse)').matches || navigator.maxTouchPoints > 0;
+const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
+document.documentElement.dataset.input = touch ? 'touch' : 'mouse';
+
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: new URLSearchParams(location.search).has('test') });
+renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.shadowMap.enabled = true;
+renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.toneMapping = THREE.ACESFilmicToneMapping;
+renderer.toneMappingExposure = 1.05;
+
+const scene = new THREE.Scene();
+scene.fog = new THREE.Fog('#e9e1cd', 30, 90);
+scene.add(createSky());
+
+const plate = createBaseplate();
+scene.add(plate);
+
+const pea = createPea();
+scene.add(pea);
+
+scene.add(new THREE.HemisphereLight('#f4efe2', '#8a7a5c', 1.4));
+const sun = new THREE.DirectionalLight('#fff3dc', 2.6);
+sun.position.set(4, 7, 5);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+Object.assign(sun.shadow.camera, { left: -3, right: 3, top: 3, bottom: -3, near: 1, far: 20 });
+sun.shadow.bias = -0.0004;
+sun.shadow.normalBias = 0.02;
+scene.add(sun);
+const rim = new THREE.DirectionalLight('#cfe3ff', 0.8);
+rim.position.set(-5, 3, -6);
+scene.add(rim);
+
+const camera = new THREE.PerspectiveCamera(42, 1, 0.05, 500);
+const controls = new OrbitCam(camera, canvas, {
+  colliders: { capsules: [PEA_COLLIDER], groundY: PLATE_COLLIDER.max.y },
+  focus: { center: new THREE.Vector3(0, BODY_Y - 0.06, 0), radius: 0.72 },
+});
+
+function resize() {
+  const w = innerWidth, h = innerHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w / h;
+  camera.updateProjectionMatrix();
+  controls.fit(false);
+}
+addEventListener('resize', resize);
+resize();
+controls.fit(true);
+
+// The one motion moment: camera drops in from above and settles on the pea.
+if (!reduced) {
+  controls.cur.pitch = 1.2;
+  controls.cur.dist = controls.goal.dist * 2.6;
+  controls.cur.yaw = controls.goal.yaw - 1.1;
+}
+
+// UI
+const hint = document.getElementById('hint');
+let hinted = false;
+controls.onInteract = () => {
+  if (hinted) return;
+  hinted = true;
+  hint.classList.add('gone');
+};
+setTimeout(() => controls.onInteract(), 9000);
+document.getElementById('recenter').addEventListener('click', () => controls.fit());
+
+// Loop
+const clock = new THREE.Clock();
+let paused = false;
+function frame() {
+  const dt = Math.min(clock.getDelta(), 0.05);
+  if (!paused) pea.userData.setPhase(clock.elapsedTime);
+  controls.update(dt);
+  renderer.render(scene, camera);
+}
+renderer.setAnimationLoop(frame);
+
+// Test hooks for the check suite.
+window.__pea = {
+  THREE, scene, camera, renderer, controls, pea, plate,
+  colliders: { pea: PEA_COLLIDER, plate: PLATE_COLLIDER },
+  pause(t) { paused = true; pea.userData.setPhase(t, true); },
+  resume() { paused = false; },
+  render() { renderer.render(scene, camera); },
+};
