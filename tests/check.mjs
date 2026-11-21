@@ -331,19 +331,19 @@ try {
   await d.page.evaluate(() => { if (document.pointerLockElement) document.exitPointerLock(); });
   await d.page.waitForTimeout(200);
   const p0 = await d.page.evaluate(() => { const { player, cam } = window.__pea; player.pos.set(0, 0, 0); player.vel.set(0, 0, 0); cam.yaw = 0; return 0; });
-  await d.page.keyboard.down('KeyW'); await d.page.waitForTimeout(1200); await d.page.keyboard.up('KeyW');
+  // waits follow the game's own clock, not wall time: slow software-GL runners step fewer frames
+  const until = (f, a) => d.page.waitForFunction(f, a, { timeout: 20000 }).then(() => true, () => false);
+  await d.page.keyboard.down('KeyW'); await until(() => window.__pea.player.pos.z < -0.6); await d.page.keyboard.up('KeyW');
   const mv = await d.page.evaluate(() => { const { player } = window.__pea; return { z: player.pos.z, x: player.pos.x, facing: player.facing }; });
-  check('desktop: W walks away from the camera', mv.z < -0.25 && Math.abs(mv.x) < 0.1, `z=${mv.z.toFixed(2)}`);
+  check('desktop: W walks away from the camera', mv.z < -0.5 && Math.abs(mv.x) < 0.1, `z=${mv.z.toFixed(2)}`);
   check('desktop: pea turns to face where it walks', Math.abs(Math.abs(mv.facing) - Math.PI) < 0.2, `facing=${mv.facing.toFixed(2)}`);
   await d.page.keyboard.press('Space');
-  await d.page.waitForTimeout(250);
-  const air = await d.page.evaluate(() => window.__pea.player.pos.y);
-  await d.page.waitForTimeout(1200);
-  const landed = await d.page.evaluate(() => window.__pea.player.grounded && window.__pea.player.pos.y === 0);
-  check('desktop: Space jumps and the pea lands again', air > 0.15 && landed, `peak sample y=${air.toFixed(2)}`);
+  const rose = await until(() => window.__pea.player.pos.y > 0.3);
+  const landed = rose && await until(() => window.__pea.player.grounded && window.__pea.player.pos.y === 0);
+  check('desktop: Space jumps and the pea lands again', rose && landed, `rose=${rose} landed=${landed}`);
   await d.page.evaluate(() => { const { player, cam } = window.__pea; player.pos.set(23.7, 0, 0); cam.yaw = -Math.PI / 2; });
-  await d.page.keyboard.down('KeyW'); await d.page.waitForTimeout(900); await d.page.keyboard.up('KeyW');
-  await d.page.waitForFunction(() => window.__pea.player.respawns > 0, null, { timeout: 15000 }).catch(() => {});
+  await d.page.keyboard.down('KeyW'); await until(() => !window.__pea.player.onPlate); await d.page.keyboard.up('KeyW');
+  await d.page.waitForFunction(() => window.__pea.player.respawns > 0, null, { timeout: 30000 }).catch(() => {});
   check('desktop: walking off the edge falls and respawns', await d.page.evaluate(() => window.__pea.player.respawns > 0));
   // drag-look works without pointer lock
   const y0 = await d.page.evaluate(() => window.__pea.cam.yaw);
@@ -378,10 +378,10 @@ try {
   await m.page.evaluate(() => { const { player, cam } = window.__pea; player.pos.set(0, 0, 0); cam.yaw = 0; });
   await touch('touchStart', [[90, 650]]);
   for (let i = 1; i <= 5; i++) await touch('touchMove', [[90, 650 - i * 12]]);
-  await m.page.waitForTimeout(1000);
+  await m.page.waitForFunction(() => window.__pea.player.pos.z < -0.5, null, { timeout: 20000 }).catch(() => {});
   await touch('touchEnd', []);
   const pm = await m.page.evaluate(() => window.__pea.player.pos.z);
-  check('phone: left-thumb stick walks the pea', pm < -0.25, `z=${pm.toFixed(2)}`);
+  check('phone: left-thumb stick walks the pea', pm < -0.5, `z=${pm.toFixed(2)}`);
   const yy0 = await m.page.evaluate(() => window.__pea.cam.yaw);
   await touch('touchStart', [[300, 400]]);
   for (let i = 1; i <= 6; i++) await touch('touchMove', [[300 - i * 15, 400]]);
@@ -392,8 +392,7 @@ try {
   check('phone: jump button is the top element at its centre', hitJ);
   const j0 = await m.page.evaluate(() => window.__pea.player.jumps);
   await m.page.tap('#jump');
-  await m.page.waitForTimeout(300);
-  check('phone: jump button tap jumps', await m.page.evaluate((j0) => window.__pea.player.jumps > j0, j0));
+  check('phone: jump button tap jumps', await m.page.waitForFunction((j0) => window.__pea.player.jumps > j0, j0, { timeout: 20000 }).then(() => true, () => false));
   const hitM = await m.page.evaluate(() => { const r = document.getElementById('help').getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('#help') !== null; });
   check('phone: help button is the top element at its centre', hitM);
   await m.page.tap('#help');
