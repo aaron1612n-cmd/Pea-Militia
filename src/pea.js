@@ -293,10 +293,11 @@ export function createPea() {
   const gloveMat = mat(COL.glove, { roughness: 0.85 });
   for (const s of [-1, 1]) {
     const pts = [
-      new THREE.Vector3(0.4 * s, 0.04, 0.0),
-      new THREE.Vector3(0.56 * s, -0.04, 0.03),
-      new THREE.Vector3(0.55 * s, -0.15, 0.05),
-      new THREE.Vector3(0.52 * s, -0.28, 0.08),
+      // fists on hips: elbow flared out and slightly back, wrist tucked onto the hip
+      new THREE.Vector3(0.42 * s, 0.03, -0.02),
+      new THREE.Vector3(0.58 * s, -0.04, -0.06),
+      new THREE.Vector3(0.62 * s, -0.11, -0.06),
+      new THREE.Vector3(0.535 * s, -0.21, 0.02),
     ];
     const limb = skinnedLimb(`arm${s < 0 ? 'L' : 'R'}`, pts, 0.046, 0.036, limbMat);
     body.add(limb.mesh);
@@ -307,8 +308,9 @@ export function createPea() {
     const mitt = part(`mitt${s < 0 ? 'L' : 'R'}`, ellipsoid(0.07, 0.08, 0.058, 32, 24, (v) => { v.z *= 1 - 0.25 * Math.max(0, -v.y); }), gloveMat);
     hand.add(mitt);
     const thumb = part(`thumb${s < 0 ? 'L' : 'R'}`, ellipsoid(0.026, 0.042, 0.026, 20, 14), gloveMat);
-    thumb.position.set(-0.05 * s, 0.006, 0.03);
-    thumb.rotation.z = 0.5 * s;
+    // thumb wraps forward over the fist so it stays clear of the hip
+    thumb.position.set(0.012 * s, 0.006, 0.05);
+    thumb.rotation.set(0.5, 0, -0.25 * s);
     hand.add(thumb);
     const cuff = part(`cuff${s < 0 ? 'L' : 'R'}`, ellipsoid(0.058, 0.026, 0.052, 28, 12), gloveMat);
     cuff.position.set(0, 0.06, 0);
@@ -360,9 +362,10 @@ export function createPea() {
     arms.forEach((a, i) => {
       const s = i === 0 ? -1 : 1;
       const sway = motion ? Math.sin((t / 3.2) * Math.PI * 2 + 0.6) : 0;
-      a.bones[0].rotation.z = rest.arm[i][0].z + s * 0.05 * sway;
-      a.bones[1].rotation.z = rest.arm[i][1].z + s * 0.06 * sway;
-      a.bones[1].rotation.x = -0.05 * sway;
+      // elbows breathe outward a touch; fists stay planted on the hips
+      a.bones[0].rotation.z = rest.arm[i][0].z + s * 0.025 * sway;
+      a.bones[1].rotation.z = rest.arm[i][1].z - s * 0.03 * sway;
+      a.bones[1].rotation.x = -0.02 * sway;
     });
     // blink: quick squash on a ~3.6s loop
     const bt = (t % 3.6) - (state.blinkAt % 3.6);
