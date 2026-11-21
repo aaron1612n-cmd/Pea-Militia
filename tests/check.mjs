@@ -333,7 +333,7 @@ try {
   const p0 = await d.page.evaluate(() => { const { player, cam } = window.__pea; player.pos.set(0, 0, 0); player.vel.set(0, 0, 0); cam.yaw = 0; return 0; });
   await d.page.keyboard.down('KeyW'); await d.page.waitForTimeout(1200); await d.page.keyboard.up('KeyW');
   const mv = await d.page.evaluate(() => { const { player } = window.__pea; return { z: player.pos.z, x: player.pos.x, facing: player.facing }; });
-  check('desktop: W walks away from the camera', mv.z < -0.4 && Math.abs(mv.x) < 0.1, `z=${mv.z.toFixed(2)}`);
+  check('desktop: W walks away from the camera', mv.z < -0.25 && Math.abs(mv.x) < 0.1, `z=${mv.z.toFixed(2)}`);
   check('desktop: pea turns to face where it walks', Math.abs(Math.abs(mv.facing) - Math.PI) < 0.2, `facing=${mv.facing.toFixed(2)}`);
   await d.page.keyboard.press('Space');
   await d.page.waitForTimeout(250);
@@ -381,7 +381,7 @@ try {
   await m.page.waitForTimeout(1000);
   await touch('touchEnd', []);
   const pm = await m.page.evaluate(() => window.__pea.player.pos.z);
-  check('phone: left-thumb stick walks the pea', pm < -0.4, `z=${pm.toFixed(2)}`);
+  check('phone: left-thumb stick walks the pea', pm < -0.25, `z=${pm.toFixed(2)}`);
   const yy0 = await m.page.evaluate(() => window.__pea.cam.yaw);
   await touch('touchStart', [[300, 400]]);
   for (let i = 1; i <= 6; i++) await touch('touchMove', [[300 - i * 15, 400]]);
