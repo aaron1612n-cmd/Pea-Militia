@@ -1,7 +1,7 @@
 // Keyboard + mouse (pointer lock, drag fallback) and touch (floating stick on the left,
 // drag-to-look on the right, jump button). Each frame the game calls read().
 export class Input {
-  constructor(canvas, { stick, knob, jumpBtn }) {
+  constructor(canvas, { stick, knob, jumpBtn, fireBtn, buttons = {} }) {
     this.canvas = canvas;
     this.stickEl = stick;
     this.knobEl = knob;
@@ -16,7 +16,15 @@ export class Input {
     this.onChange = null; // device type / lock changes
     this.onLockRequest = null;
     this.radius = 52;
+    this.fire = false;
+    this.fireTouch = false;
+    this.aim = false;
+    this.actions = []; // one-shot commands: { type: 'slot', n } | 'next' | 'prev' | 'reload' | 'grenade' | 'order' | 'use' | 'menu'
+    this.mode = 'play'; // 'play' or 'build' (sandbox clicks go to the world, not the gun)
+    this.onWorldClick = null;
     this.bind(jumpBtn);
+    if (fireBtn) this.bindFire(fireBtn);
+    for (const [action, el] of Object.entries(buttons)) this.bindButton(el, action);
     this.setTouch(this.touch);
   }
 
@@ -34,36 +42,50 @@ export class Input {
       if (e.pointerType === 'touch') {
         this.setTouch(true);
         if (e.clientX < innerWidth * 0.45 && !this.stick) {
-          this.stick = { id: e.pointerId, ox: e.clientX, oy: e.clientY, x: 0, y: 0 };
+          this.stick = { id: e.pointerId, ox: e.clientX, oy: e.clientY, x: 0, y: 0, moved: 0, t: performance.now() };
           this.placeStick(e.clientX, e.clientY);
         } else if (this.lookId === null) {
           this.lookId = e.pointerId;
           this.lookAt = { x: e.clientX, y: e.clientY };
+          this.lookTap = { x: e.clientX, y: e.clientY, moved: 0 };
         }
         this.capture(e.pointerId);
         return;
       }
       this.setTouch(false);
+      if (this.mode === 'build') {
+        this.drag = { id: e.pointerId, x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, moved: 0, button: e.button };
+        this.capture(e.pointerId);
+        return;
+      }
       if (!this.locked) {
         this.requestLock();
         this.drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
         this.capture(e.pointerId);
-      }
+      } else if (e.button === 0) this.fire = true;
+      else if (e.button === 2) this.aim = true;
     });
+    c.addEventListener('mousedown', (e) => { if (this.locked && this.mode === 'play' && e.button === 2) this.aim = true; });
+    addEventListener('mouseup', (e) => { if (e.button === 0) this.fire = false; if (e.button === 2) this.aim = false; });
     c.addEventListener('pointermove', (e) => {
       if (this.stick && e.pointerId === this.stick.id) {
         let x = e.clientX - this.stick.ox, y = e.clientY - this.stick.oy;
         const l = Math.hypot(x, y), R = this.radius;
+        this.stick.moved = Math.max(this.stick.moved, l);
         if (l > R) { x *= R / l; y *= R / l; }
         this.stick.x = x / R; this.stick.y = y / R;
         this.knobEl.style.transform = `translate(${x}px, ${y}px)`;
       } else if (e.pointerId === this.lookId) {
+        if (this.lookTap) this.lookTap.moved += Math.hypot(e.clientX - this.lookAt.x, e.clientY - this.lookAt.y);
         const k = 4.2 / Math.max(320, Math.min(innerWidth, innerHeight));
         this.look.dx += (e.clientX - this.lookAt.x) * k;
         this.look.dy += (e.clientY - this.lookAt.y) * k;
         this.lookAt = { x: e.clientX, y: e.clientY };
       } else if (this.drag && e.pointerId === this.drag.id && !this.locked) {
         const k = 0.005;
+        this.drag.moved = (this.drag.moved || 0) + Math.hypot(e.clientX - this.drag.x, e.clientY - this.drag.y);
+        if (this.mode === 'build' && this.onWorldHover) this.onWorldHover(e.clientX, e.clientY, true);
+        if (this.mode === 'build' && this.drag.moved < 8) return;
         this.look.dx += (e.clientX - this.drag.x) * k;
         this.look.dy += (e.clientY - this.drag.y) * k;
         this.drag.x = e.clientX; this.drag.y = e.clientY;
@@ -71,20 +93,31 @@ export class Input {
     });
     const end = (e) => {
       if (this.stick && e.pointerId === this.stick.id) {
+        if (this.mode === 'build' && this.stick.moved < 10 && performance.now() - this.stick.t < 400 && this.onWorldClick) this.onWorldClick(this.stick.ox, this.stick.oy);
         this.stick = null;
         this.knobEl.style.transform = '';
         this.stickEl.style.left = this.stickEl.style.top = '';
         this.stickEl.classList.remove('live');
       }
-      if (e.pointerId === this.lookId) this.lookId = null;
-      if (this.drag && e.pointerId === this.drag.id) this.drag = null;
+      if (e.pointerId === this.lookId) {
+        this.lookId = null;
+        // a still tap in build mode is a click on the world
+        if (this.mode === 'build' && this.lookTap && this.lookTap.moved < 10 && this.onWorldClick) this.onWorldClick(e.clientX, e.clientY);
+        this.lookTap = null;
+      }
+      if (this.drag && e.pointerId === this.drag.id) {
+        if (this.mode === 'build' && (this.drag.moved || 0) < 8 && this.onWorldClick && e.type === 'pointerup') this.onWorldClick(e.clientX, e.clientY, this.drag.button);
+        this.drag = null;
+      }
     };
+    c.addEventListener('pointermove', (e) => { if (this.mode === 'build' && e.pointerType !== 'touch' && this.onWorldHover) this.onWorldHover(e.clientX, e.clientY, false); });
     c.addEventListener('pointerup', end);
     c.addEventListener('pointercancel', end);
 
     document.addEventListener('pointerlockchange', () => {
       this.locked = document.pointerLockElement === c;
       if (this.locked) this.drag = null;
+      else { this.fire = false; this.aim = false; }
       if (this.onChange) this.onChange();
     });
     document.addEventListener('mousemove', (e) => {
@@ -93,15 +126,25 @@ export class Input {
       this.look.dy += e.movementY * 0.0024;
     });
 
-    const GAME = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
+    const GAME = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Tab']);
+    const KEYS = { KeyR: 'reload', KeyG: 'grenade', KeyF: 'order', KeyE: 'use', KeyB: 'menu', Tab: 'menu', KeyQ: 'prev' };
     addEventListener('keydown', (e) => {
+      if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
       if (GAME.has(e.code)) e.preventDefault();
       if (e.code === 'Space' && !e.repeat) this.jumpQueued = true;
+      if (!e.repeat && KEYS[e.code]) this.actions.push({ type: KEYS[e.code] });
+      if (!e.repeat && /^Digit[1-9]$/.test(e.code)) this.actions.push({ type: 'slot', n: +e.code.slice(5) - 1 });
       this.keys.add(e.code);
       if (this.touch && GAME.has(e.code)) this.setTouch(false);
     });
     addEventListener('keyup', (e) => this.keys.delete(e.code));
-    addEventListener('blur', () => this.keys.clear());
+    addEventListener('blur', () => { this.keys.clear(); this.fire = false; this.aim = false; });
+    c.addEventListener('wheel', (e) => {
+      e.preventDefault();
+      if (this.mode !== 'play') return;
+      this.wheel = (this.wheel || 0) + e.deltaY;
+      if (Math.abs(this.wheel) > 40) { this.actions.push({ type: this.wheel > 0 ? 'next' : 'prev' }); this.wheel = 0; }
+    }, { passive: false });
 
     const jump = (e) => { e.preventDefault(); e.stopPropagation(); this.jumpQueued = true; jumpBtn.classList.add('down'); };
     const up = () => jumpBtn.classList.remove('down');
@@ -110,6 +153,24 @@ export class Input {
     jumpBtn.addEventListener('pointercancel', up);
     jumpBtn.addEventListener('pointerleave', up);
     jumpBtn.addEventListener('click', (e) => e.preventDefault());
+  }
+
+  bindFire(el) {
+    const down = (e) => { e.preventDefault(); e.stopPropagation(); this.fireTouch = true; this.firePulse = true; el.classList.add('down'); try { el.setPointerCapture(e.pointerId); } catch {} };
+    const up = () => { this.fireTouch = false; el.classList.remove('down'); };
+    el.addEventListener('pointerdown', down);
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+    el.addEventListener('click', (e) => e.preventDefault());
+  }
+
+  bindButton(el, type) {
+    el.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); this.actions.push({ type }); el.classList.add('down'); });
+    const up = () => el.classList.remove('down');
+    el.addEventListener('pointerup', up);
+    el.addEventListener('pointercancel', up);
+    el.addEventListener('pointerleave', up);
+    el.addEventListener('click', (e) => e.preventDefault());
   }
 
   capture(id) {
@@ -146,7 +207,15 @@ export class Input {
     }
     const l = Math.hypot(x, y);
     if (l > 1) { x /= l; y /= l; }
-    const out = { move: { x, y }, look: { ...this.look }, jump: this.jumpQueued };
+    const play = this.mode === 'play';
+    const out = {
+      move: { x, y }, look: { ...this.look }, jump: this.jumpQueued,
+      fire: play && ((this.fire && this.locked) || this.fireTouch || this.firePulse), aim: play && this.aim && this.locked,
+      sprint: k.has('ShiftLeft') || k.has('ShiftRight'),
+      actions: this.actions,
+    };
+    this.actions = [];
+    this.firePulse = false;
     this.look.dx = this.look.dy = 0;
     this.jumpQueued = false;
     return out;

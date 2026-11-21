@@ -8,13 +8,43 @@
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
   </head>
   <body>
-    <canvas id="scene" aria-label="A pea soldier on a stone baseplate"></canvas>
+    <canvas id="scene" aria-label="Pea armies at war on a stone baseplate"></canvas>
     <h1 class="mark">Pea Militia</h1>
     <p id="prompt" class="prompt" aria-live="polite"></p>
     <button id="help" class="btn help" type="button" aria-label="Replay controls" title="Replay controls (H)">?</button>
+    <button id="sandbox" class="btn sbx" type="button" aria-label="Sandbox tools" title="Sandbox (B)" aria-pressed="false">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM17 14v6M14 17h6" /></svg>
+    </button>
+    <div id="panel" class="panel" hidden>
+      <div id="tools" class="tools"></div>
+      <div id="tabs" class="tabs"></div>
+      <div id="catalog" class="catalog"></div>
+    </div>
     <div id="stick" class="stick" aria-hidden="true"><div id="knob" class="knob"></div></div>
+    <div class="hud" aria-hidden="true">
+      <div class="vitals">
+        <div class="hp"><i id="hpbar"></i></div>
+        <div class="row"><span id="order" class="order">Follow</span><span id="counts" class="counts"></span></div>
+      </div>
+      <div class="gun"><span id="wname"></span><b id="ammo"></b><span class="heatbar" hidden><i id="heat"></i></span></div>
+      <div id="cross" class="cross"><i></i><i></i><i></i><i></i></div>
+      <div id="hurt" class="hurt"></div>
+      <p id="hint" class="hint"></p>
+    </div>
     <button id="jump" class="btn jump" type="button" aria-label="Jump">
       <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15l7-7 7 7" /></svg>
+    </button>
+    <button id="fire" class="btn fire" type="button" aria-label="Fire">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="6" /><path d="M12 2v5M12 17v5M2 12h5M17 12h5" /></svg>
+    </button>
+    <button id="swap" class="btn swap" type="button" aria-label="Switch weapon">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h14l-4-4M20 15H6l4 4" /></svg>
+    </button>
+    <button id="orderBtn" class="btn orderbtn" type="button" aria-label="Squad order">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 21V4M6 4h11l-3 4 3 4H6" /></svg>
+    </button>
+    <button id="use" class="btn use" type="button" aria-label="Enter or leave vehicle" hidden>
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M10 6h9v12h-9M3 12h11M10 8l4 4-4 4" /></svg>
     </button>
     <script type="module" src="/src/main.js"></script>
   </body>

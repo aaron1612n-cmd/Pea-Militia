@@ -14,23 +14,27 @@ const HIP_Y = 0.34; // upper body pivots here: leans, bobs and twists over the l
 export const GAIT = { stance: 0.62, cadence: 2.3 };
 
 // Muted field colours: a real pea's dull green, worn olive kit, no bright accents.
-const COL = {
-  peaTop: new THREE.Color('#7f9a4c'),
-  peaMid: new THREE.Color('#677f3a'),
-  peaLow: new THREE.Color('#44562a'),
-  helmet: '#4a4f3a',
-  helmetDark: '#33372a',
-  badge: '#5c5546',
-  boot: '#2b2520',
-  sole: '#151311',
-  glove: '#3d3a2f',
-  eye: '#121410',
-  brow: '#3e4f25',
-  mouth: '#2a3319',
-  strap: '#3d3e2f',
+// Other armies pass their own palette (see factions.js).
+const DEFAULT_PALETTE = {
+  peaTop: '#7f9a4c', peaMid: '#677f3a', peaLow: '#44562a',
+  helmet: '#4a4f3a', helmetDark: '#33372a', badge: '#5c5546',
+  boot: '#2b2520', sole: '#151311', glove: '#3d3a2f',
+  eye: '#121410', brow: '#3e4f25', mouth: '#2a3319', strap: '#3d3e2f',
+};
+let COL = null;
+function setPalette(p) {
+  COL = { ...p, peaTop: new THREE.Color(p.peaTop), peaMid: new THREE.Color(p.peaMid), peaLow: new THREE.Color(p.peaLow) };
+}
+
+// Geometry and materials are shared between peas of the same army and detail level.
+const cache = new Map();
+const cached = (key, make) => {
+  if (!cache.has(key)) cache.set(key, make());
+  return cache.get(key);
 };
 
-const mat = (color, opts = {}) => new THREE.MeshStandardMaterial({ color, roughness: 0.6, ...opts });
+let KEY = '';
+const mat = (color, opts = {}) => cached(`mat|${color}|${JSON.stringify(opts)}`, () => new THREE.MeshStandardMaterial({ color, roughness: 0.6, ...opts }));
 
 function part(name, geometry, material, kind = 'mesh') {
   const m = kind === 'skinned' ? new THREE.SkinnedMesh(geometry, material) : new THREE.Mesh(geometry, material);
@@ -50,9 +54,9 @@ function onBody(dir, lift = 0) {
 }
 
 // A limb as a real skinned mesh: tapered tube bound to a 3-bone chain along its path.
-function skinnedLimb(name, pts, r0, r1, material) {
+function skinnedLimb(name, pts, r0, r1, material, lod = 1) {
   const curve = new THREE.CatmullRomCurve3(pts, false, 'centripetal');
-  const { geometry, ts } = taperedTube(curve, (t) => THREE.MathUtils.lerp(r0, r1, t) * (1 + 0.12 * Math.sin(t * Math.PI)), 36, 16);
+  const { geometry, ts } = cached(`limb|${name}|${lod}`, () => taperedTube(curve, (t) => THREE.MathUtils.lerp(r0, r1, t) * (1 + 0.12 * Math.sin(t * Math.PI)), lod < 1 ? 18 : 36, lod < 1 ? 10 : 16));
   const bonesT = [0, 0.5, 1];
   const bonePts = bonesT.map((t) => curve.getPointAt(t));
   const si = [], sw = [];
@@ -62,8 +66,10 @@ function skinnedLimb(name, pts, r0, r1, material) {
     si.push(k, k + 1, 0, 0);
     sw.push(1 - w, w, 0, 0);
   }
-  geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
-  geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
+  if (!geometry.attributes.skinIndex) {
+    geometry.setAttribute('skinIndex', new THREE.Uint16BufferAttribute(si, 4));
+    geometry.setAttribute('skinWeight', new THREE.Float32BufferAttribute(sw, 4));
+  }
   const bones = bonePts.map((p, i) => {
     const b = new THREE.Bone();
     b.name = `${name}_b${i}`;
@@ -81,10 +87,11 @@ function skinnedLimb(name, pts, r0, r1, material) {
   return { mesh, bones, curve };
 }
 
-function helmetGeometry() {
+function helmetGeometry(lod = 1) {
   const pts = [];
   const A = 58;
-  for (let a = 0; a <= A; a += 2) {
+  const step = lod < 1 ? 4 : 2;
+  for (let a = 0; a <= A; a += step) {
     const r = THREE.MathUtils.degToRad(a);
     pts.push(new THREE.Vector2(0.535 * Math.sin(r), 0.553 * Math.cos(r)));
   }
@@ -96,13 +103,13 @@ function helmetGeometry() {
   pts.push(new THREE.Vector2(0.562, 0.208));
   pts.push(new THREE.Vector2(0.54, 0.205));
   pts.push(new THREE.Vector2(0.47, 0.232));
-  for (let a = A + 2; a >= 0; a -= 2) {
+  for (let a = A + 2; a >= 0; a -= step) {
     const r = THREE.MathUtils.degToRad(a);
     pts.push(new THREE.Vector2(0.478 * Math.sin(r), 0.5 * Math.cos(r)));
   }
   pts[0].x = 0;
   pts[pts.length - 1].x = 0;
-  const g = new THREE.LatheGeometry(pts, 72);
+  const g = new THREE.LatheGeometry(pts, lod < 1 ? 36 : 72);
   // merge seam/poles so it is a single closed shell, then smooth-shade
   g.deleteAttribute('normal');
   g.deleteAttribute('uv');
@@ -184,7 +191,11 @@ function surfaceRibbon(path, t0, t1, { hw, h0, h1, r }, segs) {
   return g;
 }
 
-export function createPea() {
+// opts: { palette, team, lod } — lod < 1 builds a lighter mesh for crowds.
+export function createPea({ palette = DEFAULT_PALETTE, team = 0, lod = 1 } = {}) {
+  setPalette(palette);
+  KEY = `${team}|${lod}`;
+  const hi = lod >= 1;
   const root = new THREE.Group();
   root.name = 'pea';
   root.scale.setScalar(PEA_SCALE);
@@ -199,23 +210,23 @@ export function createPea() {
   upper.add(body);
 
   // ---- body: slightly egg-shaped pea with a crease ----
-  const bodyGeo = ellipsoid(BODY_R, BODY_R * BODY_SY, BODY_R, 96, 64, (v) => {
+  const bodyGeo = cached(`body|${KEY}`, () => paintBody(ellipsoid(BODY_R, BODY_R * BODY_SY, BODY_R, hi ? 96 : 40, hi ? 64 : 28, (v) => {
     // soft seam where a pea sits in its pod, plus a gentle belly
     const seam = 0.012 * Math.exp(-((v.x * 6) ** 2)) * THREE.MathUtils.smoothstep(-v.z, 0, 0.4);
     const belly = v.z > 0 && v.y < 0 ? 0.03 * v.z * -v.y : 0;
     const k = 1 - seam + belly;
     v.multiplyScalar(k);
-  });
-  paint(bodyGeo, (v, c) => {
+  })));
+  function paintBody(g) { return paint(g, (v, c) => {
     const t = (v.y / (BODY_R * BODY_SY) + 1) / 2;
     if (t > 0.5) c.copy(COL.peaMid).lerp(COL.peaTop, (t - 0.5) * 2);
     else c.copy(COL.peaLow).lerp(COL.peaMid, t * 2);
     // low-frequency mottling so the skin reads as a real, slightly bruised pea
     const n = Math.sin(v.x * 23.1 + v.y * 7.3) * Math.sin(v.z * 19.7 - v.y * 11.9) + 0.5 * Math.sin(v.x * 41 + v.z * 37 + v.y * 29);
     c.multiplyScalar(1 + 0.05 * n);
-  });
-  const bodyMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.68 });
-  const limbMat = new THREE.MeshStandardMaterial({ color: COL.peaMid.clone().lerp(COL.peaLow, 0.35), roughness: 0.7 });
+  }); }
+  const bodyMat = cached('bodyMat', () => new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.68 }));
+  const limbMat = cached(`limbMat|${KEY}`, () => new THREE.MeshStandardMaterial({ color: COL.peaMid.clone().lerp(COL.peaLow, 0.35), roughness: 0.7 }));
   const bodyMesh = part('body', bodyGeo, bodyMat);
   body.add(bodyMesh);
 
@@ -234,7 +245,7 @@ export function createPea() {
     eye.position.copy(onBody(dir, -0.018));
     eye.lookAt(eye.position.clone().add(dir));
     // almond-shaped eye, mostly sunk into the skin
-    const eyeMesh = part(`eye${tag}`, ellipsoid(0.05, 0.022, 0.03, 36, 20, (v) => { v.y *= 1 - 0.35 * v.x * v.x; }), mat(COL.eye, { roughness: 0.55 }));
+    const eyeMesh = part(`eye${tag}`, cached(`eye|${lod}`, () => ellipsoid(0.05, 0.022, 0.03, hi ? 36 : 16, hi ? 20 : 10, (v) => { v.y *= 1 - 0.35 * v.x * v.x; })), mat(COL.eye, { roughness: 0.55 }));
     eye.add(eyeMesh);
     face.add(eye);
     eyes.push(eye);
@@ -245,7 +256,7 @@ export function createPea() {
       const u = i / 8;
       browPts.push(surf((0.075 + 0.17 * u) * s, 0.215, 0.002));
     }
-    const brow = part(`brow${tag}`, taperedTube(new THREE.CatmullRomCurve3(browPts), (t) => 0.017 * (0.85 + 0.15 * Math.sin(t * Math.PI)), 28, 12).geometry, mat(COL.brow, { roughness: 0.85 }));
+    const brow = part(`brow${tag}`, cached(`brow${tag}|${lod}`, () => taperedTube(new THREE.CatmullRomCurve3(browPts), (t) => 0.017 * (0.85 + 0.15 * Math.sin(t * Math.PI)), hi ? 28 : 12, hi ? 12 : 6).geometry), mat(COL.brow, { roughness: 0.85 }));
     face.add(brow);
   }
   // mouth: a short, straight line
@@ -254,7 +265,7 @@ export function createPea() {
     const u = i / 8 - 0.5;
     mouthPts.push(surf(u * 0.13, -0.17, 0.0));
   }
-  const mouth = part('mouth', taperedTube(new THREE.CatmullRomCurve3(mouthPts), (t) => 0.007 * (0.75 + 0.3 * Math.sin(t * Math.PI)), 28, 10).geometry, mat(COL.mouth, { roughness: 0.7 }));
+  const mouth = part('mouth', cached(`mouth|${lod}`, () => taperedTube(new THREE.CatmullRomCurve3(mouthPts), (t) => 0.007 * (0.75 + 0.3 * Math.sin(t * Math.PI)), hi ? 28 : 12, hi ? 10 : 6).geometry), mat(COL.mouth, { roughness: 0.7 }));
   face.add(mouth);
 
   // chin strap: a flat webbing band that tucks up inside the helmet shell in front of each
@@ -265,7 +276,7 @@ export function createPea() {
     new THREE.Vector3(0, -0.36, 0.933),
     new THREE.Vector3(0.7, 0.55, 0.455),
   );
-  face.add(part('strap', surfaceRibbon(strapPath, 0, 1, { hw: 0.021, h0: -0.003, h1: 0.0065, r: 0.003 }, 96), mat(COL.strap, { roughness: 0.92 })));
+  face.add(part('strap', cached(`strap|${lod}`, () => surfaceRibbon(strapPath, 0, 1, { hw: 0.021, h0: -0.003, h1: 0.0065, r: 0.003 }, hi ? 96 : 48)), mat(COL.strap, { roughness: 0.92 })));
   // a small slide buckle on the right cheek, sitting proud of the webbing
   {
     const t = 0.796, c = bodySurface(strapPath(t)), n = bodyNormal(c);
@@ -273,7 +284,7 @@ export function createPea() {
     const across = along.clone().cross(n).normalize();
     along.crossVectors(n, across);
     // squared-off slide, sculpted from a sphere so it stays one closed, smooth shell
-    const geo = ellipsoid(0.029, 0.022, 0.011, 40, 24, (v) => { v.x = Math.sign(v.x) * Math.abs(v.x) ** 0.6; v.y = Math.sign(v.y) * Math.abs(v.y) ** 0.6; });
+    const geo = cached(`buckle|${lod}`, () => ellipsoid(0.029, 0.022, 0.011, hi ? 40 : 16, hi ? 24 : 10, (v) => { v.x = Math.sign(v.x) * Math.abs(v.x) ** 0.6; v.y = Math.sign(v.y) * Math.abs(v.y) ** 0.6; }));
     const buckle = part('buckle', geo, mat(COL.badge, { roughness: 0.55, metalness: 0.35 }));
     buckle.position.copy(c).addScaledVector(n, 0.003);
     buckle.quaternion.setFromRotationMatrix(new THREE.Matrix4().makeBasis(across, along, n));
@@ -285,17 +296,18 @@ export function createPea() {
   helmet.name = 'helmetRig';
   helmet.rotation.x = -0.03;
   body.add(helmet);
-  const helmetMesh = part('helmet', helmetGeometry(), mat('#ffffff', { vertexColors: true, roughness: 0.9, metalness: 0.02 }));
+  const helmetMesh = part('helmet', cached(`helmet|${KEY}`, () => helmetGeometry(lod)), mat('#ffffff', { vertexColors: true, roughness: 0.9, metalness: 0.02 }));
   helmet.add(helmetMesh);
   // small stamped plate, the same dull metal as the kit
   const bdir = new THREE.Vector3(0, 0.55, 0.835).normalize();
-  const badge = part('badge', ellipsoid(0.042, 0.05, 0.016, 28, 14, (v) => { v.y *= 1 - 0.3 * Math.max(0, -v.y); }), mat(COL.badge, { roughness: 0.7, metalness: 0.3 }));
+  const badge = part('badge', cached(`badge|${lod}`, () => ellipsoid(0.042, 0.05, 0.016, hi ? 28 : 14, hi ? 14 : 8, (v) => { v.y *= 1 - 0.3 * Math.max(0, -v.y); })), mat(COL.badge, { roughness: 0.7, metalness: 0.3 }));
   badge.position.copy(bdir.clone().multiplyScalar(0.548));
   badge.lookAt(badge.position.clone().add(bdir));
   helmet.add(badge);
 
   // ---- arms (skinned) with mitten hands ----
   const arms = [];
+  const hands = [];
   const gloveMat = mat(COL.glove, { roughness: 0.85 });
   for (const s of [-1, 1]) {
     const pts = [
@@ -306,7 +318,7 @@ export function createPea() {
       new THREE.Vector3(0.556 * s, -0.12, -0.008),
       new THREE.Vector3(0.515 * s, -0.245, 0.05),
     ];
-    const limb = skinnedLimb(`arm${s < 0 ? 'L' : 'R'}`, pts, 0.046, 0.036, limbMat);
+    const limb = skinnedLimb(`arm${s < 0 ? 'L' : 'R'}`, pts, 0.046, 0.036, limbMat, lod);
     body.add(limb.mesh);
     const hand = new THREE.Group();
     hand.name = `hand${s < 0 ? 'L' : 'R'}Rig`;
@@ -314,19 +326,20 @@ export function createPea() {
     hand.position.set(-0.004 * s, -0.04, 0.012);
     hand.rotation.set(-0.22, 0.12 * s, 0.06 * s);
     limb.bones[2].add(hand);
+    hands.push(hand);
     // loosely curled hand: flat across the palm, fingers rolling in toward the body
-    const mitt = part(`mitt${s < 0 ? 'L' : 'R'}`, ellipsoid(0.05, 0.078, 0.062, 32, 24, (v) => {
+    const mitt = part(`mitt${s < 0 ? 'L' : 'R'}`, cached(`mitt${s}|${lod}`, () => ellipsoid(0.05, 0.078, 0.062, hi ? 32 : 14, hi ? 24 : 10, (v) => {
       const d = Math.max(0, -v.y);
       v.x -= s * 0.45 * d * d; // fingertips curl toward the palm side
       v.z *= 1 - 0.18 * d;
-    }), gloveMat);
+    })), gloveMat);
     hand.add(mitt);
-    const thumb = part(`thumb${s < 0 ? 'L' : 'R'}`, ellipsoid(0.022, 0.04, 0.024, 20, 14), gloveMat);
+    const thumb = part(`thumb${s < 0 ? 'L' : 'R'}`, cached(`thumb|${lod}`, () => ellipsoid(0.022, 0.04, 0.024, hi ? 20 : 10, hi ? 14 : 8)), gloveMat);
     // thumb rests along the front of the curled fingers
     thumb.position.set(-0.01 * s, -0.012, 0.05);
     thumb.rotation.set(0.25, 0, 0.12 * s);
     hand.add(thumb);
-    const cuff = part(`cuff${s < 0 ? 'L' : 'R'}`, ellipsoid(0.054, 0.026, 0.056, 28, 12), gloveMat);
+    const cuff = part(`cuff${s < 0 ? 'L' : 'R'}`, cached(`cuff|${lod}`, () => ellipsoid(0.054, 0.026, 0.056, hi ? 28 : 14, hi ? 12 : 8)), gloveMat);
     cuff.position.set(0, 0.058, 0);
     hand.add(cuff);
     arms.push(limb);
@@ -342,20 +355,22 @@ export function createPea() {
       new THREE.Vector3(0.19 * s, 0.13, 0.02),
       new THREE.Vector3(0.19 * s, 0.085, 0.01),
     ];
-    const limb = skinnedLimb(`leg${s < 0 ? 'L' : 'R'}`, pts, 0.062, 0.05, limbMat);
+    const limb = skinnedLimb(`leg${s < 0 ? 'L' : 'R'}`, pts, 0.062, 0.05, limbMat, lod);
     root.add(limb.mesh);
     const foot = new THREE.Group();
     foot.name = `foot${s < 0 ? 'L' : 'R'}Rig`;
     limb.bones[2].add(foot);
     // boot: sculpted ellipsoid with a flat sole and a rounded toe box
     const SOLE = -0.083; // ankle sits at y=0.085, so the sole lands 2mm above the plate
-    const bootGeo = ellipsoid(0.1, 0.085, 0.16, 48, 32, (v) => {
-      if (v.z > 0) v.y *= 1 - 0.25 * v.z; // toe slopes down
-      if (v.y < -0.4) v.y = -0.4 - (v.y + 0.4) * 0.15; // flatten into sole
+    const bootGeo = cached(`boot|${KEY}`, () => {
+      const g = ellipsoid(0.1, 0.085, 0.16, hi ? 48 : 20, hi ? 32 : 14, (v) => {
+        if (v.z > 0) v.y *= 1 - 0.25 * v.z; // toe slopes down
+        if (v.y < -0.4) v.y = -0.4 - (v.y + 0.4) * 0.15; // flatten into sole
+      });
+      const bb = new THREE.Box3().setFromBufferAttribute(g.attributes.position);
+      g.translate(0, SOLE - bb.min.y, 0.05);
+      return paint(g, (v, c) => c.set(v.y < SOLE + 0.025 ? COL.sole : COL.boot));
     });
-    const bb = new THREE.Box3().setFromBufferAttribute(bootGeo.attributes.position);
-    bootGeo.translate(0, SOLE - bb.min.y, 0.05);
-    paint(bootGeo, (v, c) => c.set(v.y < SOLE + 0.025 ? COL.sole : COL.boot));
     const boot = part(`boot${s < 0 ? 'L' : 'R'}`, bootGeo, bootMat);
     foot.add(boot);
     legs.push({ ...limb, foot, s, bootGeo });
@@ -383,14 +398,17 @@ export function createPea() {
     L.p2 = Math.atan2(A.z - K.z, -(A.y - K.y));
     // lowest point of the boot for each foot pitch, so a tilted foot rolls on heel or toe
     // instead of sinking into the ground
-    const pos = L.bootGeo.attributes.position;
-    L.low = [];
-    for (let i = 0; i <= 80; i++) {
-      const th = -0.8 + (i / 80) * 1.6;
-      let lo = Infinity;
-      for (let k = 0; k < pos.count; k++) lo = min(lo, pos.getY(k) * cos(th) - pos.getZ(k) * sin(th));
-      L.low.push(lo);
-    }
+    L.low = cached(`bootLow|${lod}`, () => {
+      const pos = L.bootGeo.attributes.position;
+      const low = [];
+      for (let i = 0; i <= 80; i++) {
+        const th = -0.8 + (i / 80) * 1.6;
+        let lo = Infinity;
+        for (let k = 0; k < pos.count; k++) lo = min(lo, pos.getY(k) * cos(th) - pos.getZ(k) * sin(th));
+        low.push(lo);
+      }
+      return low;
+    });
   }
   const rollLift = (L, th) => {
     const f = THREE.MathUtils.clamp((th + 0.8) / 1.6 * 80, 0, 80);
@@ -430,11 +448,17 @@ export function createPea() {
     return { z, lift, pitch };
   }
 
-  // st: { t, walk 0..1, cycle 0..1, stride (model units), air 0..1, rise -1..1, land 0..1, crouch 0..1 }
+  // st: { t, walk 0..1, cycle 0..1, stride (model units), air 0..1, rise -1..1, land 0..1, crouch 0..1,
+  //       hold 0..1 (weapon up in the right hand), aim (pitch, rad), recoil 0..1, twist (upper body yaw),
+  //       kneel 0..1 (down behind cover), seat 0..1 (sitting at controls), throw 0..1 (throw phase),
+  //       flinch 0..1 }
   function pose(st = {}, motion = !reduced) {
     const t = st.t || 0;
-    const walk = (st.walk || 0) * (1 - (st.air || 0));
-    const air = st.air || 0, rise = st.rise || 0, land = st.land || 0, crouch = st.crouch || 0;
+    const seat = st.seat || 0;
+    const walk = (st.walk || 0) * (1 - (st.air || 0)) * (1 - seat);
+    const air = (st.air || 0) * (1 - seat), rise = st.rise || 0, land = st.land || 0, crouch = st.crouch || 0;
+    const hold = st.hold || 0, aim = st.aim || 0, recoil = st.recoil || 0, kneel = (st.kneel || 0) * (1 - seat);
+    const thr = st.throw || 0, flinch = st.flinch || 0;
     const q = ((st.cycle || 0) % 1 + 1) % 1;
     const F = st.stride ?? 0.13;
 
@@ -449,9 +473,10 @@ export function createPea() {
     const reach = Math.sqrt(max(0, (legs[0].l1 + legs[0].l2 - 0.003) ** 2 - F ** 2));
     const need = max(0, legs[0].H0.y - legs[0].A0.y - reach);
     const bob = -walk * (need + 0.006) * (0.5 + 0.5 * cos(4 * PI * q));
-    const drop = bob - 0.06 * land - 0.05 * crouch;
-    upper.position.set(-0.018 * walk * sin(2 * PI * q), HIP_Y + drop, 0);
-    upper.rotation.set(0.055 * walk + 0.08 * land + 0.06 * crouch + 0.04 * air, -0.07 * walk * cos(2 * PI * q), 0.02 * walk * sin(2 * PI * q));
+    const drop = bob - 0.06 * land - 0.05 * crouch - 0.12 * kneel - 0.19 * seat;
+    upper.position.set(-0.018 * walk * sin(2 * PI * q), HIP_Y + drop, 0.03 * kneel);
+    upper.rotation.set(0.055 * walk + 0.08 * land + 0.06 * crouch + 0.04 * air + 0.1 * kneel - 0.12 * flinch - 0.12 * aim * hold - 0.05 * seat,
+      -0.07 * walk * cos(2 * PI * q) * (1 - 0.6 * hold) + (st.twist || 0), 0.02 * walk * sin(2 * PI * q));
 
     // legs
     legs.forEach((L, i) => {
@@ -466,6 +491,13 @@ export function createPea() {
         lift = lerp(lift, (front ? 0.075 : 0.045) * tuck, air);
         pitch = lerp(pitch, 0.25 * tuck, air);
       }
+      if (seat > 0) {
+        // sitting: feet forward on the floor plate, toes up
+        z = lerp(z, 0.17, seat);
+        lift = lerp(lift, 0.02, seat);
+        pitch = lerp(pitch, -0.3, seat);
+      }
+      if (kneel > 0) z = lerp(z, i === 0 ? 0.06 : -0.06, kneel);
       const ty = L.A0.y + lift + rollLift(L, pitch);
       solveLeg(L, drop, 0, ty, L.A0.z + z, pitch);
     });
@@ -477,13 +509,45 @@ export function createPea() {
       const sway = motion ? sin((t / 3.2) * PI * 2 + 0.5) : 0;
       const oq = (q + (s > 0 ? 0 : 0.5) - 0.04) % 1;
       const f = cos(2 * PI * oq);
-      const swing = walk * (0.06 + 0.28 * f);
-      const flex = walk * (0.12 + 0.14 * (1 + f));
+      const right = s > 0;
+      const carry = right ? 1 - 0.85 * hold : 1 - 0.5 * hold;
+      const swing = walk * (0.06 + 0.28 * f) * carry;
+      const flex = walk * (0.12 + 0.14 * (1 + f)) * carry;
       const up = air * (0.35 + 0.25 * max(0, rise));
       const out = air * (0.25 + 0.2 * max(0, -rise));
       a.bones[0].rotation.x = rest.arm[i][0].x - 0.018 * sway - swing - up - 0.14 * land - 0.1 * crouch;
       a.bones[0].rotation.z = rest.arm[i][0].z + s * (0.008 * sway + walk * (0.03 + 0.04 * max(0, f)) + out + 0.12 * land + 0.05 * crouch);
       a.bones[1].rotation.x = rest.arm[i][1].x - 0.012 * sway - flex - air * 0.35 - 0.22 * land - 0.15 * crouch;
+      const [b0, b1] = a.bones;
+      if (right && hold > 0) {
+        // weapon up: upper arm forward along the flank, elbow bent, so the gun sits at the hip
+        // pointing ahead; aim pitch swings the whole arm, recoil kicks it back a little
+        b0.rotation.x = lerp(b0.rotation.x, HOLD.x - aim * 0.9 + recoil * 0.16, hold);
+        b0.rotation.y = lerp(0, HOLD.y, hold);
+        b0.rotation.z = lerp(b0.rotation.z, HOLD.z, hold);
+        b1.rotation.x = lerp(b1.rotation.x, HOLD.elbow + recoil * 0.12, hold);
+      } else if (right) b0.rotation.y = 0;
+      if (!right && hold > 0) {
+        // free arm at the ready: a little forward, elbow soft
+        b0.rotation.x -= 0.22 * hold;
+        b0.rotation.z += s * 0.06 * hold;
+        b1.rotation.x -= 0.45 * hold;
+      }
+      if (right && thr > 0) {
+        // overarm throw: wind up out and back over the shoulder, whip forward, follow through
+        const up = thr < 0.45 ? smooth(0, 0.45, thr) : 1 - smooth(0.45, 0.75, thr) * 0.55;
+        const k = thr < 0.9 ? 1 : 1 - smooth(0.9, 1, thr);
+        b0.rotation.x = lerp(b0.rotation.x, -2.55 * up - 0.9 * (thr > 0.45 ? smooth(0.45, 0.75, thr) : 0), k);
+        b0.rotation.y = lerp(b0.rotation.y, 0, k);
+        b0.rotation.z = lerp(b0.rotation.z, 0.75 * up, k);
+        b1.rotation.x = lerp(b1.rotation.x, -1.2 * up, k);
+      }
+      if (seat > 0) {
+        // hands forward on the controls
+        b0.rotation.x = lerp(b0.rotation.x, -0.95, seat);
+        b0.rotation.z = lerp(b0.rotation.z, s * 0.18, seat);
+        b1.rotation.x = lerp(b1.rotation.x, -0.55, seat);
+      }
     });
 
     // blink: quick squash on a ~3.6s loop
@@ -495,9 +559,12 @@ export function createPea() {
   const setPhase = (t, motion = !reduced) => pose({ t }, motion);
   setPhase(0);
 
-  root.userData = { setPhase, pose, parts: () => collectParts(root) };
+  root.userData = { setPhase, pose, parts: () => collectParts(root), rig: { upper, body, hands, arms, legs } };
   return root;
 }
+
+// Right-arm weapon hold (bone rotations), tuned so the gun rides at the hip pointing ahead.
+export const HOLD = { x: -0.92, y: -0.1, z: 0.2, elbow: -0.85 };
 
 export function collectParts(root) {
   const out = [];

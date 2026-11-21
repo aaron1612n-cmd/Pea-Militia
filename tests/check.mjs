@@ -239,7 +239,9 @@ const framingCheck = () => {
   cam.yaw = 0.4; cam.pitch = 0.3;
   cam.update(1 / 60, player.pos, true);
   camera.updateMatrixWorld();
-  const box = new THREE.Box3().setFromObject(pea, true);
+  // the pea itself (a long gun poking toward the camera shouldn't count as the pea filling the view)
+  const box = new THREE.Box3();
+  for (const m of pea.userData.parts()) box.expandByObject(m, true);
   const pts = [];
   for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) pts.push(new THREE.Vector3(x, y, z).project(camera));
   const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
@@ -263,13 +265,14 @@ const framingCheck = () => {
   return { inView, frac, rect, overlaps, offscreen };
 };
 
-// center pixels of the render should be the pea
+// the pixel at the pea's projected body centre should be the pea (the camera sits over its shoulder)
 const centerPixel = () => {
-  const { renderer, scene, camera } = window.__pea;
+  const { THREE, renderer, scene, camera, player } = window.__pea;
   renderer.render(scene, camera);
+  const p = player.center(new THREE.Vector3()).add(new THREE.Vector3(0, -0.18, 0)).project(camera);
   const gl = renderer.getContext();
   const px = new Uint8Array(4);
-  gl.readPixels(Math.floor(gl.drawingBufferWidth / 2), Math.floor(gl.drawingBufferHeight * 0.45), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
+  gl.readPixels(Math.floor(gl.drawingBufferWidth * (p.x + 1) / 2), Math.floor(gl.drawingBufferHeight * (p.y + 1) / 2), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
   return [...px];
 };
 
@@ -292,7 +295,7 @@ try {
   check('desktop: pea fully framed at default view', f.inView && f.frac > 0.12 && f.frac < 0.7, `fills ${(f.frac * 100).toFixed(0)}%`);
   check('desktop: UI never covers the pea or overlaps itself', f.overlaps.length === 0 && f.offscreen.length === 0, [...f.overlaps, ...f.offscreen].join(', '));
   const px = await d.page.evaluate(centerPixel);
-  check('render: pea visible at screen centre', px[1] > px[0] && px[1] > px[2] && px[1] > 40, px.join(','));
+  check('render: pea visible where it should be', px[1] > px[0] && px[1] > px[2] && px[1] > 40, px.join(','));
 
   // turntable + close-ups
   const shots = [];
@@ -348,6 +351,7 @@ try {
   // drag-look works without pointer lock
   const y0 = await d.page.evaluate(() => window.__pea.cam.yaw);
   await d.page.mouse.move(400, 500); await d.page.mouse.down(); await d.page.mouse.move(600, 480, { steps: 6 }); await d.page.mouse.up();
+  await d.page.waitForFunction((a) => Math.abs(window.__pea.cam.yaw - a) > 0.3, y0, { timeout: 5000 }).catch(() => {});
   const y1 = await d.page.evaluate(() => window.__pea.cam.yaw);
   check('desktop: mouse look turns the camera', Math.abs(y1 - y0) > 0.3, `${(y1 - y0).toFixed(2)} rad`);
   await d.page.evaluate(() => { if (document.pointerLockElement) document.exitPointerLock(); });
@@ -363,6 +367,121 @@ try {
   await d.page.evaluate(() => { const { player, cam } = window.__pea; player.pos.set(0, 0, 0); cam.yaw = 0.4; cam.pitch = 0.3; });
   await d.page.waitForTimeout(900);
   await d.page.screenshot({ path: `${OUT}/desktop.png` });
+
+  // ---- weapons: every gun fires, uses ammo, and its shots land ----
+  const guns = await d.page.evaluate(() => {
+    const { player, world, THREE } = window.__pea;
+    const out = [];
+    player.pos.set(0, 0, 0); player.vel.set(0, 0, 0);
+    world.spawnProp('wall', 0, -6, 0);
+    for (let i = 0; i < player.weapons.length; i++) {
+      player.setWeapon(i); player.cool = 0; player.reloadT = 0;
+      const w = player.weapon;
+      const before = { mag: w.mag, heat: w.heat, proj: world.projectiles.length, shots: player.shots || 0 };
+      player.ctrl.aimAt = new THREE.Vector3(0, 0.6, -6);
+      player.aimYaw = Math.PI; player.wasFiring = false;
+      const ok = player.fire(world);
+      out.push({ id: w.id, ok, used: w.mag < before.mag || w.heat > before.heat || (player.shots || 0) > before.shots, proj: world.projectiles.length > before.proj || ['hitscan', 'flame', 'throw'].includes(w.def.kind) });
+      for (let k = 0; k < 90; k++) world.update(1 / 30);
+    }
+    player.setWeapon(0);
+    world.clearAll();
+    return out;
+  });
+  check('weapons: all seven fire and use ammo or heat', guns.length === 7 && guns.every((g) => g.ok && g.used && g.proj), JSON.stringify(guns.filter((g) => !(g.ok && g.used && g.proj))));
+  // the weapon sits in the hand and clear of the body
+  const held = await d.page.evaluate(() => {
+    const { player, THREE } = window.__pea;
+    window.__pea.pause(0);
+    const body = player.pea.userData.parts().find((m) => m.name === 'body');
+    const c = new THREE.Vector3().setFromMatrixPosition(body.matrixWorld);
+    const r = 0.5 * player.pea.scale.x;
+    const hand = player.pea.userData.rig.hands[1].getWorldPosition(new THREE.Vector3());
+    const muzzle = player.muzzle(new THREE.Vector3());
+    window.__pea.resume();
+    return { handGap: hand.distanceTo(c) - r, muzzleGap: muzzle.distanceTo(c) - r, forward: muzzle.z - hand.z };
+  });
+  check('weapons: gun held at the hand, muzzle out ahead of the body', held.handGap > 0 && held.muzzleGap > 0.2, JSON.stringify(held));
+
+  // ---- armies and AI: a skirmish runs, peas take cover, fight and die, nothing errors ----
+  const battle = await d.page.evaluate(() => {
+    const { world, THREE } = window.__pea;
+    world.clearAll();
+    world.spawnProp('sandbags', 0, -4); world.spawnProp('sandbags', 0, 4); world.spawnProp('barrier', -4, 0, 1.2); world.spawnProp('crate', 4, 1);
+    world.spawnSquad(1, new THREE.Vector3(-2, 0, -9), ['rifleman', 'gunner', 'assault', 'rifleman', 'grenadier'], 0);
+    world.spawnSquad(2, new THREE.Vector3(2, 0, 9), ['plasma', 'flamer', 'rifleman', 'plasma', 'assault'], Math.PI);
+    world.player.pos.set(20, 0, 20);
+    let covered = 0, shots = 0, maxProj = 0;
+    for (let i = 0; i < 1800; i++) {
+      world.update(1 / 30);
+      if (i % 30 === 0) for (const u of world.units) if (u.brain && u.alive && u.brain.cover) covered++;
+      maxProj = Math.max(maxProj, world.projectiles.length);
+    }
+    for (const u of world.units) shots += u.shots || 0;
+    const peas = world.units.filter((u) => u.brain);
+    const out = { dead: 10 - peas.filter((u) => u.alive).length, total: 10, covered, shots, maxProj, under: peas.filter((u) => u.alive && u.pos.y < -0.01).length };
+    return out;
+  });
+  check('AI: two armies fight it out (shots fired, peas fall)', battle.shots > 20 && battle.dead >= 3, JSON.stringify(battle));
+  check('AI: peas use cover', battle.covered > 10, `cover-samples=${battle.covered}`);
+  check('AI: nobody falls through the plate', battle.under === 0, JSON.stringify(battle));
+
+  // ---- vehicles: all four sit on the plate; the player gets in, drives, shoots, gets out ----
+  const veh = await d.page.evaluate(() => {
+    const { world, THREE, player, spawnVehicle } = window.__pea;
+    world.clearAll();
+    player.pos.set(0, 0, 0); player.alive = true; player.hp = 100;
+    const out = {};
+    for (const [i, t] of ['tank', 'jeep', 'walker', 'hover'].entries()) {
+      const v = spawnVehicle(t, 0, new THREE.Vector3(-9 + i * 6, 0, -6), 0);
+      for (let k = 0; k < 10; k++) world.update(1 / 30);
+      v.group.updateMatrixWorld(true);
+      const box = new THREE.Box3().setFromObject(v.group);
+      out[t] = { minY: +box.min.y.toFixed(3) };
+    }
+    const tank = world.vehicles[0];
+    player.pos.set(tank.pos.x + 2.2, 0, tank.pos.z);
+    world.onUse(player);
+    out.entered = player.vehicle === tank;
+    const z0 = tank.pos.z;
+    for (let k = 0; k < 60; k++) { tank.drive({ move: { x: 0, y: 1 }, fire: k === 5 }, new THREE.Vector3(tank.pos.x, 1, tank.pos.z + 20)); world.update(1 / 30); }
+    out.drove = +(tank.pos.z - z0).toFixed(2);
+    out.fired = tank.weapons[0].cool > 0 || world.projectiles.length > 0;
+    world.onUse(player);
+    out.exited = !player.vehicle && player.pea.parent === world.scene;
+    world.clearAll();
+    return out;
+  });
+  const grounded = ['tank', 'jeep', 'walker'].every((t) => veh[t].minY > -0.03 && veh[t].minY < 0.08) && veh.hover.minY > 0.05;
+  check('vehicles: tank, jeep and walker stand on the plate, the skiff hovers', grounded, JSON.stringify(veh));
+  check('vehicles: get in, drive, fire, get out', veh.entered && veh.drove > 2 && veh.fired && veh.exited, JSON.stringify(veh));
+
+  // ---- sandbox: open the panel, spawn with a click, delete with a click, tools toggle ----
+  await d.page.evaluate(() => { const { cam, player } = window.__pea; player.pos.set(0, 0, 0); cam.yaw = 0; cam.pitch = 0.5; });
+  await d.page.click('#sandbox');
+  await d.page.waitForTimeout(400);
+  const sb0 = await d.page.evaluate(() => ({ open: !document.getElementById('panel').hidden, mode: window.__pea.input.mode, n: window.__pea.world.units.length }));
+  await d.page.mouse.click(640, 330);
+  await d.page.waitForTimeout(200);
+  const sb1 = await d.page.evaluate(() => window.__pea.world.units.length);
+  await d.page.click('[data-tool="delete"]');
+  await d.page.waitForTimeout(100);
+  const spawned = await d.page.evaluate(() => { const { world, camera, THREE } = window.__pea; const u = world.units[world.units.length - 1]; const p = u.center(new THREE.Vector3()).project(camera); return { x: (p.x + 1) / 2 * innerWidth, y: (1 - p.y) / 2 * innerHeight }; });
+  await d.page.mouse.click(spawned.x, spawned.y);
+  await d.page.waitForTimeout(200);
+  const sb2 = await d.page.evaluate(() => window.__pea.world.units.length);
+  await d.page.click('[data-tool="freeze"]');
+  await d.page.click('[data-tool="god"]');
+  await d.page.click('[data-tool="speed"]');
+  const tools = await d.page.evaluate(() => { const w = window.__pea.world; return { frozen: w.aiFrozen, god: w.god, speed: w.timeScale }; });
+  await d.page.screenshot({ path: `${OUT}/desktop-sandbox.png` });
+  await d.page.click('[data-tool="clear"]'); await d.page.click('[data-tool="clear"]');
+  const cleared = await d.page.evaluate(() => window.__pea.world.units.length);
+  await d.page.click('#sandbox');
+  check('sandbox: panel opens into build mode', sb0.open && sb0.mode === 'build', JSON.stringify(sb0));
+  check('sandbox: click spawns a pea, delete removes it', sb1 === sb0.n + 1 && sb2 === sb0.n, `${sb0.n} -> ${sb1} -> ${sb2}`);
+  check('sandbox: freeze, god mode and time scale toggle; clear empties the plate', tools.frozen && tools.god && tools.speed !== 1 && cleared === 1, JSON.stringify({ ...tools, cleared }));
+  await d.page.evaluate(() => { const w = window.__pea.world; w.aiFrozen = false; w.god = false; w.timeScale = 1; });
   check('desktop: no console errors', d.errors.length === 0, d.errors.slice(0, 3).join(' | '));
 
   // ---------- phone ----------
@@ -397,8 +516,17 @@ try {
   check('phone: help button is the top element at its centre', hitM);
   await m.page.tap('#help');
   check('phone: help tap replays the controls', await m.page.evaluate(() => /Left thumb/.test(document.getElementById('prompt').textContent)));
-  const btn = await m.page.evaluate(() => ['help', 'jump'].map((id) => { const r = document.getElementById(id).getBoundingClientRect(); return Math.min(r.width, r.height); }));
+  const btn = await m.page.evaluate(() => ['help', 'jump', 'fire', 'swap', 'orderBtn', 'sandbox'].map((id) => { const r = document.getElementById(id).getBoundingClientRect(); return Math.min(r.width, r.height); }));
   check('phone: buttons are at least 44px', btn.every((x) => x >= 44), btn.join(', '));
+  const f0 = await m.page.evaluate(() => window.__pea.player.shots || 0);
+  await m.page.tap('#fire');
+  check('phone: fire button shoots', await m.page.waitForFunction((f0) => (window.__pea.player.shots || 0) > f0, f0, { timeout: 20000 }).then(() => true, () => false));
+  await m.page.tap('#sandbox');
+  await m.page.waitForTimeout(600);
+  await m.page.screenshot({ path: `${OUT}/phone-sandbox.png` });
+  const pm2 = await m.page.evaluate(() => { const r = document.getElementById('panel').getBoundingClientRect(); return { open: !document.getElementById('panel').hidden, fits: r.left >= 0 && r.right <= innerWidth && r.bottom <= innerHeight }; });
+  check('phone: sandbox panel opens and fits the screen', pm2.open && pm2.fits, JSON.stringify(pm2));
+  await m.page.tap('#sandbox');
   check('phone: no console errors', m.errors.length === 0, m.errors.slice(0, 3).join(' | '));
 
   // landscape phone framing
