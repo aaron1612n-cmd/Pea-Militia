@@ -47,7 +47,7 @@ async function open(ctxOpts) {
 
 // ---------------- soldier model checks (run in page) ----------------
 const modelChecks = () => {
-  const { THREE, U, pose, makePose, HOLD, crowd } = window.__game;
+  const { THREE, U, pose, makePose, solveLegs, HOLD, crowd } = window.__game;
   const { PART_GEO } = window.__parts;
   const out = { closed: [], phases: [] };
   // closed, outward part meshes
@@ -195,6 +195,17 @@ const modelChecks = () => {
           if (Math.abs(f.x) > 0.5 || Math.abs(f.z) > (ph.prone ? 1.1 : 0.5) || f.y > (ph.prone ? 0.6 : 0.3)) r.loose.push(`foot${i} off`);
         }
       }
+      // legs: segments join at the knee, reach the foot, never stretch much, stay above ground
+      solveLegs(pz);
+      const segEnds = (m) => [new THREE.Vector3(0, 0, -0.1).applyMatrix4(m), new THREE.Vector3(0, 0, 0.1).applyMatrix4(m)];
+      for (let i = 0; i < 2; i++) {
+        const fp = new THREE.Vector3(0, 0.06, 0).applyMatrix4(pz.feet[i]);
+        if (Math.min(...segEnds(pz.legs[i][1]).map((e) => e.distanceTo(fp))) > 0.05) r.loose.push(`leg${i} detached`);
+        const kj = Math.min(...segEnds(pz.legs[i][0]).flatMap((a) => segEnds(pz.legs[i][1]).map((b) => a.distanceTo(b))));
+        if (kj > 0.04) r.loose.push(`knee gap ${i} ${kj.toFixed(3)}`);
+        if ((ph.dead ?? -1) < 0 && !ph.prone) for (const m of pz.legs[i]) for (const e of segEnds(m)) if (e.y < 0.01) r.clips.push(`leg${i} in ground`);
+      }
+      if (pz.legStretch > 1.5 && (ph.dead ?? -1) < 0) r.loose.push(`leg stretch ${pz.legStretch.toFixed(2)}`);
       r.air = !!ph.air;
       out.phases.push(r);
     }
@@ -231,7 +242,10 @@ try {
   // part geometry, through the instanced crowd
   await P.evaluate(() => {
     const c = window.__game.crowd;
-    window.__parts = { PART_GEO: { body: c.body.geometry, visor: c.visor.geometry, pack: c.pack.geometry, foot: c.foot.geometry, hand: c.hand.geometry, arm: c.arm.geometry } };
+    const PART_GEO = { body: c.body.geometry, visor: c.visor.geometry, pack: c.pack.geometry, foot: c.foot.geometry, hand: c.hand.geometry, arm: c.arm.geometry, leg: c.leg.geometry };
+    for (const [k, m] of Object.entries(c.gear)) PART_GEO[`gear-${k}`] = m.geometry;
+    for (const [k, m] of Object.entries(c.marks)) PART_GEO[`mark-${k}`] = m.geometry;
+    window.__parts = { PART_GEO };
   });
   await P.waitForTimeout(600);
   await P.screenshot({ path: `${OUT}/menu.png` });

@@ -8,6 +8,7 @@ export const U = {
   W: 0.46, H: 0.92, D: 0.32, R: 0.1, // body block
   LIFT: 0.16, // body bottom above the ground when standing
   FOOT: [0.15, 0.085, 0.25], FOOT_X: 0.12,
+  LEG: [0.16, 0.16], LEG_T: 0.115, HIP_X: 0.12, // two-segment legs, hip to ankle (see solveLegs)
   HAND: [0.1, 0.1, 0.12],
   VISOR: [0.4, 0.095, 0.05], VISOR_Y: 0.86,
   PACK: [0.3, 0.32, 0.12], PACK_Y: 0.6,
@@ -86,6 +87,7 @@ export function makePose() {
   return {
     body: new THREE.Matrix4(), visor: new THREE.Matrix4(), pack: new THREE.Matrix4(),
     feet: [new THREE.Matrix4(), new THREE.Matrix4()], hands: [new THREE.Matrix4(), new THREE.Matrix4()],
+    legs: [[new THREE.Matrix4(), new THREE.Matrix4()], [new THREE.Matrix4(), new THREE.Matrix4()]],
     arms: [new THREE.Matrix4(), new THREE.Matrix4(), new THREE.Matrix4(), new THREE.Matrix4()], showArms: true,
     weapon: new THREE.Matrix4(), muzzle: new THREE.Vector3(), showWeapon: true, height: U.TOP,
   };
@@ -340,4 +342,59 @@ function postures(s, out) {
     out.muzzle.applyMatrix4(R);
   }
   return out;
+}
+
+// ---- legs: two-segment IK from the hips to the feet -----------
+// Segment matrices (the arms live in armsFor) come out in the same frame as the pose (unit-local, or world for ragdolls):
+// origin at the segment's middle, +z along it, length scaled to fit. Reach is stretched, never
+// broken, so a limb always joins its hand or foot to the body.
+const _s = new THREE.Vector3(), _t = new THREE.Vector3(), _k = new THREE.Vector3(), _d = new THREE.Vector3();
+const _pole = new THREE.Vector3(), _bq = new THREE.Quaternion(), _bs = new THREE.Vector3(), _bp = new THREE.Vector3();
+const _a = new THREE.Vector3(), _up = new THREE.Vector3(), _m = new THREE.Matrix4(), _q = new THREE.Quaternion();
+const _z = new THREE.Vector3(0, 0, 1);
+function segment(out, a, b, over) {
+  _d.subVectors(b, a);
+  const len = _d.length();
+  if (len < 1e-5) return out.identity();
+  _d.multiplyScalar(1 / len);
+  _q.setFromUnitVectors(_z, _d);
+  return out.compose(_k.addVectors(a, b).multiplyScalar(0.5), _q, _bs.set(1, 1, (len + over) / SEG_LEN));
+}
+export const SEG_LEN = 0.2; // nominal length the limb geometry is built at
+// joint(out2, root, target, l1, l2, pole): returns the stretch factor used
+const _e = new THREE.Vector3();
+function joint(out, root, target, l1, l2, pole, over) {
+  _d.subVectors(target, root);
+  let d = _d.length();
+  const reach = l1 + l2;
+  const stretch = Math.max(1, d / (reach * 0.995));
+  const a = l1 * stretch, b = l2 * stretch;
+  d = Math.min(d, (a + b) * 0.995);
+  _d.normalize();
+  // bend plane from the pole direction; knee/elbow sits off the line by the triangle's height
+  const x = (a * a - b * b + d * d) / (2 * d);
+  const h = Math.sqrt(Math.max(0, a * a - x * x));
+  _up.copy(pole).addScaledVector(_d, -pole.dot(_d));
+  if (_up.lengthSq() < 1e-6) _up.set(0, 0, 1).addScaledVector(_d, -_d.z);
+  _up.normalize();
+  _a.copy(root).addScaledVector(_d, x).addScaledVector(_up, h);
+  const full = target.distanceTo(root) > d + 1e-4;
+  _e.copy(root).addScaledVector(_d, d); // reachable end (target when within reach)
+  segment(out[0], root, _a, over);
+  segment(out[1], _a, full ? _e : target, over);
+  return stretch;
+}
+let p_body = null;
+export function solveLegs(p) {
+  M.copy(p.body);
+  M.decompose(_bp, _bq, _bs);
+  p.legStretch = 1;
+  for (let i = 0; i < 2; i++) {
+    const side = i === 0 ? -1 : 1; // feet[0] is the right foot (-x)
+    _s.set(side * U.HIP_X, -U.H / 2 + 0.03, 0).applyMatrix4(p.body);
+    _t.set(0, 0.06, 0).applyMatrix4(p.feet[i]);
+    _pole.set(side * 0.15, 0, 1).applyQuaternion(_bq);
+    p.legStretch = Math.max(p.legStretch, joint(p.legs[i], _s, _t, U.LEG[0], U.LEG[1], _pole, 0.03));
+  }
+  return p;
 }
