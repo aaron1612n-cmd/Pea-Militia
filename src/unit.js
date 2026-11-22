@@ -10,6 +10,9 @@ export const SPRINT = 1.65;
 const GRAVITY = 17;
 const lerp = THREE.MathUtils.lerp;
 const JUMP_V = 4.8;
+// The fastest any soldier can run on their own: walk pace times the sprint multiplier. One source
+// of truth; weapon, stance and suppression modifiers only ever slow a soldier from here.
+export const MAX_SPEED = WALK * SPRINT;
 const CADENCE = 1.9; // steps per second per foot at walking pace
 
 let nextId = 1;
@@ -171,6 +174,7 @@ export class Unit {
   impulse(v) {
     if (this.rag && !this.alive) { this.rag.kick(v.clone().multiplyScalar(1.3)); return; }
     this.vel.add(v);
+    this.knockT = 0.6;
     if (v.y > 0.5) this.grounded = false;
   }
 
@@ -266,6 +270,10 @@ export class Unit {
     const a = 1 - Math.exp(-accel * dt);
     this.vel.x += (wx * speedMax - this.vel.x) * a;
     this.vel.z += (wz * speedMax - this.vel.z) * a;
+    // hard cap on self-propelled speed (blasts and hits get a moment to throw a soldier further)
+    this.knockT = Math.max(0, (this.knockT || 0) - dt);
+    const hv = Math.hypot(this.vel.x, this.vel.z), cap = Math.min(MAX_SPEED, Math.max(speedMax, 0.01)) * 1.02;
+    if (hv > cap && this.knockT <= 0) { this.vel.x *= cap / hv; this.vel.z *= cap / hv; }
 
     // facing: aiming units square up to the aim (strafing and backing off as needed);
     // otherwise they turn to where they walk

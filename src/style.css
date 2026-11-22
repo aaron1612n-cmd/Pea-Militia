@@ -340,3 +340,42 @@ html[data-free='1'] #freeBtn { border-color: var(--accent); color: var(--accent)
   .menu:not([data-open='1']) .menu-frame { width: 300px; max-height: none; margin: 0 0 8px 8px; align-self: flex-end; }
   .menu:not([data-open='1']) { background: none; align-items: flex-end; }
 }
+
+/* ---- phones: the sandbox palette is a slim strip, never more than about a third of the screen ---- */
+.pal-more { display: none; }
+@media (max-width: 640px) {
+  .palette { display: grid; grid-template-columns: 1fr auto auto; grid-template-rows: auto auto auto; gap: 6px 6px; height: auto; max-height: 32dvh; padding: 8px; left: 8px; right: 8px; bottom: max(8px, env(safe-area-inset-bottom)); border-radius: 16px; }
+  .pal-head { display: contents; }
+  .pal-head h2 { display: none; }
+  .pal-tabs { grid-column: 1; grid-row: 1; border-radius: 10px; overflow: hidden; }
+  .pal-tabs button { min-height: 36px; font-size: 12px; }
+  .pal-more { display: grid; grid-column: 2; grid-row: 1; width: 36px; height: 36px; }
+  #palClose { grid-column: 3; grid-row: 1; width: 36px; height: 36px; }
+  .pal-teams { grid-column: 1 / -1; grid-row: 2; }
+  .pal-teams button { min-height: 30px; }
+  .pal-grid { grid-column: 1 / -1; grid-row: 3; display: flex; overflow-x: auto; overflow-y: hidden; gap: 6px; touch-action: pan-x; padding-bottom: 2px; }
+  .pal-item { flex: 0 0 74px; min-height: 58px; height: 58px; padding: 4px; }
+  .pal-item svg { width: 22px; height: 22px; }
+  .pal-hint, .pal-toggles { display: none; grid-column: 1 / -1; }
+  .palette[data-more='1'] { max-height: 42dvh; }
+  .palette[data-more='1'] .pal-hint { display: block; grid-row: 4; }
+  .palette[data-more='1'] .pal-toggles { display: grid; grid-row: 5; }
+  .palette[data-more='1'] .pal-toggles button { min-height: 34px; }
+}
+@media (max-height: 500px) {
+  .palette { display: grid; grid-template-columns: 1fr auto auto; grid-template-rows: auto auto 1fr; width: min(250px, 31vw); max-width: none; height: auto; top: 8px; bottom: 8px; left: auto; right: 8px; padding: 8px; gap: 6px; border-radius: 16px; }
+  .pal-head { display: contents; }
+  .pal-head h2 { display: none; }
+  .pal-tabs { grid-column: 1; grid-row: 1; border-radius: 10px; overflow: hidden; }
+  .pal-tabs button { min-height: 34px; font-size: 11px; letter-spacing: 0.04em; }
+  .pal-more { display: grid; grid-column: 2; grid-row: 1; width: 34px; height: 34px; }
+  #palClose { grid-column: 3; grid-row: 1; width: 34px; height: 34px; }
+  .pal-teams { grid-column: 1 / -1; grid-row: 2; }
+  .pal-teams button { min-height: 28px; }
+  .pal-grid { grid-column: 1 / -1; grid-row: 3; grid-template-columns: repeat(3, 1fr); overflow-y: auto; }
+  .pal-item { min-height: 54px; aspect-ratio: auto; font-size: 10px; padding: 3px; }
+  .pal-hint, .pal-toggles { display: none; grid-column: 1 / -1; }
+  .palette[data-more='1'] .pal-toggles { display: grid; grid-row: 4; grid-template-columns: 1fr 1fr; }
+  .palette[data-more='1'] { grid-template-rows: auto auto 1fr auto; }
+  .palette[data-more='1'] .pal-toggles button { min-height: 30px; font-size: 10px; padding: 0 6px; }
+}

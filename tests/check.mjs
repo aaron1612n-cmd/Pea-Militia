@@ -388,6 +388,20 @@ try {
   });
   check('weapons: all seven fire and use ammo or heat', guns.length === 7 && guns.every((x) => x.ok && x.used && x.proj), JSON.stringify(guns.filter((x) => !(x.ok && x.used && x.proj))));
 
+  // ---- no weapon makes the player faster (the coil gun, grenade and mortar once did)
+  const spd = await P.evaluate(() => {
+    const g = window.__game, pl = g.player, b = g.battle;
+    const out = {};
+    for (let w = 0; w < pl.weapons.length; w++) {
+      pl.setWeapon(w, true); pl.pos.set(0, 0, 70); pl.vel.set(0, 0, 0);
+      for (let i = 0; i < 40; i++) { Object.assign(pl.ctrl, { wx: 0, wz: -1, sprint: true, fire: false, aimAt: null }); pl.update(1 / 30, b); }
+      out[pl.weapon.id] = +Math.hypot(pl.vel.x, pl.vel.z).toFixed(2);
+    }
+    pl.setWeapon(0, true); pl.ctrl.wx = pl.ctrl.wz = 0; pl.ctrl.sprint = false; pl.vel.set(0, 0, 0);
+    return { out, cap: g.maxSpeed };
+  });
+  check('speed: every weapon moves the player at or below the sprint cap', Object.values(spd.out).every((v) => v <= spd.cap * 1.03), JSON.stringify(spd));
+
   // ---- AI battle, fast-forwarded
   const battle = await P.evaluate(() => {
     const g = window.__game;
@@ -395,11 +409,19 @@ try {
     g.freeze(true);
     const b = g.battle;
     b.god = true;
-    let covered = 0, under = 0, outside = 0, ticks = 0;
+    let covered = 0, under = 0, outside = 0, ticks = 0, fastest = 0, fastKind = '';
+    const last = new Map();
     const t0 = performance.now();
     for (let i = 0; i < 30 * 100; i++) {
       b.update(1 / 30);
       ticks++;
+      // nobody outruns the sprint pace (thrown by a blast doesn't count)
+      for (const u of b.units) {
+        if (!u.alive || u.knockT > 0) { last.delete(u); continue; }
+        const p0 = last.get(u);
+        if (p0) { const v = Math.hypot(u.pos.x - p0.x, u.pos.z - p0.z) * 30; if (v > fastest) { fastest = v; fastKind = u.kind; } }
+        last.set(u, { x: u.pos.x, z: u.pos.z });
+      }
       if (i % 30 === 0) for (const u of b.units) {
         if (!u.alive) continue;
         if (u.brain?.cover) covered++;
@@ -409,12 +431,13 @@ try {
     }
     const ms = (performance.now() - t0) / ticks;
     g.freeze(false);
-    return { shots: b.stats.shots, kills: b.stats.kills, covered, under, outside, captured: b.points.filter((p) => p.owner >= 0).length, ms: +ms.toFixed(2), squads: b.squads.length, alive: b.counts() };
+    return { fastest: +fastest.toFixed(2), fastKind, cap: g.maxSpeed, shots: b.stats.shots, kills: b.stats.kills, covered, under, outside, captured: b.points.filter((p) => p.owner >= 0).length, ms: +ms.toFixed(2), squads: b.squads.length, alive: b.counts() };
   });
   check('AI: armies fight it out (shots fired, soldiers fall)', battle.shots > 300 && battle.kills >= 15, JSON.stringify(battle));
   check('AI: soldiers use cover', battle.covered > 200, `cover-samples=${battle.covered}`);
   check('AI: squads take control points', battle.captured >= 3, `captured=${battle.captured}`);
   check('AI: nobody under the ground or off the map', battle.under === 0 && battle.outside === 0, JSON.stringify(battle));
+  check('speed: nobody (AI or player) moves faster than the sprint pace', battle.fastest <= battle.cap * 1.25, `${battle.fastest} m/s (${battle.fastKind}) vs cap ${battle.cap}`);
   check('AI: 80 soldiers simulate in under 8 ms per tick (headless)', battle.ms < 8, `${battle.ms} ms`);
   // battle overview render
   await P.evaluate(() => {

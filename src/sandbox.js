@@ -136,6 +136,12 @@ export class Sandbox {
     this.hintEl.textContent = h;
   }
 
+  more() {
+    const open = this.el.dataset.more !== '1';
+    this.el.dataset.more = open ? '1' : '0';
+    document.getElementById('palMore')?.setAttribute('aria-expanded', open);
+  }
+
   toggle(on = !this.open) {
     if (on === this.open) return;
     this.open = on;

@@ -15,6 +15,7 @@ import { SLOTS } from './weapons.js';
 import { Sandbox } from './sandbox.js';
 import { TEAMS } from './factions.js';
 import { ViewModel } from './viewmodel.js';
+import { MAX_SPEED } from './unit.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('scene');
@@ -262,6 +263,7 @@ $('endMenu').addEventListener('click', openMenu);
 $('pauseBtn').addEventListener('click', () => pause(true));
 $('sbxBtn').addEventListener('click', () => sandbox.toggle());
 $('freeBtn').addEventListener('click', () => toggleFree());
+$('palMore').addEventListener('click', () => sandbox.more());
 for (const id of ['pauseBtn', 'sbxBtn', 'freeBtn']) $(id).addEventListener('pointerdown', (e) => e.stopPropagation());
 
 // losing the mouse lock mid-battle (Esc) pauses, unless the palette took it
@@ -570,7 +572,7 @@ openMenu();
 if (params.has('play')) startBattle({ mode: params.get('play') || 'battle' });
 
 // Test hooks for the check suite.
-window.__game = {
+window.__game = { maxSpeed: MAX_SPEED,
   THREE, scene, camera, renderer, cam, input, crowd, fx, SLOTS, U, pose, makePose, HOLD, HALF,
   get battle() { return battle; }, get player() { return player; }, get state() { return state; },
   sandbox, start: startBattle, openMenu, pause,
