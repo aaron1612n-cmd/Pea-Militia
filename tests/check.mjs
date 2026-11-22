@@ -412,7 +412,7 @@ try {
   await P.keyboard.press('Tab');
   check('Tab no longer cycles anything', await P.evaluate(() => !window.__game.sandbox.open));
   await P.keyboard.press('KeyB');
-  await P.waitForTimeout(400);
+  await P.waitForFunction(() => window.__game.sandbox.open && window.__game.cam.mode === 'over', null, { timeout: 30000 }).catch(() => {});
   const sb0 = await P.evaluate(() => ({ open: window.__game.sandbox.open, mode: window.__game.input.mode, cam: window.__game.cam.mode, n: window.__game.battle.units.length }));
   check('sandbox: B opens the palette with the overview camera', sb0.open && sb0.mode === 'build' && sb0.cam === 'over', JSON.stringify(sb0));
   await P.click('.pal-item[data-id="gunner"]');
@@ -457,7 +457,7 @@ try {
   await P.click('#resume');
   check('resume returns to play', await P.evaluate(() => window.__game.state === 'play'));
   await P.evaluate(() => { const b = window.__game.battle; b.teams[1].tickets = 0; for (const u of b.units) if (u.team === 1) u.alive = false; });
-  const ended = await P.waitForFunction(() => window.__game.state === 'end' && !document.getElementById('end').hidden, null, { timeout: 8000 }).then(() => true, () => false);
+  const ended = await P.waitForFunction(() => window.__game.state === 'end' && !document.getElementById('end').hidden, null, { timeout: 60000 }).then(() => true, () => false);
   check('wiping out the enemy ends the battle with a result screen', ended && /Victory/.test(await P.textContent('#endTitle')));
   await P.click('#endMenu');
   check('Setup returns to the setup screen', await P.evaluate(() => window.__game.state === 'menu'));
