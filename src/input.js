@@ -19,7 +19,10 @@ export class Input {
     this.fire = false;
     this.fireTouch = false;
     this.aim = false;
-    this.actions = []; // one-shot commands: { type: 'slot', n } | 'next' | 'prev' | 'reload' | 'grenade' | 'order' | 'use' | 'menu'
+    this.actions = []; // one-shot commands: { type: 'slot', n } | 'next' | 'prev' | 'reload' | 'grenade' | 'view' | 'menu'
+    this.pan = { dx: 0, dy: 0 }; // build mode: drag pans the overview camera
+    this.crouchToggle = false;
+    this.zoom = 0;
     this.mode = 'play'; // 'play' or 'build' (sandbox clicks go to the world, not the gun)
     this.onWorldClick = null;
     this.bind(jumpBtn);
@@ -78,16 +81,26 @@ export class Input {
       } else if (e.pointerId === this.lookId) {
         if (this.lookTap) this.lookTap.moved += Math.hypot(e.clientX - this.lookAt.x, e.clientY - this.lookAt.y);
         const k = 4.2 / Math.max(320, Math.min(innerWidth, innerHeight));
-        this.look.dx += (e.clientX - this.lookAt.x) * k;
-        this.look.dy += (e.clientY - this.lookAt.y) * k;
+        if (this.mode === 'build') {
+          this.pan.dx += e.clientX - this.lookAt.x;
+          this.pan.dy += e.clientY - this.lookAt.y;
+        } else {
+          this.look.dx += (e.clientX - this.lookAt.x) * k;
+          this.look.dy += (e.clientY - this.lookAt.y) * k;
+        }
         this.lookAt = { x: e.clientX, y: e.clientY };
       } else if (this.drag && e.pointerId === this.drag.id && !this.locked) {
         const k = 0.005;
         this.drag.moved = (this.drag.moved || 0) + Math.hypot(e.clientX - this.drag.x, e.clientY - this.drag.y);
         if (this.mode === 'build' && this.onWorldHover) this.onWorldHover(e.clientX, e.clientY, true);
         if (this.mode === 'build' && this.drag.moved < 8) return;
-        this.look.dx += (e.clientX - this.drag.x) * k;
-        this.look.dy += (e.clientY - this.drag.y) * k;
+        if (this.mode === 'build' && this.drag.button !== 2) {
+          this.pan.dx += e.clientX - this.drag.x;
+          this.pan.dy += e.clientY - this.drag.y;
+        } else {
+          this.look.dx += (e.clientX - this.drag.x) * k;
+          this.look.dy += (e.clientY - this.drag.y) * k;
+        }
         this.drag.x = e.clientX; this.drag.y = e.clientY;
       }
     });
@@ -126,8 +139,8 @@ export class Input {
       this.look.dy += e.movementY * 0.0024;
     });
 
-    const GAME = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space', 'Tab']);
-    const KEYS = { KeyR: 'reload', KeyG: 'grenade', KeyF: 'order', KeyE: 'use', KeyB: 'menu', Tab: 'menu', KeyQ: 'prev' };
+    const GAME = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
+    const KEYS = { KeyR: 'reload', KeyG: 'grenade', KeyB: 'menu', KeyV: 'view', KeyQ: 'prev', KeyE: 'next' };
     addEventListener('keydown', (e) => {
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
       if (GAME.has(e.code)) e.preventDefault();
@@ -141,7 +154,7 @@ export class Input {
     addEventListener('blur', () => { this.keys.clear(); this.fire = false; this.aim = false; });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
-      if (this.mode !== 'play') return;
+      if (this.mode !== 'play') { this.zoom += e.deltaY; return; }
       this.wheel = (this.wheel || 0) + e.deltaY;
       if (Math.abs(this.wheel) > 40) { this.actions.push({ type: this.wheel > 0 ? 'next' : 'prev' }); this.wheel = 0; }
     }, { passive: false });
@@ -212,9 +225,13 @@ export class Input {
       move: { x, y }, look: { ...this.look }, jump: this.jumpQueued,
       fire: play && ((this.fire && this.locked) || this.fireTouch || this.firePulse), aim: play && this.aim && this.locked,
       sprint: k.has('ShiftLeft') || k.has('ShiftRight'),
+      crouch: k.has('KeyC') || k.has('ControlLeft') || this.crouchToggle,
       actions: this.actions,
+      pan: { ...this.pan }, zoom: this.zoom,
     };
     this.actions = [];
+    this.pan.dx = this.pan.dy = 0;
+    this.zoom = 0;
     this.firePulse = false;
     this.look.dx = this.look.dy = 0;
     this.jumpQueued = false;

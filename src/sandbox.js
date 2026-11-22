@@ -1,238 +1,230 @@
 import * as THREE from 'three';
-import { KINDS, SQUADS } from './game.js';
+import { KINDS, SQUAD_MIX } from './battle.js';
 import { PROPS, propModel } from './props.js';
-import { VEHICLES, Vehicle, spawnVehicle } from './vehicles.js';
 import { TEAMS } from './factions.js';
-import { Soldier } from './soldier.js';
 
-// Sandbox panel: spawn peas (any army), vehicles and cover; move, delete, freeze the AI,
-// change game speed, god mode, clear the plate. Plain buttons, one word each.
-const CATALOG = {
-  units: [...Object.entries(KINDS).map(([id, k]) => ({ id, name: k.name, kind: 'unit' })), { id: 'squad', name: 'Squad', kind: 'squad' }],
-  vehicles: Object.entries(VEHICLES).map(([id, v]) => ({ id, name: v.name.split(' ').pop(), kind: 'vehicle' })),
-  props: Object.entries(PROPS).map(([id, p]) => ({ id, name: p.name.split(' ').pop(), kind: 'prop' })),
+// Sandbox palette: pick a tool straight from the grid, then click (or tap) the field.
+// Opening it switches to the overview camera; drag pans, wheel zooms, right-drag turns.
+const ICON = {
+  unit: '<rect x="8" y="4" width="8" height="14" rx="2.5"/><path d="M9.5 8h5M8 21h3M13 21h3"/>',
+  squad: '<rect x="3" y="7" width="5" height="10" rx="1.6"/><rect x="9.5" y="5" width="5" height="12" rx="1.6"/><rect x="16" y="7" width="5" height="10" rx="1.6"/>',
+  platoon: '<rect x="3" y="3" width="4" height="7" rx="1.2"/><rect x="10" y="3" width="4" height="7" rx="1.2"/><rect x="17" y="3" width="4" height="7" rx="1.2"/><rect x="3" y="14" width="4" height="7" rx="1.2"/><rect x="10" y="14" width="4" height="7" rx="1.2"/><rect x="17" y="14" width="4" height="7" rx="1.2"/>',
+  sandbags: '<path d="M3 18h18M4 18v-3h5v3M9.5 18v-3h5v3M15 18v-3h5v3M6.5 15v-3h5v3M12.5 15v-3h5v3"/>',
+  crate: '<rect x="4" y="7" width="16" height="12"/><path d="M4 11h16M4 15h16"/>',
+  barrier: '<path d="M3 19h18l-3-3-1-8H7l-1 8z"/>',
+  drum: '<rect x="7" y="4" width="10" height="16" rx="1.5"/><path d="M7 9h10M7 15h10"/>',
+  wall: '<rect x="3" y="5" width="18" height="14"/><path d="M8 5v14M16 5v14"/>',
+  trap: '<path d="M4 19L20 7M4 7l16 12M12 4v16"/>',
+  slab: '<path d="M3 20V8l3-2 2 2 3-3 2 3 3-2 2 2 3-1v13z"/>',
+  bunker: '<path d="M3 19V9h18v10zM6 12h4M14 12h4M2 9h20"/>',
+  move: '<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>',
+  delete: '<path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/>',
+  command: '<path d="M6 21V4M6 4h11l-3 4 3 4H6"/>',
 };
-const SPEEDS = [1, 0.5, 0.25, 2];
+const UNIT_ITEMS = [...Object.entries(KINDS).map(([k, v]) => ({ id: k, name: v.name, icon: 'unit', kind: 'unit' })),
+  { id: 'squad', name: 'Squad ×6', icon: 'squad', kind: 'group', n: 6 }, { id: 'platoon', name: 'Platoon ×24', icon: 'platoon', kind: 'group', n: 24 }];
+const COVER_ITEMS = Object.entries(PROPS).map(([k, v]) => ({ id: k, name: v.name, icon: k, kind: 'prop' }));
+const TOOL_ITEMS = [
+  { id: 'move', name: 'Move', icon: 'move', kind: 'tool', hint: 'Click a soldier or cover, then click where it goes.' },
+  { id: 'delete', name: 'Delete', icon: 'delete', kind: 'tool', hint: 'Click soldiers or cover to remove them.' },
+  { id: 'command', name: 'Command', icon: 'command', kind: 'tool', hint: 'Click a soldier to pick their squad, then click to send it there.' },
+];
+const TABS = [['units', 'Units', UNIT_ITEMS], ['cover', 'Cover', COVER_ITEMS], ['tools', 'Tools', TOOL_ITEMS]];
 
 export class Sandbox {
-  constructor({ world, input, camera, cam, scene, audio, onToggle }) {
-    Object.assign(this, { world, input, camera, cam, scene, audio, onToggle });
+  constructor({ getBattle, input, cam, camera, scene, audio, onToggle }) {
+    Object.assign(this, { getBattle, input, cam, camera, scene, audio, onToggle });
+    this.el = document.getElementById('palette');
+    this.tabsEl = document.getElementById('palTabs');
+    this.teamsEl = document.getElementById('palTeams');
+    this.gridEl = document.getElementById('palGrid');
+    this.hintEl = document.getElementById('palHint');
+    this.togglesEl = document.getElementById('palToggles');
     this.open = false;
     this.tab = 'units';
+    this.tool = null; // item
     this.team = 1;
-    this.item = CATALOG.units[0];
-    this.tool = 'spawn';
-    this.held = null;
-    this.speedI = 0;
-    this.thumbs = new Map();
-    this.el = document.getElementById('panel');
-    this.grid = document.getElementById('catalog');
-    this.btn = document.getElementById('sandbox');
-    this.btn.addEventListener('pointerdown', (e) => e.stopPropagation());
-    this.btn.addEventListener('click', () => { this.btn.blur(); this.toggle(); });
+    this.yaw = 0;
+    this.picked = null; // move/command: chosen thing
+    this.ray = new THREE.Raycaster();
+    this.ghost = null;
+    this.ring = new THREE.Mesh(new THREE.RingGeometry(0.5, 0.62, 40), new THREE.MeshBasicMaterial({ color: '#ff7a1a', transparent: true, opacity: 0.9, depthWrite: false }));
+    this.ring.rotation.x = -Math.PI / 2;
+    this.ring.visible = false;
+    this.ring.renderOrder = 2;
+    scene.add(this.ring);
+    this.build();
+    document.getElementById('palClose').addEventListener('click', () => this.toggle(false));
     this.el.addEventListener('pointerdown', (e) => e.stopPropagation());
-    this.el.addEventListener('click', (e) => this.click(e));
-    // ground marker under the cursor
-    const g = new THREE.RingGeometry(0.42, 0.5, 40);
-    g.rotateX(-Math.PI / 2);
-    this.marker = new THREE.Mesh(g, new THREE.MeshBasicMaterial({ color: '#1e1f1d', transparent: true, opacity: 0.6, depthWrite: false }));
-    this.marker.visible = false;
-    this.marker.renderOrder = 4;
-    scene.add(this.marker);
-    input.onWorldClick = (x, y, button) => this.worldClick(x, y, button);
+    input.onWorldClick = (x, y, button) => this.click(x, y, button);
     input.onWorldHover = (x, y) => this.hover(x, y);
-    this.render();
+    addEventListener('keydown', (e) => {
+      if (!this.open) return;
+      if (e.code === 'Escape') { if (this.tool) this.select(null); else this.toggle(false); }
+      if (e.code === 'KeyR') { this.yaw += Math.PI / 4; if (this.ghost) this.ghost.rotation.y = this.yaw; }
+    });
+  }
+
+  build() {
+    this.tabsEl.innerHTML = TABS.map(([id, name]) => `<button type="button" role="tab" data-tab="${id}" aria-selected="${id === this.tab}">${name}</button>`).join('');
+    this.tabsEl.onclick = (e) => { const b = e.target.closest('[data-tab]'); if (b) { this.tab = b.dataset.tab; this.select(null); this.build(); } };
+    const teams = this.getBattle().teams.length || 2;
+    this.team = Math.min(this.team, teams - 1);
+    this.teamsEl.hidden = this.tab === 'cover';
+    this.teamsEl.innerHTML = TEAMS.slice(0, teams).map((t) => `<button type="button" data-team="${t.id}" aria-pressed="${t.id === this.team}"><i style="background:${t.ui}"></i>${t.short}</button>`).join('');
+    this.teamsEl.onclick = (e) => { const b = e.target.closest('[data-team]'); if (b) { this.team = +b.dataset.team; this.build(); } };
+    const items = TABS.find((t) => t[0] === this.tab)[2];
+    this.gridEl.innerHTML = items.map((it) => `<button type="button" class="pal-item" role="option" data-id="${it.id}" aria-selected="${this.tool?.id === it.id}"><svg viewBox="0 0 24 24" aria-hidden="true">${ICON[it.icon]}</svg>${it.name}</button>`).join('');
+    this.gridEl.onclick = (e) => {
+      const b = e.target.closest('[data-id]');
+      if (!b) return;
+      const it = items.find((x) => x.id === b.dataset.id);
+      this.select(this.tool?.id === it.id ? null : it);
+    };
+    this.buildToggles();
+    this.updateHint();
+  }
+
+  buildToggles() {
+    const b = this.getBattle();
+    const T = [
+      ['freeze', 'Pause AI', b.aiFrozen], ['slow', 'Slow motion', b.timeScale < 1], ['god', 'God mode', b.god],
+      ...(b.settings.mode === 'battle' ? [['reinforce', 'Reinforcements', b.reinforce]] : []),
+      ['clearUnits', 'Clear soldiers', null], ['clearCover', 'Clear cover', null],
+    ];
+    this.togglesEl.innerHTML = T.map(([id, name, on]) => `<button type="button" data-t="${id}" ${on === null ? 'class="act"' : `aria-pressed="${!!on}"`}>${name}</button>`).join('');
+    this.togglesEl.onclick = (e) => { const el = e.target.closest('[data-t]'); if (el) this.toggleWorld(el.dataset.t); };
+  }
+
+  toggleWorld(id) {
+    const b = this.getBattle();
+    if (id === 'freeze') b.aiFrozen = !b.aiFrozen;
+    else if (id === 'slow') b.timeScale = b.timeScale < 1 ? 1 : 0.3;
+    else if (id === 'god') b.god = !b.god;
+    else if (id === 'reinforce') b.reinforce = !b.reinforce;
+    else if (id === 'clearUnits') b.clearUnits();
+    else if (id === 'clearCover') { for (const p of [...b.props]) b.removeProp(p); }
+    this.audio.play('clink', null, 0.5);
+    this.buildToggles();
+  }
+
+  select(it) {
+    this.tool = it;
+    this.picked = null;
+    if (this.ghost) { this.scene.remove(this.ghost); this.ghost = null; }
+    if (it?.kind === 'prop') {
+      this.ghost = propModel(it.id);
+      this.ghost.traverse((o) => {
+        if (o.isMesh) { o.material = o.material.clone(); o.material.transparent = true; o.material.opacity = 0.45; o.material.depthWrite = false; o.castShadow = false; }
+      });
+      this.ghost.rotation.y = this.yaw;
+      this.ghost.visible = false;
+      this.scene.add(this.ghost);
+    }
+    this.ring.visible = false;
+    for (const b of this.gridEl.children) b.setAttribute('aria-selected', String(b.dataset.id === it?.id));
+    this.updateHint();
+  }
+
+  updateHint() {
+    const it = this.tool;
+    const touch = this.input.touch;
+    let h = touch ? 'Pick a tool, then tap the field. Drag to pan.' : 'Pick a tool, then click the field. Drag to pan, wheel to zoom, right-drag to turn.';
+    if (it?.kind === 'unit' || it?.kind === 'group') h = `${touch ? 'Tap' : 'Click'} to place ${it.name.toLowerCase()} for ${TEAMS[this.team].name}.`;
+    else if (it?.kind === 'prop') h = `${touch ? 'Tap' : 'Click'} to place. ${touch ? '' : 'R turns it.'}`;
+    else if (it?.hint) h = this.picked ? `${touch ? 'Tap' : 'Click'} where it goes.` : it.hint;
+    this.hintEl.textContent = h;
   }
 
   toggle(on = !this.open) {
+    if (on === this.open) return;
     this.open = on;
     this.el.hidden = !on;
+    document.documentElement.dataset.palette = on ? 'open' : 'closed';
     this.input.mode = on ? 'build' : 'play';
-    document.documentElement.dataset.mode = on ? 'build' : 'play';
-    if (on && document.pointerLockElement) document.exitPointerLock();
-    if (!on) { this.marker.visible = false; this.drop(); }
-    this.btn.setAttribute('aria-pressed', String(on));
-    this.onToggle?.(on);
-    if (on) this.makeThumbs();
-  }
-
-  render() {
-    const t = (id, label, on, extra = '') => `<button type="button" data-tool="${id}" class="tool${on ? ' on' : ''}" ${extra}>${label}</button>`;
-    const w = this.world;
-    document.getElementById('tools').innerHTML = [
-      t('spawn', 'Spawn', this.tool === 'spawn'),
-      t('move', 'Move', this.tool === 'move'),
-      t('delete', 'Delete', this.tool === 'delete'),
-      '<span class="sep"></span>',
-      t('freeze', w.aiFrozen ? 'Frozen' : 'Freeze', w.aiFrozen, 'aria-pressed="' + w.aiFrozen + '"'),
-      t('speed', `×${SPEEDS[this.speedI]}`, SPEEDS[this.speedI] !== 1),
-      t('god', 'God', w.god, 'aria-pressed="' + w.god + '"'),
-      t('clear', this.confirm ? 'Sure?' : 'Clear', !!this.confirm),
-    ].join('');
-    document.getElementById('tabs').innerHTML = ['units', 'vehicles', 'props'].map((id) => `<button type="button" data-tab="${id}" class="tab${this.tab === id ? ' on' : ''}">${id[0].toUpperCase() + id.slice(1)}</button>`).join('')
-      + '<span class="sep"></span>'
-      + TEAMS.map((tm, i) => `<button type="button" data-team="${i}" class="swatch${this.team === i ? ' on' : ''}" style="--c:${tm.ui}" aria-label="${tm.name}" title="${tm.name}"></button>`).join('');
-    this.grid.innerHTML = CATALOG[this.tab].map((it) => {
-      const k = this.thumbKey(it);
-      const src = this.thumbs.get(k);
-      return `<button type="button" class="item${this.item === it && this.tool === 'spawn' ? ' on' : ''}" data-item="${it.id}">${src ? `<img alt="" src="${src}">` : '<span class="ph"></span>'}<span>${it.name}</span></button>`;
-    }).join('');
-  }
-
-  click(e) {
-    const b = e.target.closest('button');
-    if (!b) return;
-    b.blur();
-    const w = this.world;
-    if (b.dataset.tab) { this.tab = b.dataset.tab; this.item = CATALOG[this.tab][0]; this.tool = 'spawn'; this.makeThumbs(); }
-    else if (b.dataset.team) { this.team = +b.dataset.team; this.makeThumbs(); }
-    else if (b.dataset.item) { this.item = CATALOG[this.tab].find((x) => x.id === b.dataset.item); this.tool = 'spawn'; }
-    else if (b.dataset.tool) {
-      const t = b.dataset.tool;
-      if (t === 'spawn' || t === 'move' || t === 'delete') { this.tool = t; this.drop(); }
-      else if (t === 'freeze') w.aiFrozen = !w.aiFrozen;
-      else if (t === 'speed') { this.speedI = (this.speedI + 1) % SPEEDS.length; w.timeScale = SPEEDS[this.speedI]; }
-      else if (t === 'god') { w.god = !w.god; if (w.player) w.player.hp = w.player.maxHp; }
-      else if (t === 'clear') {
-        if (this.confirm) { clearTimeout(this.confirm); this.confirm = null; this.drop(); w.clearAll(); }
-        else this.confirm = setTimeout(() => { this.confirm = null; this.render(); }, 2500);
-      }
-      if (t !== 'clear' && this.confirm) { clearTimeout(this.confirm); this.confirm = null; }
+    this.cam.setMode(on ? 'over' : this.cam.prevMode || '3p');
+    document.documentElement.dataset.view = this.cam.mode;
+    if (on) {
+      if (document.pointerLockElement) document.exitPointerLock();
+      this.build();
+    } else {
+      this.select(null);
+      this.ring.visible = false;
     }
-    this.audio.play('clink', null, 0.4);
-    this.render();
+    this.onToggle?.(on);
   }
 
-  // screen point -> world hit
+  // screen point to the field
   pick(x, y) {
-    const r = this.camera.position.clone();
-    const ndc = new THREE.Vector3((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1, 0.5).unproject(this.camera);
-    const d = ndc.sub(r).normalize();
-    return this.world.raycast(r, d, 200, { ignore: this.held?.unit || null });
+    const b = this.getBattle();
+    const ndc = new THREE.Vector2((x / innerWidth) * 2 - 1, -(y / innerHeight) * 2 + 1);
+    this.ray.setFromCamera(ndc, this.camera);
+    const o = this.ray.ray.origin, d = this.ray.ray.direction;
+    return b.raycast(o, d, 400);
   }
 
   hover(x, y) {
+    if (!this.open || !this.tool) return;
     const h = this.pick(x, y);
-    const ok = h.hit && Math.abs(h.point.x) < 24 && Math.abs(h.point.z) < 24;
-    this.marker.visible = ok;
-    if (ok) this.marker.position.set(h.point.x, 0.02, h.point.z);
-    if (this.held && ok) this.place(this.held, h.point, false);
+    if (!h.hit) return;
+    const p = h.point;
+    if (this.ghost) { this.ghost.visible = true; this.ghost.position.set(p.x, 0, p.z); this.ghost.rotation.y = this.yaw; }
+    else { this.ring.visible = true; this.ring.position.set(p.x, (h.prop ? h.prop.box.h : 0) + 0.03, p.z); }
   }
 
-  worldClick(x, y) {
+  click(x, y, button = 0) {
     if (!this.open) return;
-    const w = this.world;
+    if (button === 2) { this.select(null); return; }
+    const it = this.tool;
+    if (!it) return;
+    const b = this.getBattle();
     const h = this.pick(x, y);
     if (!h.hit) return;
     const p = h.point.clone().setY(0);
-    if (Math.abs(p.x) > 23.6 || Math.abs(p.z) > 23.6) return;
-    const yaw = this.cam.yaw;
-    if (this.tool === 'spawn') {
-      const it = this.item;
-      if (it.kind === 'unit') w.spawnUnit(this.team, it.id, p, { yaw: yaw + Math.PI });
-      else if (it.kind === 'squad') w.spawnSquad(this.team, p, SQUADS[this.team], yaw + Math.PI);
-      else if (it.kind === 'vehicle') spawnVehicle(w, it.id, this.team, p, yaw + Math.PI, this.team !== 0);
-      else if (it.kind === 'prop') w.spawnProp(it.id, p.x, p.z, yaw);
-      this.audio.play('clank', p, 0.5);
-    } else if (this.tool === 'delete') {
-      if (h.unit && h.unit !== w.player) w.removeUnit(h.unit);
-      else if (h.vehicle) { if (h.vehicle.driver === w.player) h.vehicle.eject(w.player, w); w.removeVehicle(h.vehicle); }
-      else if (h.prop) w.removeProp(h.prop);
-      else return;
-      this.audio.play('clank', p, 0.5);
-    } else if (this.tool === 'move') {
-      if (this.held) { this.place(this.held, p, true); this.drop(); }
-      else if (h.unit) this.held = { unit: h.unit };
-      else if (h.vehicle) this.held = { vehicle: h.vehicle };
-      else if (h.prop) this.held = { prop: h.prop };
-    }
-    this.marker.position.set(p.x, 0.02, p.z);
-  }
-
-  place(held, p, final) {
-    const w = this.world;
-    if (held.unit) {
-      const u = held.unit;
-      u.pos.set(p.x, w.groundAt(p.x, p.z, 5), p.z);
-      u.vel.set(0, 0, 0);
-      u.holdPos = u.pos.clone();
-      u.homePos = u.pos.clone();
-      if (u.brain) { u.brain.releaseCover(); u.brain.goal.copy(u.pos); }
-      u.pea.position.copy(u.pos);
-    } else if (held.vehicle) {
-      held.vehicle.pos.set(p.x, 0, p.z);
-      held.vehicle.speed = 0;
-      held.vehicle.vel?.set(0, 0, 0);
-      held.vehicle.holdPos = held.vehicle.pos.clone();
-      held.vehicle.pose(0);
-    } else if (held.prop) w.moveProp(held.prop, p.x, p.z);
-    if (final) this.audio.play('clank', p, 0.4);
-  }
-
-  drop() { this.held = null; }
-
-  thumbKey(it) { return it.kind === 'prop' ? `p:${it.id}` : `${it.kind}:${it.id}:${this.team}`; }
-
-  // small renders of each catalogue entry, made once on first open
-  makeThumbs() {
-    const todo = CATALOG[this.tab].filter((it) => !this.thumbs.has(this.thumbKey(it)));
-    if (!todo.length) return this.render();
-    if (!this.tr) {
-      this.tc = document.createElement('canvas');
-      this.tc.width = this.tc.height = 128;
-      try { this.tr = new THREE.WebGLRenderer({ canvas: this.tc, antialias: true, alpha: true, preserveDrawingBuffer: true }); } catch { return; }
-      this.tr.toneMapping = THREE.ACESFilmicToneMapping;
-      this.ts = new THREE.Scene();
-      this.ts.add(new THREE.HemisphereLight('#e4e7e8', '#6d6e68', 1.6));
-      const d = new THREE.DirectionalLight('#ffffff', 2.2);
-      d.position.set(3, 5, 4);
-      this.ts.add(d);
-      this.tcam = new THREE.PerspectiveCamera(30, 1, 0.05, 100);
-    }
-    // one thumbnail per frame so opening the panel never stalls input
-    const gen = (this.thumbGen = (this.thumbGen || 0) + 1);
-    this.render();
-    const next = () => {
-      if (gen !== this.thumbGen) return;
-      const it = todo.shift();
-      if (!it) return;
-      if (!this.thumbs.has(this.thumbKey(it))) this.thumbOne(it);
-      this.render();
-      if (todo.length) setTimeout(next, 30);
-    };
-    setTimeout(next, 30);
-  }
-
-  thumbOne(it) {
-    {
-      let obj, size;
-      if (it.kind === 'unit' || it.kind === 'squad') {
-        const kinds = it.kind === 'squad' ? KINDS.gunner : KINDS[it.id];
-        const s = new Soldier({ team: this.team, lod: 0.5, loadout: kinds.loadout, drop: false });
-        s.facing = 1.1;
-        s.animate(0);
-        obj = s.pea;
-        size = 0.95;
-      } else if (it.kind === 'vehicle') {
-        const v = new Vehicle(this.world, it.id, this.team, new THREE.Vector3(900, 0, 900), 0.7);
-        obj = v.group;
-        obj.position.set(0, 0, 0);
-        size = it.id === 'walker' ? 3.3 : 3.6;
-      } else {
-        obj = propModel(it.id);
-        obj.rotation.y = 0.5;
-        size = Math.max(PROPS[it.id].hx * 2, PROPS[it.id].h) * 1.3 + 0.4;
+    const face = Math.atan2(-p.x, -p.z);
+    if (it.kind === 'unit') {
+      b.spawnUnit(this.team, it.id, p, { yaw: face });
+    } else if (it.kind === 'group') {
+      const mix = SQUAD_MIX[this.team];
+      const rows = Math.ceil(it.n / 6);
+      for (let r = 0; r < rows; r++) {
+        const at = p.clone().add(new THREE.Vector3(Math.sin(face + Math.PI / 2) * (r - (rows - 1) / 2) * 7, 0, Math.cos(face + Math.PI / 2) * (r - (rows - 1) / 2) * 7));
+        b.spawnSquad(this.team, at, Array.from({ length: Math.min(6, it.n - r * 6) }, (_, i) => mix[(i + r) % mix.length]), face);
       }
-      this.ts.add(obj);
-      obj.updateMatrixWorld(true);
-      const box = new THREE.Box3().setFromObject(obj);
-      const c = box.getCenter(new THREE.Vector3());
-      const dist = size * 1.9;
-      this.tcam.position.set(c.x + dist * 0.55, c.y + dist * 0.45, c.z + dist * 0.75);
-      this.tcam.lookAt(c);
-      this.tr.render(this.ts, this.tcam);
-      this.thumbs.set(this.thumbKey(it), this.tc.toDataURL('image/png'));
-      this.ts.remove(obj);
+    } else if (it.kind === 'prop') {
+      b.spawnProp(it.id, p.x, p.z, this.yaw);
+    } else if (it.id === 'delete') {
+      if (h.unit && h.unit !== b.player) b.removeUnit(h.unit);
+      else if (h.prop) b.removeProp(h.prop);
+      else {
+        // nearest soldier to the click, within a couple of metres
+        const near = b.nearUnits(p.x, p.z, 2).filter((u) => u.alive && u !== b.player);
+        if (near[0]) b.removeUnit(near[0]);
+      }
+    } else if (it.id === 'move') {
+      if (!this.picked) {
+        const near = h.unit || b.nearUnits(p.x, p.z, 2).find((u) => u.alive);
+        this.picked = near ? { unit: near } : h.prop ? { prop: h.prop } : null;
+      } else {
+        if (this.picked.unit) { this.picked.unit.pos.copy(p); this.picked.unit.vel.set(0, 0, 0); }
+        else if (this.picked.prop?.alive) b.moveProp(this.picked.prop, p.x, p.z);
+        this.picked = null;
+      }
+    } else if (it.id === 'command') {
+      if (!this.picked) {
+        const u = h.unit || b.nearUnits(p.x, p.z, 2.5).find((m) => m.alive && m.squad);
+        if (u?.squad) this.picked = { squad: u.squad };
+      } else {
+        const sq = this.picked.squad;
+        sq.manual = true;
+        sq.order = p.clone();
+        sq.objective = null;
+        sq.waypoint = null;
+        sq.retreating = false;
+        this.picked = null;
+      }
     }
+    this.audio.play('clink', null, 0.4);
+    this.updateHint();
   }
 }

@@ -104,7 +104,7 @@ export class Effects {
     tg.translate(0, 0.5, 0);
     this.tracerMat = new THREE.MeshBasicMaterial({ color: '#ffe0a8', transparent: true, opacity: 0.85, blending: THREE.AdditiveBlending, depthWrite: false });
     this.tracers = [];
-    for (let i = 0; i < 48; i++) {
+    for (let i = 0; i < 220; i++) {
       const m = new THREE.Mesh(tg, this.tracerMat);
       m.visible = false;
       m.frustumCulled = false;

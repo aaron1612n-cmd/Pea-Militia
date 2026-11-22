@@ -1,8 +1,8 @@
 import * as THREE from 'three';
 import { MAT, Kit, instance, profile, roundRect, turned, rod, ring, bolt, pipe, ellipsoidGeo } from './models.js';
 
-// Weapons: WW2 service arms, a little steam, a little future. Models are in pea-model units
-// (the hand's space), grip at the origin, barrel along +z.
+// Weapons: WW2 service arms, a little steam, a little future. Models are in hold units
+// (scaled by U.WEAPON_SCALE when drawn), grip at the origin, barrel along +z.
 // kind: hitscan | projectile | flame | throw
 export const WEAPONS = {
   rifle: {
@@ -146,13 +146,20 @@ function grenade(k) {
 const BUILD = { rifle, smg, mg, plasma, flame, launcher, grenade };
 const baked = new Map();
 
-export function weaponModel(id) {
+export function weaponParts(id) {
   if (!baked.has(id)) {
     const k = new Kit();
     const muzzle = BUILD[id](k);
-    baked.set(id, { parts: k.bake(), muzzle });
+    const parts = k.bake();
+    const box = new THREE.Box3();
+    for (const p of parts) { p.geometry.computeBoundingBox(); box.union(p.geometry.boundingBox); }
+    baked.set(id, { parts, muzzle, box });
   }
-  const b = baked.get(id);
+  return baked.get(id);
+}
+
+export function weaponModel(id) {
+  const b = weaponParts(id);
   const g = instance(b.parts, `weapon-${id}`);
   const m = new THREE.Object3D();
   m.name = 'muzzle';

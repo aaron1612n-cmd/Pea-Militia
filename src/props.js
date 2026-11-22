@@ -12,7 +12,12 @@ export const PROPS = {
   drum: { name: 'Fuel drum', hx: 0.27, hz: 0.27, h: 0.62, hp: 50, debris: '#4a4a45', explodes: true },
   wall: { name: 'Steel wall', hx: 1.25, hz: 0.16, h: 1.45, hp: 1800, debris: '#4a4a45' },
   trap: { name: 'Tank trap', hx: 0.55, hz: 0.55, h: 0.85, hp: Infinity, debris: '#3b3e3d', nocover: true },
+  slab: { name: 'Concrete wall', hx: 2.2, hz: 0.22, h: 2.3, hp: Infinity, debris: '#9b9b94', raw: true },
+  bunker: { name: 'Bunker', hx: 1.7, hz: 1.7, h: 2.0, hp: Infinity, debris: '#9b9b94', raw: true },
 };
+// The small props were modelled for a shorter soldier; scale them to the current one.
+export const PROP_SCALE = 1.6;
+for (const d of Object.values(PROPS)) if (!d.raw) { d.hx *= PROP_SCALE; d.hz *= PROP_SCALE; d.h *= PROP_SCALE; }
 
 let bagGeo = null;
 function bag() {
@@ -84,6 +89,24 @@ const BUILD = {
     for (let x = -1.15; x <= 1.16; x += 0.23) for (const y of [0.08, 1.37]) for (const z of [-0.06, 0.06]) k.add(bolt(0.016), MAT.darkSteel, { pos: [x, y, z], rot: [z > 0 ? Math.PI / 2 : -Math.PI / 2, 0, 0] });
     k.add(block(0.5, 0.12, 0.13, 0.02, 0.01), MAT.brass, { pos: [0.42, 1.1, 0] }); // brass vision slot frame
   },
+  slab(k) {
+    // cast concrete wall panel on a footing, with a chipped top course
+    k.add(block(4.4, 2.1, 0.4, 0.05, 0.025), MAT.concrete, { pos: [0, 1.05, 0] });
+    k.add(block(4.5, 0.16, 0.5, 0.04, 0.02), MAT.iron, { pos: [0, 0.08, 0] });
+    for (const x of [-1.6, -0.5, 0.6, 1.7]) k.add(block(0.9 + (x > 0 ? 0.15 : 0), 0.2 + Math.abs(x) * 0.03, 0.36, 0.04, 0.02), MAT.concrete, { pos: [x, 2.2, 0] });
+    for (const x of [-1.1, 1.1]) k.add(block(0.08, 1.9, 0.44, 0.02, 0.01), MAT.darkSteel, { pos: [x, 1.05, 0] });
+  },
+  bunker(k) {
+    // squat pillbox: thick walls, a firing slit on each face, a lid that overhangs
+    k.add(block(3.3, 1.3, 3.3, 0.18, 0.06), MAT.concrete, { pos: [0, 0.65, 0] });
+    k.add(block(3.3, 0.35, 3.3, 0.18, 0.06), MAT.concrete, { pos: [0, 1.6, 0] });
+    for (let a = 0; a < 4; a++) {
+      const r = (a * Math.PI) / 2;
+      for (const sx of [-1, 1]) k.add(block(0.7, 0.32, 0.3, 0.05, 0.02), MAT.concrete, { pos: [Math.sin(r) * 1.5 + Math.cos(r) * sx * 1.25, 1.42, Math.cos(r) * 1.5 - Math.sin(r) * sx * 1.25], rot: [0, r, 0] });
+    }
+    k.add(block(3.5, 0.22, 3.5, 0.12, 0.05), MAT.iron, { pos: [0, 1.89, 0] });
+    k.add(block(3.0, 0.12, 0.08, 0.03, 0.01), MAT.darkSteel, { pos: [0, 1.42, 0] });
+  },
   trap(k) {
     // Czech hedgehog: three angle-iron beams crossing at the middle
     const beam = profile([[-0.6, -0.05], [0.6, -0.05], [0.6, 0.05], [-0.6, 0.05]], 0.1, 0.01);
@@ -101,7 +124,9 @@ export function propModel(type) {
     BUILD[type](k);
     baked.set(type, k.bake());
   }
-  return instance(baked.get(type), `prop-${type}`);
+  const g = instance(baked.get(type), `prop-${type}`);
+  if (!PROPS[type].raw) for (const m of g.children) m.scale.setScalar(PROP_SCALE);
+  return g;
 }
 
 // Cover spots: where a pea can crouch with this prop between it and a threat.
@@ -109,16 +134,16 @@ export function coverSpots(prop) {
   const b = prop.box, def = PROPS[prop.type];
   if (def.nocover) return [];
   const out = [];
-  const off = 0.42;
-  const high = b.h > 1.1;
+  const off = 0.5;
+  const high = b.h > 1.5;
   if (b.hx >= b.hz * 1.6) {
     for (const side of [-1, 1]) {
-      const n = Math.max(1, Math.round((b.hx * 2) / 0.85));
+      const n = Math.max(1, Math.round((b.hx * 2) / 0.95));
       for (let i = 0; i < n; i++) {
         const lx = -b.hx + (b.hx * 2 * (i + 0.5)) / n;
         if (high && Math.abs(lx) < b.hx - 0.5) continue;
         const [x, z] = toWorld(b, lx, side * (b.hz + off));
-        const [px, pz] = high ? toWorld(b, Math.sign(lx) * (b.hx + 0.45), side * (b.hz + off)) : [x, z];
+        const [px, pz] = high ? toWorld(b, Math.sign(lx) * (b.hx + 0.5), side * (b.hz + off)) : [x, z];
         const [nx, nz] = toWorld({ ...b, x: 0, z: 0 }, 0, side);
         out.push({ x, z, nx, nz, high, px, pz, prop });
       }
@@ -128,7 +153,9 @@ export function coverSpots(prop) {
       const lx = Math.round(Math.cos((a * Math.PI) / 2)), lz = Math.round(Math.sin((a * Math.PI) / 2));
       const [x, z] = toWorld(b, lx * (b.hx + off), lz * (b.hz + off));
       const [nx, nz] = toWorld({ ...b, x: 0, z: 0 }, lx, lz);
-      out.push({ x, z, nx, nz, high: false, px: x, pz: z, prop });
+      // tall square cover: peek out past the corner to shoot
+      const [px, pz] = high ? toWorld(b, lx * (b.hx + off) + lz * (b.hx + 0.5), lz * (b.hz + off) + lx * (b.hz + 0.5)) : [x, z];
+      out.push({ x, z, nx, nz, high, px, pz, prop });
     }
   }
   return out;

@@ -35,6 +35,9 @@ export class Audio {
     const c = this.ctx;
     if (!c || this.muted) return null;
     const now = c.currentTime;
+    // big battles: cap how many sounds start in any short window
+    if (now - (this.windowT || 0) > 0.08) { this.windowT = now; this.windowN = 0; }
+    if (p && ++this.windowN > 6) return null;
     if (key) {
       const last = this.recent.get(key) || 0;
       if (now - last < 0.035) return null;
