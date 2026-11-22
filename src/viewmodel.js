@@ -81,19 +81,20 @@ export class ViewModel {
     // hip: low and right, angled a touch inward; sights: the bore sits just under the crosshair.
     // Aiming pushes the gun out to arm's length so the rear sight is a small notch, not a wall,
     // and the receiver stays below the line of sight.
-    const sightDrop = h.sight * VM_SCALE;
+    const vs = lerp(VM_SCALE, 0.68, a); // a little smaller again when aiming
+    const sightDrop = h.sight * vs;
     const x = lerp(0.19, 0, a) + bobX + sw - this.sprintK * 0.02;
-    const y = lerp(-0.25, -sightDrop, a) + bobY + breathe + sh - rl * 0.06 - this.sprintK * 0.05 - air * 0.02;
-    const z = lerp(-0.42, -0.3, a) + rec * 0.05;
+    const y = lerp(-0.25, -sightDrop, a) + bobY + breathe + sh - rl * h.anim.drop - this.sprintK * 0.05 - air * 0.02;
+    const z = lerp(-0.42, -0.3, a) + rec * h.anim.kick;
     const yaw = lerp(0.05, 0, a) + this.sprintK * 0.7 + sw * 2;
     // (positive x rotation tips the barrel down)
-    const pitch = -rec * 0.1 * (1 - 0.5 * a) + rl * 0.45 + this.sprintK * 0.35 + sh * 2;
-    E.set(pitch, Math.PI + yaw, -rl * 0.4 + bobX * 2, 'YXZ');
+    const pitch = -rec * h.anim.climb * (1 - 0.5 * a) + rl * h.anim.tilt + this.sprintK * 0.35 + sh * 2;
+    E.set(pitch, Math.PI + yaw, -rl * h.anim.roll + bobX * 2, 'YXZ');
     Q.setFromEuler(E);
-    L.compose(P.set(x, y, z), Q, S.setScalar(VM_SCALE));
+    L.compose(P.set(x, y, z), Q, S.setScalar(vs));
     p.weapon.multiplyMatrices(camera.matrixWorld, L);
     p.hands[1].multiplyMatrices(p.weapon, M.makeTranslation(0, -0.045, -0.01));
-    p.hands[0].multiplyMatrices(p.weapon, M.makeTranslation(0, lerp(h.foreY, -0.1, rl), lerp(h.fore, 0.1, rl)));
+    p.hands[0].multiplyMatrices(p.weapon, M.makeTranslation(0, lerp(h.foreY, h.anim.hand[0], rl), lerp(h.fore, h.anim.hand[1], rl)));
     p.hands[0].multiply(HAND_S); p.hands[1].multiply(HAND_S);
     p.showWeapon = true;
     p.muzzle.copy(h.muzzle).applyMatrix4(p.weapon);

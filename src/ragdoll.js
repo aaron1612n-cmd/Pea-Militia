@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { U, HOLD, attachToBody, armsFor } from './rig.js';
+import { U, HOLD, attachToBody, armsFor, SHY } from './rig.js';
 const _sl = new THREE.Vector3(), _sr = new THREE.Vector3();
 
 // Cheap ragdolls for hundreds of soldiers. The body block (and the dropped gun) are rigid
@@ -226,8 +226,8 @@ export class Ragdoll {
       _p.y -= sink;
       parts[i].compose(_p, this.body.q, ONE);
     }
-    _sl.set(U.W / 2 - 0.03, 0.17, 0).applyMatrix4(out.body);
-    _sr.set(-(U.W / 2 - 0.03), 0.17, 0).applyMatrix4(out.body);
+    _sl.set(U.W / 2 + 0.055, SHY, U.D / 2 + 0.02).applyMatrix4(out.body);
+    _sr.set(-(U.W / 2 + 0.055), SHY, U.D / 2 + 0.02).applyMatrix4(out.body);
     armsFor(out, _sl, _sr, out.body);
     out.showWeapon = !!this.gun;
     if (this.gun) {
