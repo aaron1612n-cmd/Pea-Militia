@@ -254,6 +254,17 @@ try {
   await P.waitForFunction(() => window.__game.state === 'play', null, { timeout: 15000 });
   const st = await P.evaluate(() => ({ n: window.__game.battle.units.length, size: window.__game.battle.settings.size, teams: window.__game.battle.teams.length, hud: !document.getElementById('hud').hidden, lock: window.__lockAsked || 0 }));
   check('Deploy starts a battle with full armies', st.n === st.size * st.teams && st.hud, JSON.stringify(st));
+  // ---- big map: frame budget and layout sanity
+  const bud = await P.evaluate(() => {
+    const g = window.__game; g.render();
+    const i = g.renderer.info.render, H = g.HALF;
+    const out = g.battle.props.filter((p) => Math.abs(p.box.x) > H || Math.abs(p.box.z) > H).length;
+    const pts = g.battle.points.length;
+    const buried = g.battle.props.filter((p) => !p.def.noModel && p.group.position.y < g.height(p.box.x, p.box.z) - 0.6).length;
+    return { calls: i.calls, tris: i.triangles, out, pts, buried, half: H };
+  });
+  check('big map: draw calls and triangles within budget', bud.calls < 160 && bud.tris < 3000000, JSON.stringify(bud));
+  check('big map: nothing outside the fence or sunk into the ground, 7 points', bud.out === 0 && bud.buried === 0 && bud.pts === 7, JSON.stringify(bud));
   check('Deploy asks for pointer lock', st.lock > 0);
   await P.waitForTimeout(800);
   await P.screenshot({ path: `${OUT}/desktop-3p.png` });
