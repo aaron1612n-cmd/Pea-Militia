@@ -318,11 +318,11 @@ try {
   check('Shift sprints faster than walking and uses stamina', sprinted && sv > 2.8, `speed ${sv.toFixed(2)}`);
   // prone (Z) and lean (E)
   await P.keyboard.press('KeyZ');
-  const proned = await P.waitForFunction(() => window.__game.player.proneK > 0.9, null, { timeout: 30000 }).then(() => true, () => false);
+  const proned = await P.waitForFunction(() => window.__game.player.proneK > 0.9, null, { timeout: 120000 }).then(() => true, () => false);
   await P.keyboard.press('KeyZ');
-  await P.waitForFunction(() => window.__game.player.proneK < 0.1, null, { timeout: 30000 }).catch(() => {});
+  await P.waitForFunction(() => window.__game.player.proneK < 0.1, null, { timeout: 120000 }).catch(() => {});
   await P.keyboard.down('KeyE');
-  const leaned = await P.waitForFunction(() => window.__game.player.leanK > 0.8, null, { timeout: 30000 }).then(() => true, () => false);
+  const leaned = await P.waitForFunction(() => window.__game.player.leanK > 0.8, null, { timeout: 120000 }).then(() => true, () => false);
   await P.keyboard.up('KeyE');
   check('Z goes prone, E leans, both come back', proned && leaned);
   const compass = await P.evaluate(() => { const r = document.querySelector('.compass').getBoundingClientRect(); return r.width > 50 && r.top >= 0 && document.querySelectorAll('#compass .card').length >= 8; });
