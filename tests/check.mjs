@@ -7,6 +7,7 @@
 import { chromium, devices } from 'playwright';
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { idleSim } from './idle-sim.mjs';
 
 const OUT = process.env.OUT_DIR || 'test-output';
 mkdirSync(OUT, { recursive: true });
@@ -440,6 +441,13 @@ try {
   check('AI: nobody under the ground or off the map', battle.under === 0 && battle.outside === 0, JSON.stringify(battle));
   check('speed: nobody (AI or player) moves faster than the sprint pace', battle.fastest <= battle.cap * 1.25, `${battle.fastest} m/s (${battle.fastKind}) vs cap ${battle.cap}`);
   check('AI: 80 soldiers simulate in under 8 ms per tick (headless)', battle.ms < 8, `${battle.ms} ms`);
+  // ---- AI doesn't linger: per-soldier idle time over a longer fight (seeded, so runs compare)
+  const idle = await P.evaluate(idleSim);
+  check('AI: nobody idles outside a fight (worst stretch under 8 s)', idle.worstFree <= 8, JSON.stringify(idle));
+  check('AI: nobody stands about in the open for long, even in a fight (under 15 s)', idle.worstFight <= 15, JSON.stringify(idle));
+  check('AI: idle time is a small share of all soldier time (under 6%)', idle.idleShare < 0.06, `idle=${idle.idleShare}`);
+  check('AI: soldiers spread out in a fight (not in a tight clump more than half the time)', idle.clumpShare < 0.5, `clump=${idle.clumpShare}`);
+  check('AI: bounding overwatch in use (a good share of fighters hold while others move)', idle.overwatchShare > 0.15, `overwatch=${idle.overwatchShare}`);
   // battle overview render
   await P.evaluate(() => {
     const g = window.__game, b = g.battle;
