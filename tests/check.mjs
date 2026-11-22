@@ -120,6 +120,9 @@ const modelChecks = () => {
   for (const r of [0.1, 0.3, 0.5, 0.7, 0.9]) phases.push({ name: `reload ${r}`, reload: r, ready: 1 });
   phases.push({ name: 'recoil', recoil: 1, ready: 1 }, { name: 'flinch', flinch: 1, ready: 1 });
   for (let r = 0; r <= 1; r += 0.125) phases.push({ name: `throw ${r}`, throw: r, weapon: 'grenade', only: true });
+  for (const l of [-1, -0.5, 0.5, 1]) phases.push({ name: `lean ${l}`, lean: l, ready: 1 });
+  phases.push({ name: 'lean kneel', lean: 1, kneel: 1, ready: 1 });
+  for (const pr of [0.5, 1]) phases.push({ name: `prone ${pr}`, prone: pr, ready: 1 }, { name: `prone ${pr} aimed`, prone: pr, ready: 1, aimPitch: 0.3 });
   for (const d of [0, 0.5, 1]) phases.push({ name: `dead ${d}`, dead: d });
   const pz = makePose();
   for (const ph of phases) {
@@ -150,7 +153,7 @@ const modelChecks = () => {
         r.grip = grip.distanceTo(hand);
         if (s.weapon === 'grenade' ? r.grip > 0.1 : r.grip > 0.08) r.loose.push(`grip ${r.grip.toFixed(3)}`);
         // muzzle out ahead of the body when shouldered
-        if (s.ready === 1 && !ph.reload && s.weapon !== 'grenade' && Math.abs(ph.twist || 0) < 0.1) {
+        if (s.ready === 1 && !ph.reload && !ph.prone && !ph.lean && s.weapon !== 'grenade' && Math.abs(ph.twist || 0) < 0.1) {
           const mz = pz.muzzle.clone().applyMatrix4(bodyInv);
           if (mz.z < U.D / 2 + 0.1) r.loose.push(`muzzle behind (${mz.z.toFixed(2)})`);
         }
@@ -162,7 +165,7 @@ const modelChecks = () => {
           const h = new THREE.Vector3().setFromMatrixPosition(pz.hands[i]);
           if (h.distanceTo(c) > 0.8) r.loose.push(`hand${i} ${h.distanceTo(c).toFixed(2)}m out`);
           const f = new THREE.Vector3().setFromMatrixPosition(pz.feet[i]);
-          if (Math.abs(f.x) > 0.4 || Math.abs(f.z) > 0.5 || f.y > 0.3) r.loose.push(`foot${i} off`);
+          if (Math.abs(f.x) > 0.5 || Math.abs(f.z) > (ph.prone ? 1.1 : 0.5) || f.y > (ph.prone ? 0.6 : 0.3)) r.loose.push(`foot${i} off`);
         }
       }
       r.air = !!ph.air;
@@ -265,6 +268,24 @@ try {
   const jumped = await P.waitForFunction((j) => window.__game.player.jumps > j && window.__game.player.pos.y > 0.2, j0, { timeout: 20000 }).then(() => true, () => false);
   const landed = await P.waitForFunction(() => window.__game.player.grounded, null, { timeout: 20000 }).then(() => true, () => false);
   check('Space jumps and lands', jumped && landed);
+  // sprint: Shift+W is faster than W and drains stamina
+  const sp0 = await P.evaluate(() => ({ z: window.__game.player.pos.z, s: window.__game.player.stamina }));
+  await P.keyboard.down('ShiftLeft'); await P.keyboard.down('KeyW');
+  const sprinted = await P.waitForFunction(() => window.__game.player.sprinting && window.__game.player.stamina < 0.97, null, { timeout: 30000 }).then(() => true, () => false);
+  const sv = await P.evaluate(() => Math.hypot(window.__game.player.vel.x, window.__game.player.vel.z));
+  await P.keyboard.up('KeyW'); await P.keyboard.up('ShiftLeft');
+  check('Shift sprints faster than walking and uses stamina', sprinted && sv > 2.8, `speed ${sv.toFixed(2)}`);
+  // prone (Z) and lean (E)
+  await P.keyboard.press('KeyZ');
+  const proned = await P.waitForFunction(() => window.__game.player.proneK > 0.9, null, { timeout: 30000 }).then(() => true, () => false);
+  await P.keyboard.press('KeyZ');
+  await P.waitForFunction(() => window.__game.player.proneK < 0.1, null, { timeout: 30000 }).catch(() => {});
+  await P.keyboard.down('KeyE');
+  const leaned = await P.waitForFunction(() => window.__game.player.leanK > 0.8, null, { timeout: 30000 }).then(() => true, () => false);
+  await P.keyboard.up('KeyE');
+  check('Z goes prone, E leans, both come back', proned && leaned);
+  const compass = await P.evaluate(() => { const r = document.querySelector('.compass').getBoundingClientRect(); return r.width > 50 && r.top >= 0 && document.querySelectorAll('#compass .card').length >= 8; });
+  check('compass strip shows', compass);
   const y0 = await P.evaluate(() => window.__game.cam.yaw);
   await P.evaluate(() => { window.__game.input.look.dx += 0.5; });
   await P.waitForFunction((y0) => Math.abs(window.__game.cam.yaw - y0) > 0.3, y0, { timeout: 30000 }).catch(() => {});
@@ -367,6 +388,20 @@ try {
   });
   check('weapons: all seven fire and use ammo or heat', guns.length === 7 && guns.every((x) => x.ok && x.used && x.proj), JSON.stringify(guns.filter((x) => !(x.ok && x.used && x.proj))));
 
+  // ---- no weapon makes the player faster (the coil gun, grenade and mortar once did)
+  const spd = await P.evaluate(() => {
+    const g = window.__game, pl = g.player, b = g.battle;
+    const out = {};
+    for (let w = 0; w < pl.weapons.length; w++) {
+      pl.setWeapon(w, true); pl.pos.set(0, 0, 70); pl.vel.set(0, 0, 0);
+      for (let i = 0; i < 40; i++) { Object.assign(pl.ctrl, { wx: 0, wz: -1, sprint: true, fire: false, aimAt: null }); pl.update(1 / 30, b); }
+      out[pl.weapon.id] = +Math.hypot(pl.vel.x, pl.vel.z).toFixed(2);
+    }
+    pl.setWeapon(0, true); pl.ctrl.wx = pl.ctrl.wz = 0; pl.ctrl.sprint = false; pl.vel.set(0, 0, 0);
+    return { out, cap: g.maxSpeed };
+  });
+  check('speed: every weapon moves the player at or below the sprint cap', Object.values(spd.out).every((v) => v <= spd.cap * 1.03), JSON.stringify(spd));
+
   // ---- AI battle, fast-forwarded
   const battle = await P.evaluate(() => {
     const g = window.__game;
@@ -374,11 +409,17 @@ try {
     g.freeze(true);
     const b = g.battle;
     b.god = true;
-    let covered = 0, under = 0, outside = 0, ticks = 0;
+    let covered = 0, under = 0, outside = 0, ticks = 0, fastest = 0, fastKind = '';
     const t0 = performance.now();
     for (let i = 0; i < 30 * 100; i++) {
       b.update(1 / 30);
       ticks++;
+      // nobody outruns the sprint pace (thrown by a blast doesn't count)
+      for (const u of b.units) {
+        if (!u.alive || u.knockT > 0) continue;
+        const v = Math.hypot(u.vel.x, u.vel.z);
+        if (v > fastest) { fastest = v; fastKind = u.kind; }
+      }
       if (i % 30 === 0) for (const u of b.units) {
         if (!u.alive) continue;
         if (u.brain?.cover) covered++;
@@ -388,12 +429,13 @@ try {
     }
     const ms = (performance.now() - t0) / ticks;
     g.freeze(false);
-    return { shots: b.stats.shots, kills: b.stats.kills, covered, under, outside, captured: b.points.filter((p) => p.owner >= 0).length, ms: +ms.toFixed(2), squads: b.squads.length, alive: b.counts() };
+    return { fastest: +fastest.toFixed(2), fastKind, cap: g.maxSpeed, shots: b.stats.shots, kills: b.stats.kills, covered, under, outside, captured: b.points.filter((p) => p.owner >= 0).length, ms: +ms.toFixed(2), squads: b.squads.length, alive: b.counts() };
   });
   check('AI: armies fight it out (shots fired, soldiers fall)', battle.shots > 300 && battle.kills >= 15, JSON.stringify(battle));
   check('AI: soldiers use cover', battle.covered > 200, `cover-samples=${battle.covered}`);
   check('AI: squads take control points', battle.captured >= 3, `captured=${battle.captured}`);
   check('AI: nobody under the ground or off the map', battle.under === 0 && battle.outside === 0, JSON.stringify(battle));
+  check('speed: nobody (AI or player) moves faster than the sprint pace', battle.fastest <= battle.cap * 1.25, `${battle.fastest} m/s (${battle.fastKind}) vs cap ${battle.cap}`);
   check('AI: 80 soldiers simulate in under 8 ms per tick (headless)', battle.ms < 8, `${battle.ms} ms`);
   // battle overview render
   await P.evaluate(() => {
@@ -544,7 +586,7 @@ try {
   await M.screenshot({ path: `${OUT}/phone.png` });
   const ml = await M.evaluate(uiLayout, HUD_SEL);
   check('phone: HUD and buttons inside the screen, not overlapping', ml.overlaps.length === 0 && ml.offscreen.length === 0, [...ml.overlaps, ...ml.offscreen].join(', '));
-  const sizes = await M.evaluate(() => [...document.querySelectorAll('.tbtn, #corner .icon-btn')].map((b) => Math.round(Math.min(b.getBoundingClientRect().width, b.getBoundingClientRect().height))));
+  const sizes = await M.evaluate(() => [...document.querySelectorAll('.tbtn, #corner .icon-btn')].filter((b) => b.offsetParent !== null).map((b) => Math.round(Math.min(b.getBoundingClientRect().width, b.getBoundingClientRect().height))));
   check('phone: buttons are at least 44px', sizes.every((x) => x >= 44), sizes.join(', '));
   // stick
   await M.evaluate(() => { const g = window.__game; g.battle.aiFrozen = true; g.battle.reinforce = false; g.battle.clearUnits(); g.player.pos.set(0, 0, 60); g.cam.yaw = 0; for (const p of [...g.battle.props]) if (Math.hypot(p.box.x, p.box.z - 60) < 14) g.battle.removeProp(p); });

@@ -21,9 +21,12 @@ export class PlayerCam {
     this.shoulder = 0.78;
     this.lift = 0.32;
     this.blend = 0; // 0 = 3p, 1 = 1p (smooth switch)
+    this.roll = 0;
+    this.fpFov = 84;
     this.pos = V();
     this.focus = V();
     // overview
+    this.fr = V(); // free-fly camera position
     this.over = { x: 0, z: 0, yaw: Math.PI, pitch: 0.95, height: 40 };
     this.collide = null; // (from, dir, maxT) => t
   }
@@ -67,9 +70,29 @@ export class PlayerCam {
 
   zoom(f) { this.over.height = THREE.MathUtils.clamp(this.over.height * f, 8, 140); }
 
+  // free camera: fly where you look (forward/back follow the pitch), strafe, rise and sink
+  fly(dt, mv, up, fast) {
+    const f = this.forward(V());
+    const right = V().set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    const v = f.multiplyScalar(mv.y).addScaledVector(right, mv.x);
+    v.y += up;
+    const sp = (fast ? 38 : 13) * dt;
+    this.fr.addScaledVector(v, sp);
+    this.fr.x = THREE.MathUtils.clamp(this.fr.x, -HALF - 10, HALF + 10);
+    this.fr.z = THREE.MathUtils.clamp(this.fr.z, -HALF - 10, HALF + 10);
+    this.fr.y = THREE.MathUtils.clamp(this.fr.y, 0.6, 120);
+  }
+
   update(dt, unit, snap = false) {
     if (this.frozen) return;
     const cam = this.camera;
+    if (this.mode === 'free') {
+      cam.position.copy(this.fr);
+      cam.rotation.order = 'YXZ';
+      cam.rotation.set(this.pitch, this.yaw, 0);
+      this.setFov(68, dt);
+      return;
+    }
     if (this.mode === 'over') {
       const o = this.over;
       const back = o.height / Math.tan(o.pitch);
@@ -111,16 +134,27 @@ export class PlayerCam {
       if (t < len + 0.25) tp = pivot.clone().addScaledVector(dir, Math.max(0.2, t - 0.25));
     }
     tp.y = Math.max(tp.y, 0.25);
-    const fp = this.focus.clone().addScaledVector(f, 0.12);
+    // first person is a chest-mounted bodycam: a touch low, wide, and it moves with the stride
+    const fp = this.focus.clone().addScaledVector(f.clone().setY(0).normalize(), 0.16);
+    const w = unit.walk * (1 - 0.6 * this.ads) * (unit.sprinting ? 1.6 : 1);
+    const c = unit.cycle * Math.PI * 2;
+    fp.y -= 0.04;
+    fp.y += -Math.abs(Math.cos(c)) * 0.028 * w + 0.014 * w;
+    fp.addScaledVector(right, Math.sin(c) * 0.016 * w);
     this.pos.lerpVectors(tp, fp, this.blend);
     cam.position.copy(this.pos);
     cam.lookAt(this.pos.clone().add(f));
+    if (this.blend > 0.01) {
+      this.roll += ((Math.sin(c) * 0.012 * w - (unit.mx || 0) * unit.walk * 0.02) - this.roll) * (1 - Math.exp(-10 * dt));
+      cam.rotateZ(this.roll * this.blend);
+    }
     if (this.shake > 0.001) {
       const s = this.shake * 0.02;
       cam.rotation.x += (Math.random() - 0.5) * s;
       cam.rotation.y += (Math.random() - 0.5) * s;
     }
-    this.setFov(THREE.MathUtils.lerp(this.fov, this.fov * 0.62, this.ads), dt);
+    const base = THREE.MathUtils.lerp(this.fov, this.fpFov, this.blend);
+    this.setFov(THREE.MathUtils.lerp(base, base * 0.6, this.ads), dt);
   }
 
   setFov(goal, dt) {

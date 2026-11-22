@@ -8,7 +8,11 @@ export const RADIUS = U.RADIUS;
 export const WALK = 2.2; // m/s
 export const SPRINT = 1.65;
 const GRAVITY = 17;
+const lerp = THREE.MathUtils.lerp;
 const JUMP_V = 4.8;
+// The fastest any soldier can run on their own: walk pace times the sprint multiplier. One source
+// of truth; weapon, stance and suppression modifiers only ever slow a soldier from here.
+export const MAX_SPEED = WALK * SPRINT;
 const CADENCE = 1.9; // steps per second per foot at walking pace
 
 let nextId = 1;
@@ -74,13 +78,27 @@ export class Unit {
   get weapon() { return this.weapons[this.wi]; }
   get busy() { return this.reloadT > 0 || this.throwT > 0; }
 
+  // lean: sideways offset (world x/z) of a point at height y above the feet, and its drop
+  leanOff(y) {
+    const a = (this.leanK || 0) * 0.32, r = Math.max(0, y - (U.LIFT + 0.15));
+    const side = -Math.sin(a) * r;
+    return [Math.cos(this.facing) * side, -Math.sin(this.facing) * side, r * (1 - Math.cos(a))];
+  }
   center(out = new THREE.Vector3()) {
-    return out.set(this.pos.x, this.pos.y + U.BODY_Y - U.KNEEL_DROP * this.kneelK, this.pos.z);
+    const p = this.proneK || 0;
+    const y = U.BODY_Y - U.KNEEL_DROP * this.kneelK;
+    const [lx, lz, ld] = this.leanOff(y);
+    return out.set(this.pos.x + lx, this.pos.y + lerp(y - ld, 0.18, p), this.pos.z + lz);
   }
   eye(out = new THREE.Vector3()) {
-    return out.set(this.pos.x, this.pos.y + U.EYE - U.KNEEL_DROP * this.kneelK, this.pos.z);
+    const p = this.proneK || 0;
+    const y = U.EYE - U.KNEEL_DROP * this.kneelK;
+    const [lx, lz, ld] = this.leanOff(y);
+    const f = 0.42 * p;
+    return out.set(this.pos.x + lx + Math.sin(this.facing) * f, this.pos.y + lerp(y - ld, 0.36, p), this.pos.z + lz + Math.cos(this.facing) * f);
   }
   muzzle(out = new THREE.Vector3()) {
+    if (this.muzzleOverride) return out.copy(this.muzzleOverride); // first-person gun
     return out.copy(this.poseOut.muzzle).applyMatrix4(this.world);
   }
   // hit box: the body block, shorter when kneeling
@@ -89,6 +107,10 @@ export class Unit {
     b.x = this.pos.x; b.z = this.pos.z; b.yaw = this.facing;
     b.y0 = this.pos.y + U.LIFT * 0.3 - U.KNEEL_DROP * this.kneelK;
     b.h = U.TOP - U.LIFT * 0.3;
+    b.hx = U.W / 2; b.hz = U.D / 2;
+    const p = this.proneK || 0;
+    if (p > 0.5) { b.y0 = this.pos.y; b.h = U.D + 0.04; b.hz = (U.TOP - U.LIFT) / 2; }
+    else if (Math.abs(this.leanK || 0) > 0.05) { const [lx, lz] = this.leanOff(U.BODY_Y); b.x += lx * 0.7; b.z += lz * 0.7; }
     return b;
   }
 
@@ -152,6 +174,7 @@ export class Unit {
   impulse(v) {
     if (this.rag && !this.alive) { this.rag.kick(v.clone().multiplyScalar(1.3)); return; }
     this.vel.add(v);
+    this.knockT = 0.6;
     if (v.y > 0.5) this.grounded = false;
   }
 
@@ -215,12 +238,22 @@ export class Unit {
     }
 
     const def = this.weapon.def;
-    const sprint = c.sprint && !c.fire && !this.busy && Math.hypot(c.wx, c.wz) > 0.3;
-    const kneel = c.kneel && !sprint ? 1 : 0;
+    // stamina: sprinting drains it; once spent you jog until it's a third back
+    if (this.stamina === undefined) { this.stamina = 1; this.winded = false; }
+    let sprint = c.sprint && !c.fire && !this.busy && Math.hypot(c.wx, c.wz) > 0.3 && !this.winded;
+    if (sprint) { this.stamina -= dt / 7; this.restT = 0.9; if (this.stamina <= 0) { this.stamina = 0; this.winded = true; sprint = false; } }
+    else { this.restT = Math.max(0, (this.restT || 0) - dt); if (this.restT <= 0) this.stamina = Math.min(1, this.stamina + dt / 5); }
+    if (this.winded && this.stamina > 0.35) this.winded = false;
+    const prone = c.prone && this.grounded ? 1 : 0;
+    if (prone) sprint = false;
+    this.proneK = (this.proneK || 0) + (prone - (this.proneK || 0)) * (1 - Math.exp(-5 * dt));
+    const lean = !sprint && this.proneK < 0.3 ? THREE.MathUtils.clamp(c.lean || 0, -1, 1) : 0;
+    this.leanK = (this.leanK || 0) + (lean - (this.leanK || 0)) * (1 - Math.exp(-10 * dt));
+    const kneel = c.kneel && !sprint && !prone ? 1 : 0;
     this.kneelK += (kneel - this.kneelK) * (1 - Math.exp(-9 * dt));
-    const speed = WALK * (c.speed ?? 1) * (def.speed || 1) * (sprint ? SPRINT : 1) * (1 - 0.6 * this.kneelK) * (1 - 0.25 * this.suppression);
+    const speed = WALK * (c.speed ?? 1) * (def.move || 1) * (sprint ? SPRINT : 1) * (1 - 0.6 * this.kneelK) * (1 - 0.72 * this.proneK) * (1 - 0.5 * Math.abs(this.leanK)) * (1 - 0.25 * this.suppression);
     this.sprinting = sprint;
-    this.move(dt, c.wx, c.wz, c.jump, speed, world, aiming || c.faceYaw !== undefined);
+    this.move(dt, c.wx, c.wz, c.jump && this.proneK < 0.3, speed, world, aiming || c.faceYaw !== undefined);
     c.jump = false;
 
     const readyGoal = sprint ? 0.15 : aiming || c.fire ? 1 : 0.55;
@@ -237,6 +270,10 @@ export class Unit {
     const a = 1 - Math.exp(-accel * dt);
     this.vel.x += (wx * speedMax - this.vel.x) * a;
     this.vel.z += (wz * speedMax - this.vel.z) * a;
+    // hard cap on self-propelled speed (blasts and hits get a moment to throw a soldier further)
+    this.knockT = Math.max(0, (this.knockT || 0) - dt);
+    const hv = Math.hypot(this.vel.x, this.vel.z), cap = Math.min(MAX_SPEED, Math.max(speedMax, 0.01)) * 1.02;
+    if (hv > cap && this.knockT <= 0) { this.vel.x *= cap / hv; this.vel.z *= cap / hv; }
 
     // facing: aiming units square up to the aim (strafing and backing off as needed);
     // otherwise they turn to where they walk
@@ -244,10 +281,10 @@ export class Unit {
     const c = this.ctrl;
     if (c.faceYaw !== undefined) goal = c.faceYaw;
     else if (faceAim) goal = this.aimYaw;
-    else if (wish > 0.05) goal = Math.atan2(wx, wz);
+    else if (wish > 0.25) goal = Math.atan2(wx, wz);
     if (goal !== null) {
       if (c.faceYaw !== undefined) this.facing = wrap(goal);
-      else this.facing = wrap(this.facing + wrap(goal - this.facing) * (1 - Math.exp(-10 * dt)));
+      else this.facing = wrap(this.facing + wrap(goal - this.facing) * (1 - Math.exp(-(faceAim ? 10 : 6) * dt)));
     }
     const tw = faceAim ? THREE.MathUtils.clamp(wrap(this.aimYaw - this.facing), -0.5, 0.5) : 0;
     this.twist += (tw - this.twist) * (1 - Math.exp(-14 * dt));
@@ -366,6 +403,7 @@ export class Unit {
     s.reload = this.reloadT > 0 ? 1 - this.reloadT / this.weapon.def.reload : -1;
     s.throw = this.throwT > 0 ? 1 - this.throwT / 0.6 : -1;
     s.flinch = this.flinch; s.ads = this.ads; s.fp = this.fp || 0; s.sprint = this.sprinting;
+    s.lean = this.alive ? this.leanK || 0 : 0; s.prone = this.alive ? this.proneK || 0 : 0;
     s.dead = this.alive ? -1 : Math.min(1, this.deadT / 0.7);
     s.weapon = this.weapon.id;
     if (this.rag && !this.alive) {

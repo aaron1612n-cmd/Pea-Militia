@@ -1,15 +1,18 @@
+import * as THREE from 'three';
 import { TEAMS } from './factions.js';
 import { SLOTS } from './weapons.js';
 import { HALF } from './world.js';
 
 const $ = (id) => document.getElementById(id);
+const V = new THREE.Vector3();
+const PX = 2.2; // compass pixels per degree
 
 // Heads-up display: points and tickets, radar, health, weapon, crosshair, hit markers,
 // a short feed of the player's kills and point captures.
 export class Hud {
   constructor() {
     this.el = $('hud');
-    this.hp = $('hpbar'); this.hpNum = $('hpnum');
+    this.hp = $('hpbar'); this.hpNum = $('hpnum'); this.stam = $('stambar');
     this.wname = $('wname'); this.ammo = $('ammo');
     this.heat = $('heat'); this.heatBar = this.heat.parentElement;
     this.cross = $('cross'); this.hitEl = $('hitmark'); this.hurtEl = $('hurt');
@@ -21,11 +24,46 @@ export class Hud {
     this.hitT = 0; this.hurtT = 0; this.bannerT = 0; this.radarT = 0;
     this.last = {};
     this.slots.innerHTML = SLOTS.map(() => '<span></span>').join('');
+    // compass strip: three turns of ticks so it can scroll either way without a seam
+    this.compass = $('compass'); this.supp = $('supp');
+    const CARD = { 0: 'N', 45: 'NE', 90: 'E', 135: 'SE', 180: 'S', 225: 'SW', 270: 'W', 315: 'NW' };
+    let html = '';
+    for (let d = -360; d <= 720; d += 15) {
+      const n = ((d % 360) + 360) % 360;
+      html += CARD[n] ? `<span class="card" style="left:${d * PX}px">${CARD[n]}</span>` : `<span class="tick" style="left:${d * PX}px"></span>`;
+    }
+    this.compass.innerHTML = html + '<b id="cobj"></b>';
+    this.cobj = $('cobj');
+    this.marks = $('marks'); this.mc = this.marks.getContext('2d');
+  }
+
+  // squad markers: a small chevron over each friendly in view, fading with distance
+  drawMarks(player, battle, camera) {
+    const c = this.marks, dpr = Math.min(2, devicePixelRatio || 1);
+    const W = Math.round(innerWidth * dpr), H = Math.round(innerHeight * dpr);
+    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    const g = this.mc;
+    g.clearRect(0, 0, W, H);
+    if (!player.alive) return;
+    g.fillStyle = TEAMS[player.team].ui;
+    for (const u of battle.units) {
+      if (u === player || !u.alive || u.team !== player.team) continue;
+      const dx = u.pos.x - player.pos.x, dz = u.pos.z - player.pos.z, d = Math.hypot(dx, dz);
+      if (d > 45 || d < 2) continue;
+      V.set(u.pos.x, u.pos.y + 1.45, u.pos.z).project(camera);
+      if (V.z > 1 || Math.abs(V.x) > 1 || Math.abs(V.y) > 1) continue;
+      const x = (V.x * 0.5 + 0.5) * W, y = (-V.y * 0.5 + 0.5) * H, s = (4 + 3 * (1 - d / 45)) * dpr;
+      g.globalAlpha = 0.85 * (1 - d / 55) * (u.squad === player.squad ? 1 : 0.7);
+      g.beginPath(); g.moveTo(x - s, y - s); g.lineTo(x + s, y - s); g.lineTo(x, y + s * 0.4); g.closePath(); g.fill();
+    }
+    g.globalAlpha = 1;
   }
 
   show(on) { this.el.hidden = !on; }
 
   setup(battle) {
+    this.cobj.innerHTML = battle.points.map((p) => `<span class="obj" data-p="${p.name}">${p.name}</span>`).join('');
+    this.objEls = [...this.cobj.children];
     this.pointsEl.innerHTML = battle.points.map((p) => `<span class="pt" data-p="${p.name}">${p.name}<i></i></span>`).join('');
     this.ticketsEl.innerHTML = battle.teams.map((t) => `<span class="tk" data-t="${t.id}"><i style="background:${TEAMS[t.id].ui}"></i>${TEAMS[t.id].short} <b class="num">0</b></span>`).join('');
     this.ticketsEl.hidden = battle.settings.mode !== 'battle';
@@ -55,7 +93,31 @@ export class Hud {
   }
 
   update(dt, player, battle, cam) {
+    // compass: heading from the view, north is -z; objectives sit at their bearing
+    const head = ((-cam.yaw * 180) / Math.PI % 360 + 360) % 360;
+    const cw = this.compass.parentElement.clientWidth;
+    this.compass.style.transform = `translateX(${(cw / 2 - head * PX).toFixed(1)}px)`;
+    battle.points.forEach((p, i) => {
+      const el = this.objEls?.[i];
+      if (!el) return;
+      let b = (Math.atan2(p.pos.x - player.pos.x, -(p.pos.z - player.pos.z)) * 180) / Math.PI;
+      b = ((b % 360) + 360) % 360;
+      if (b - head > 180) b -= 360; else if (head - b > 180) b += 360;
+      el.style.left = `${b * PX}px`;
+      const col = p.owner >= 0 ? TEAMS[p.owner].ui : '#d8d8d4';
+      if (el.dataset.c !== col) { el.dataset.c = col; el.style.background = col; }
+    });
+    // suppression: the edges close in under fire
+    const sp = Math.round((player.alive ? player.suppression : 0) * 20) / 20;
+    if (sp !== this.last.sp) { this.last.sp = sp; this.supp.style.opacity = Math.min(1, sp * 1.3); }
     // health
+    const st = Math.round((player.stamina ?? 1) * 50) / 50;
+    if (st !== this.last.st || !!player.winded !== this.last.wd) {
+      this.last.st = st; this.last.wd = !!player.winded;
+      this.stam.style.transform = `scaleX(${st})`;
+      this.stam.classList.toggle('full', st >= 1);
+      this.stam.classList.toggle('winded', !!player.winded);
+    }
     const hp = Math.max(0, Math.round(player.hp));
     if (hp !== this.last.hp) {
       this.last.hp = hp;
