@@ -204,7 +204,7 @@ try {
   // part geometry, through the instanced crowd
   await P.evaluate(() => {
     const c = window.__game.crowd;
-    window.__parts = { PART_GEO: { body: c.body.geometry, visor: c.visor.geometry, pack: c.pack.geometry, foot: c.foot.geometry, hand: c.hand.geometry } };
+    window.__parts = { PART_GEO: { body: c.body.geometry, visor: c.visor.geometry, pack: c.pack.geometry, foot: c.foot.geometry, hand: c.hand.geometry, arm: c.arm.geometry } };
   });
   await P.waitForTimeout(600);
   await P.screenshot({ path: `${OUT}/menu.png` });
