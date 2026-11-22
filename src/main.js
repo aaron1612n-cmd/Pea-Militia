@@ -500,8 +500,9 @@ function drawUnits() {
 const clock = new THREE.Clock();
 let frozen = false;
 let menuT = 0;
-function frame() {
-  const dt = Math.min(clock.getDelta(), 0.05);
+let skipDraw = false;
+function frame(_t, fixedDt) {
+  const dt = fixedDt ?? Math.min(clock.getDelta(), 0.05);
   const inp = input.read();
   if (!frozen) {
     if (state === 'menu') {
@@ -573,6 +574,7 @@ function frame() {
   sun.position.copy(look).add(SUN);
   sun.target.position.copy(look);
   if (state !== 'menu' && player) { hud.update(dt, player, battle, cam); if (cam.mode !== 'over' && cam.mode !== 'free') hud.drawMarks(player, battle, camera); }
+  if (skipDraw) return;
   drawUnits();
   updateGround(camera);
   renderer.render(scene, camera);
@@ -602,6 +604,12 @@ window.__game = { maxSpeed: MAX_SPEED,
   render() { drawUnits(); updateGround(camera); renderer.render(scene, camera); },
   view(pos, target) { cam.frozen = true; camera.position.set(...pos); camera.lookAt(...target); sun.position.set(target[0], 0, target[2]).add(SUN); sun.target.position.set(...target); },
   unfreezeCam() { cam.frozen = false; },
+  // Deterministic fast-forward for the check suite: run n frames of fixed dt, independent of how
+  // slow the headless renderer is. Held keys, queued taps and touches all keep working.
+  // Only the last frame draws: queueing renders back to back starves the software GL process.
+  step(n = 1, dt = 1 / 30) { for (let i = 0; i < n; i++) { skipDraw = i < n - 1; frame(0, dt); } skipDraw = false; },
+  // Step until fn() is true (checked each frame); returns whether it got there within max frames.
+  until(fn, max = 900, dt = 1 / 30) { let ok = fn(); for (let i = 0; i < max && !ok; i++) { skipDraw = true; frame(0, dt); ok = fn(); } skipDraw = false; frame(0, dt); return ok || fn(); },
 };
 
 // Phones: no pinch or double-tap zoom anywhere in the game (iOS ignores the viewport flag).

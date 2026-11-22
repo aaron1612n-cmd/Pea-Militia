@@ -45,6 +45,25 @@ async function open(ctxOpts) {
   return { ctx, page, errors };
 }
 
+// Condition-based waits that don't depend on how fast the headless renderer runs: fast-forward the
+// game in fixed steps (window.__game.until) until the condition holds, instead of sleeping.
+const until = (page, fn, arg, max = 900) => page.evaluate(([src, a, m]) => window.__game.until(() => (new Function('a', `return (${src})(a)`))(a), m), [fn.toString(), arg ?? null, max]);
+const settle = (page, frames = 20) => page.evaluate((n) => window.__game.step(n), frames);
+// One automatic retry for a flaky control check; a flake is logged, never hidden.
+async function flaky(name, run) {
+  let r = await run();
+  if (!r.ok) { console.log(`FLAKE  ${name}  (retrying once: ${r.detail || ''})`); r = await run(); if (r.ok) flakes.push(name); }
+  check(name, r.ok, r.detail);
+}
+const flakes = [];
+// Screenshots are artifacts, not assertions: a slow software-GL frame must not abort the suite.
+// Try twice with a long timeout; on failure log it and move on (the checks themselves still run).
+async function shot(page, path) {
+  for (let i = 0; i < 2; i++) {
+    try { await page.screenshot({ path, timeout: 180000 }); return; } catch (e) { console.log(`SHOT   ${path} attempt ${i + 1} failed: ${String(e.message).split('\n')[0]}`); }
+  }
+}
+
 // ---------------- soldier model checks (run in page) ----------------
 const modelChecks = () => {
   const { THREE, U, pose, makePose, HOLD, crowd } = window.__game;
@@ -234,7 +253,7 @@ try {
     window.__parts = { PART_GEO: { body: c.body.geometry, visor: c.visor.geometry, pack: c.pack.geometry, foot: c.foot.geometry, hand: c.hand.geometry, arm: c.arm.geometry } };
   });
   await P.waitForTimeout(600);
-  await P.screenshot({ path: `${OUT}/menu.png` });
+  await shot(P, `${OUT}/menu.png`);
   const menuL = await P.evaluate(uiLayout, '.menu-frame, .deploy');
   check('setup screen shows on load, battle not started', await P.evaluate(() => window.__game.state === 'menu' && !document.getElementById('menu').hidden && document.getElementById('hud').hidden));
   check('setup screen fits the window', menuL.offscreen.length === 0, menuL.offscreen.join(', '));
@@ -267,7 +286,7 @@ try {
   check('big map: nothing outside the fence or sunk into the ground, 7 points', bud.out === 0 && bud.buried === 0 && bud.pts === 7, JSON.stringify(bud));
   check('Deploy asks for pointer lock', st.lock > 0);
   await P.waitForTimeout(800);
-  await P.screenshot({ path: `${OUT}/desktop-3p.png` });
+  await shot(P, `${OUT}/desktop-3p.png`);
   const lay = await P.evaluate(uiLayout, HUD_SEL);
   check('desktop: HUD elements inside the screen and not overlapping', lay.overlaps.length === 0 && lay.offscreen.length === 0, [...lay.overlaps, ...lay.offscreen].join(', '));
 
@@ -279,7 +298,7 @@ try {
     g.player.pos.set(0, 0, 60); g.player.vel.set(0, 0, 0); g.cam.yaw = 0; g.cam.pitch = 0;
     window.__frames = 0; const tick = () => { window.__frames++; requestAnimationFrame(tick); }; tick();
   });
-  await P.waitForFunction(() => window.__frames > 8, null, { timeout: 60000 });
+  await settle(P, 12);
   const frame3 = await P.evaluate(() => {
     const { THREE, camera, player } = window.__game;
     const pts = [];
@@ -297,49 +316,47 @@ try {
   const z0 = await P.evaluate(() => window.__game.player.pos.z);
   // headless rendering is slow, so wait on game state rather than wall time
   await P.keyboard.down('KeyW');
-  await P.waitForFunction((z0) => window.__game.player.pos.z < z0 - 1.2, z0, { timeout: 60000 }).catch(() => {});
+  await until(P, (z0) => window.__game.player.pos.z < z0 - 1.2, z0);
   await P.keyboard.up('KeyW');
   const mv = await P.evaluate(() => ({ z: window.__game.player.pos.z, x: window.__game.player.pos.x, facing: window.__game.player.facing }));
   check('W walks away from the camera', mv.z - z0 < -0.8 && Math.abs(mv.x) < 0.15, `dz=${(mv.z - z0).toFixed(2)}`);
-  const j0 = await P.evaluate(() => window.__game.player.jumps);
-  let jumped = false;
-  for (let tries = 0; tries < 3 && !jumped; tries++) {
+  await flaky('Space jumps and lands', async () => {
+    await until(P, () => window.__game.player.grounded, null);
+    const j0 = await P.evaluate(() => window.__game.player.jumps);
     await P.keyboard.press('Space');
-    jumped = await P.waitForFunction((j) => window.__game.player.jumps > j, j0, { timeout: 15000 }).then(() => true, () => false);
-  }
-  const landed = await P.waitForFunction(() => window.__game.player.grounded && window.__game.player.vel.y === 0, null, { timeout: 90000 }).then(() => true, () => false);
-  check('Space jumps and lands', jumped && landed);
+    const jumped = await until(P, (j) => window.__game.player.jumps > j, j0, 60);
+    const landed = await until(P, () => window.__game.player.grounded && window.__game.player.vel.y === 0, null);
+    return { ok: jumped && landed, detail: `jumped=${jumped} landed=${landed}` };
+  });
   // sprint: Shift+W is faster than W and drains stamina
   const sp0 = await P.evaluate(() => ({ z: window.__game.player.pos.z, s: window.__game.player.stamina }));
   await P.keyboard.down('ShiftLeft'); await P.keyboard.down('KeyW');
-  const sprinted = await P.waitForFunction(() => window.__game.player.sprinting && window.__game.player.stamina < 0.97, null, { timeout: 30000 }).then(() => true, () => false);
+  const sprinted = await until(P, () => window.__game.player.sprinting && window.__game.player.stamina < 0.97, null);
   const sv = await P.evaluate(() => Math.hypot(window.__game.player.vel.x, window.__game.player.vel.z));
   await P.keyboard.up('KeyW'); await P.keyboard.up('ShiftLeft');
   check('Shift sprints faster than walking and uses stamina', sprinted && sv > 2.8, `speed ${sv.toFixed(2)}`);
   // prone (Z) and lean (E)
   await P.keyboard.press('KeyZ');
-  const proned = await P.waitForFunction(() => window.__game.player.proneK > 0.9, null, { timeout: 120000 }).then(() => true, () => false);
+  const proned = await until(P, () => window.__game.player.proneK > 0.9, null);
   await P.keyboard.press('KeyZ');
-  await P.waitForFunction(() => window.__game.player.proneK < 0.1, null, { timeout: 120000 }).catch(() => {});
+  await until(P, () => window.__game.player.proneK < 0.1, null);
   await P.keyboard.down('KeyE');
-  const leaned = await P.waitForFunction(() => window.__game.player.leanK > 0.8, null, { timeout: 120000 }).then(() => true, () => false);
+  const leaned = await until(P, () => window.__game.player.leanK > 0.8, null);
   await P.keyboard.up('KeyE');
   check('Z goes prone, E leans, both come back', proned && leaned);
   const compass = await P.evaluate(() => { const r = document.querySelector('.compass').getBoundingClientRect(); return r.width > 50 && r.top >= 0 && document.querySelectorAll('#compass .card').length >= 8; });
   check('compass strip shows', compass);
   const y0 = await P.evaluate(() => window.__game.cam.yaw);
   await P.evaluate(() => { window.__game.input.look.dx += 0.5; });
-  await P.waitForFunction((y0) => Math.abs(window.__game.cam.yaw - y0) > 0.3, y0, { timeout: 30000 }).catch(() => {});
+  await until(P, (y0) => Math.abs(window.__game.cam.yaw - y0) > 0.3, y0);
   const y1 = await P.evaluate(() => window.__game.cam.yaw);
   check('mouse look turns the camera', Math.abs(y1 - y0) > 0.3, `${(y1 - y0).toFixed(2)} rad`);
   await P.keyboard.press('KeyV');
-  await P.waitForFunction(() => window.__game.cam.blend > 0.99, null, { timeout: 20000 }).catch(() => {});
-  await P.waitForTimeout(300);
+  await until(P, () => window.__game.cam.blend > 0.99, null);
   const fp = await P.evaluate(() => ({ mode: window.__game.cam.mode, d: window.__game.camera.position.distanceTo(window.__game.player.eye()) }));
-  await P.screenshot({ path: `${OUT}/desktop-1p.png` });
+  await shot(P, `${OUT}/desktop-1p.png`);
   await P.keyboard.press('KeyV');
-  await P.waitForFunction(() => window.__game.cam.blend < 0.01, null, { timeout: 20000 }).catch(() => {});
-  await P.waitForTimeout(300);
+  await until(P, () => window.__game.cam.blend < 0.01, null);
   const tp = await P.evaluate(() => ({ mode: window.__game.cam.mode, d: window.__game.camera.position.distanceTo(window.__game.player.eye()) }));
   check('V switches first person and back to third person', fp.mode === '1p' && fp.d < 0.3 && tp.mode === '3p' && tp.d > 2.5, JSON.stringify({ fp, tp }));
 
@@ -494,7 +511,7 @@ try {
     g.view([best.pos.x + 22, 15, best.pos.z + 22], [best.pos.x, 0, best.pos.z]);
     g.render();
   });
-  await P.screenshot({ path: `${OUT}/battle-overview.png` });
+  await shot(P, `${OUT}/battle-overview.png`);
   await P.evaluate(() => { const g = window.__game; g.unfreezeCam(); g.freeze(false); });
 
   // ---- sandbox palette: pick from the grid, click the field
@@ -530,7 +547,7 @@ try {
   await P.waitForTimeout(200);
   const sb2 = await P.evaluate(() => window.__game.battle.units.length);
   check('sandbox: delete tool removes a soldier', sb2 === sb1 - 1, `${sb1} -> ${sb2}`);
-  await P.screenshot({ path: `${OUT}/desktop-sandbox.png` });
+  await shot(P, `${OUT}/desktop-sandbox.png`);
   const palL = await P.evaluate(uiLayout, '.palette, #radar, .topbar, .vitals');
   check('sandbox: palette fits and leaves the HUD clear', palL.overlaps.length === 0 && palL.offscreen.length === 0, [...palL.overlaps, ...palL.offscreen].join(', '));
   for (const t of ['freeze', 'slow', 'god']) await P.click(`[data-t="${t}"]`);
@@ -634,7 +651,7 @@ try {
   await P.click('#resume');
   check('resume returns to play', await P.evaluate(() => window.__game.state === 'play'));
   await P.evaluate(() => { const b = window.__game.battle; b.teams[1].tickets = 0; for (const u of b.units) if (u.team === 1) u.alive = false; });
-  const ended = await P.waitForFunction(() => window.__game.state === 'end' && !document.getElementById('end').hidden, null, { timeout: 60000 }).then(() => true, () => false);
+  const ended = await until(P, () => window.__game.state === 'end' && !document.getElementById('end').hidden, null, 1800);
   check('wiping out the enemy ends the battle with a result screen', ended && /Victory/.test(await P.textContent('#endTitle')));
   await P.click('#endMenu');
   check('Setup returns to the setup screen', await P.evaluate(() => window.__game.state === 'menu'));
@@ -659,7 +676,7 @@ try {
       g.view([Math.sin(yaw) * 4.2, 1.5, Math.cos(yaw) * 4.2], [0, 0.6, 0.3]);
       g.render();
     }, a);
-    await P.screenshot({ path: `${OUT}/turntable-${String(a * 45).padStart(3, '0')}.png` });
+    await shot(P, `${OUT}/turntable-${String(a * 45).padStart(3, '0')}.png`);
   }
   const anim = [['walk', 'u.walk = 1; u.cycle = 0.25; u.vel.set(0,0,2.2);'], ['kneel', 'u.vel.set(0,0,0); u.walk = 0; u.kneelK = 1;'], ['reload', 'u.kneelK = 0; u.reloadT = u.weapon.def.reload * 0.5;'], ['dead', 'u.reloadT = 0; u.alive = false; u.deadT = 2;']];
   for (const [name, code] of anim) {
@@ -669,15 +686,15 @@ try {
       g.view([1.2, 1.4, 3.8], [0, 0.55, 0.3]);
       g.render();
     }, [code]);
-    await P.screenshot({ path: `${OUT}/anim-${name}.png` });
+    await shot(P, `${OUT}/anim-${name}.png`);
   }
   await P.evaluate(() => { window.__game.freeze(false); window.__game.unfreezeCam(); });
   // ---- ground: detail shading, grass clutter, draw-call and frame budget
   await P.evaluate(() => { const g = window.__game; g.freeze(true); const y = g.height(0, 62); g.view([0, y + 1.7, 62], [0, y + 1.2, 40]); g.render(); });
   await P.waitForTimeout(300);
-  await P.screenshot({ path: `${OUT}/ground-eye.png` });
+  await shot(P, `${OUT}/ground-eye.png`);
   await P.evaluate(() => { const g = window.__game; g.view([40, g.height(40, 40) + 7, 40], [10, g.height(10, 10), 10]); g.render(); });
-  await P.screenshot({ path: `${OUT}/ground-high.png` });
+  await shot(P, `${OUT}/ground-high.png`);
   const gr = await P.evaluate(() => {
     const g = window.__game; const y = g.height(0, 62); g.view([0, y + 1.7, 62], [0, y + 1.2, 40]); g.render();
     const grass = g.scene.getObjectByName('grass');
@@ -695,14 +712,14 @@ try {
   // ======================= phone (portrait) =======================
   const m = await open({ ...devices['iPhone 13'] });
   const M = m.page;
-  await M.screenshot({ path: `${OUT}/phone-menu.png` });
+  await shot(M, `${OUT}/phone-menu.png`);
   const mm = await M.evaluate(() => ({ scroll: document.documentElement.scrollWidth > innerWidth + 1, deploy: (() => { const r = document.getElementById('deploy').getBoundingClientRect(); return r.bottom <= innerHeight && r.top >= 0; })() }));
   check('phone: setup screen fits (no sideways scroll, Deploy on screen)', !mm.scroll && mm.deploy, JSON.stringify(mm));
   await M.tap('#deploy');
   await M.waitForFunction(() => window.__game.state === 'play', null, { timeout: 15000 });
   await M.waitForTimeout(600);
   check('phone: touch controls shown', await M.evaluate(() => document.documentElement.dataset.input === 'touch' && getComputedStyle(document.getElementById('touch')).display !== 'none'));
-  await M.screenshot({ path: `${OUT}/phone.png` });
+  await shot(M, `${OUT}/phone.png`);
   const ml = await M.evaluate(uiLayout, HUD_SEL);
   check('phone: HUD and buttons inside the screen, not overlapping', ml.overlaps.length === 0 && ml.offscreen.length === 0, [...ml.overlaps, ...ml.offscreen].join(', '));
   const sizes = await M.evaluate(() => [...document.querySelectorAll('.tbtn, #corner .icon-btn')].filter((b) => b.offsetParent !== null).map((b) => Math.round(Math.min(b.getBoundingClientRect().width, b.getBoundingClientRect().height))));
@@ -714,45 +731,45 @@ try {
   const W = await M.evaluate(() => innerWidth), H = await M.evaluate(() => innerHeight);
   const pz0 = await M.evaluate(() => window.__game.player.pos.z);
   await touch('touchStart', [{ x: W * 0.2, y: H * 0.7, id: 1 }]);
-  for (let i = 1; i <= 6; i++) { await touch('touchMove', [{ x: W * 0.2, y: H * 0.7 - i * 10, id: 1 }]); await M.waitForTimeout(60); }
-  await M.waitForTimeout(600);
+  for (let i = 1; i <= 6; i++) { await touch('touchMove', [{ x: W * 0.2, y: H * 0.7 - i * 10, id: 1 }]); await settle(M, 2); }
+  await until(M, (z) => window.__game.player.pos.z < z - 0.6, pz0);
   await touch('touchEnd', []);
   const pz1 = await M.evaluate(() => window.__game.player.pos.z);
   check('phone: left-thumb stick walks', pz1 - pz0 < -0.5, `dz=${(pz1 - pz0).toFixed(2)}`);
   const yy0 = await M.evaluate(() => window.__game.cam.yaw);
   await touch('touchStart', [{ x: W * 0.6, y: H * 0.45, id: 2 }]);
-  for (let i = 1; i <= 6; i++) { await touch('touchMove', [{ x: W * 0.6 + i * 15, y: H * 0.45, id: 2 }]); await M.waitForTimeout(30); }
+  for (let i = 1; i <= 6; i++) { await touch('touchMove', [{ x: W * 0.6 + i * 15, y: H * 0.45, id: 2 }]); await settle(M, 2); }
   await touch('touchEnd', []);
-  await M.waitForTimeout(100);
+  await settle(M, 6);
   const yy1 = await M.evaluate(() => window.__game.cam.yaw);
   check('phone: right-thumb drag aims', Math.abs(yy1 - yy0) > 0.2, `${(yy1 - yy0).toFixed(2)} rad`);
   const f0 = await M.evaluate(() => window.__game.player.shots);
   await M.tap('#fire');
-  check('phone: fire button shoots', await M.waitForFunction((f0) => window.__game.player.shots > f0, f0, { timeout: 8000 }).then(() => true, () => false));
+  check('phone: fire button shoots', await until(M, (f0) => window.__game.player.shots > f0, f0, 300));
   await M.tap('#viewBtn');
-  await M.waitForTimeout(300);
+  await until(M, () => window.__game.cam.mode === '1p', null, 120);
   check('phone: view button switches to first person', await M.evaluate(() => window.__game.cam.mode === '1p'));
   await M.tap('#sbxBtn');
-  await M.waitForTimeout(400);
+  await until(M, () => window.__game.sandbox.open, null, 120);
   const pal = await M.evaluate(() => { const r = document.getElementById('palette').getBoundingClientRect(); return { open: window.__game.sandbox.open, fits: r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight }; });
   check('phone: sandbox palette opens and fits the screen', pal.open && pal.fits, JSON.stringify(pal));
   await M.tap('.pal-item[data-id="rifleman"]');
   const n0 = await M.evaluate(() => window.__game.battle.units.length);
   await M.tap('#scene', { position: { x: W * 0.5, y: H * 0.25 } });
-  await M.waitForTimeout(200);
+  await until(M, (n) => window.__game.battle.units.length > n, n0, 60);
   const n1 = await M.evaluate(() => window.__game.battle.units.length);
   check('phone: tap an item then tap the field to place it', n1 === n0 + 1, `${n0} -> ${n1}`);
-  await M.screenshot({ path: `${OUT}/phone-sandbox.png` });
+  await shot(M, `${OUT}/phone-sandbox.png`);
   check('phone: no console errors', m.errors.length === 0, m.errors.slice(0, 3).join(' | '));
   await m.ctx.close();
 
   // ======================= phone (landscape) =======================
   const l = await open({ ...devices['iPhone 13 landscape'] });
-  await l.page.screenshot({ path: `${OUT}/phone-landscape-menu.png` });
+  await shot(l.page, `${OUT}/phone-landscape-menu.png`);
   const lmenu = await l.page.evaluate(() => { const r = document.getElementById('deploy').getBoundingClientRect(); return r.bottom <= innerHeight + 1; });
   await l.page.evaluate(() => window.__game.start({ mode: 'battle', teams: 2, size: 20, tickets: 4, view: '3p', playerTeam: 0 }));
   await l.page.waitForTimeout(500);
-  await l.page.screenshot({ path: `${OUT}/phone-landscape.png` });
+  await shot(l.page, `${OUT}/phone-landscape.png`);
   const ll = await l.page.evaluate(uiLayout, HUD_SEL);
   check('phone landscape: Deploy reachable, HUD clear and on screen', lmenu && ll.overlaps.length === 0 && ll.offscreen.length === 0, [...ll.overlaps, ...ll.offscreen].join(', '));
   check('phone landscape: no console errors', l.errors.length === 0, l.errors.slice(0, 3).join(' | '));
@@ -765,5 +782,6 @@ await browser.close();
 if (server) server.kill();
 writeFileSync(`${OUT}/report.json`, JSON.stringify(results, null, 2));
 const failed = results.filter((r) => !r.ok);
+if (flakes.length) console.log(`\nflaked then passed on retry: ${flakes.join('; ')}`);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
 process.exit(failed.length ? 1 : 0);
