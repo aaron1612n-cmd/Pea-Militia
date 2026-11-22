@@ -451,6 +451,38 @@ try {
   await P.click('#palClose');
   check('sandbox: closing returns to the player camera', await P.evaluate(() => !window.__game.sandbox.open && window.__game.cam.mode !== 'over'));
 
+  // ---- ragdoll deaths: bodies fly, land on the ground, settle, keep their limbs, drop their guns
+  const rag = await P.evaluate(() => {
+    const g = window.__game, b = g.battle, T = g.THREE;
+    b.clearUnits(); b.aiFrozen = true; g.player.pos.set(0, 0, -30);
+    for (const p of [...b.props]) if (Math.hypot(p.box.x, p.box.z) < 12) b.removeProp(p);
+    const us = [];
+    for (let i = 0; i < 8; i++) { const u = b.spawnUnit(i % 2, 'rifleman', new T.Vector3((i - 3.5) * 1.6, 0, 0), { yaw: i }); u.ready = 1; u.animate(1 / 60); us.push(u); }
+    us.forEach((u, i) => { if (i < 5 || i === 7) b.damageUnit(u, 250, g.player, 'bullet', new T.Vector3(Math.sin(i), 0, Math.cos(i))); });
+    b.update(1e-4);
+    b.explode(new T.Vector3(us[6].pos.x + 0.5, 0.3, 0.6), 3, 250, null);
+    let moved = 0, ms = 0;
+    const start = us.map((u) => u.pos.clone());
+    for (let k = 0; k < 300; k++) { const t0 = performance.now(); for (const u of us) u.update(1 / 60, b); ms += performance.now() - t0; }
+    const bad = [];
+    for (const u of us) {
+      const r = u.rag;
+      if (!r) { bad.push(`${u.id}: no ragdoll`); continue; }
+      const bd = r.body;
+      if (![bd.pos.x, bd.pos.y, bd.pos.z].every(Number.isFinite)) bad.push(`${u.id}: NaN`);
+      let lo = 9; for (const p of bd.pts) lo = Math.min(lo, p.clone().applyQuaternion(bd.q).add(bd.pos).y);
+      if (lo < -0.03 || lo > 0.03) bad.push(`${u.id}: lowest corner ${lo.toFixed(3)}`);
+      if (!r.asleep) bad.push(`${u.id}: still moving after 5 s`);
+      for (const l of r.limbs) if (l.p.distanceTo(bd.pos) > 0.9 || l.p.y < 0) bad.push(`${u.id}: loose limb`);
+      if (r.gun && (r.gun.pos.y < 0 || r.gun.pos.y > 0.3)) bad.push(`${u.id}: gun at ${r.gun.pos.y.toFixed(2)}`);
+      moved = Math.max(moved, u.pos.distanceTo(start[us.indexOf(u)]));
+    }
+    b.clearUnits();
+    return { bad, moved: +moved.toFixed(2), msPerBody: +(ms / 300 / us.length).toFixed(3) };
+  });
+  check('ragdolls: thrown by the hit, settle on the ground in 5 s, limbs and guns stay put', rag.bad.length === 0 && rag.moved > 0.5, JSON.stringify(rag));
+  check('ragdolls: under 0.05 ms per body per tick (headless)', rag.msPerBody < 0.05, `${rag.msPerBody} ms`);
+
   // ---- pause and end
   await P.evaluate(() => window.__game.pause(true));
   check('pause sheet shows and the game stops', await P.evaluate(() => !document.getElementById('pause').hidden && window.__game.state === 'pause'));

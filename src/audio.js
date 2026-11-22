@@ -26,6 +26,57 @@ export class Audio {
     this.noise = c.createBuffer(1, len, c.sampleRate);
     const d = this.noise.getChannelData(0);
     for (let i = 0; i < len; i++) d[i] = Math.random() * 2 - 1;
+    // open-field echo: a generated decaying impulse; far sounds send more into it
+    try {
+      const rl = Math.floor(c.sampleRate * 2.2);
+      const ir = c.createBuffer(2, rl, c.sampleRate);
+      for (let ch = 0; ch < 2; ch++) {
+        const o = ir.getChannelData(ch);
+        for (let i = 0; i < rl; i++) {
+          const t = i / c.sampleRate;
+          // a slap off the far edge at ~0.12 s, then a long soft tail
+          const slap = t > 0.11 && t < 0.16 ? 0.5 : 0;
+          o[i] = (Math.random() * 2 - 1) * (Math.exp(-t * 2.6) * 0.5 + slap * Math.exp(-(t - 0.11) * 30));
+        }
+      }
+      this.verb = c.createConvolver();
+      this.verb.buffer = ir;
+      const vg = c.createGain();
+      vg.gain.value = 0.55;
+      this.verb.connect(vg).connect(this.master);
+    } catch { this.verb = null; }
+    this.ambience();
+  }
+
+  // a low wind bed and, now and then, a far-off battle rumble
+  ambience() {
+    const c = this.ctx;
+    const src = c.createBufferSource();
+    src.buffer = this.noise;
+    src.loop = true;
+    const f = c.createBiquadFilter();
+    f.type = 'lowpass'; f.frequency.value = 380; f.Q.value = 0.4;
+    const g = c.createGain();
+    g.gain.value = 0.05;
+    const lfo = c.createOscillator();
+    lfo.frequency.value = 0.07;
+    const lg = c.createGain();
+    lg.gain.value = 0.03;
+    lfo.connect(lg).connect(g.gain);
+    src.connect(f).connect(g).connect(this.master);
+    src.start(); lfo.start();
+    const rumble = () => {
+      if (this.ctx && !this.muted && document.visibilityState !== 'hidden') {
+        const d = this.ctx.createGain();
+        d.gain.value = 0.12 + Math.random() * 0.12;
+        d.connect(this.master);
+        if (this.verb) d.connect(this.verb);
+        this.noiseBurst(d, { dur: 2.2, f: 260, f2: 50, peak: 0.6, attack: 0.05 });
+        this.tone(d, { dur: 1.4, f: 46, f2: 26, peak: 0.5, attack: 0.04 });
+      }
+      setTimeout(rumble, 5000 + Math.random() * 9000);
+    };
+    setTimeout(rumble, 4000);
   }
 
   setMuted(m) { this.muted = m; if (this.master) this.master.gain.value = m ? 0 : 0.55; }
@@ -54,8 +105,24 @@ export class Audio {
     }
     const gain = c.createGain();
     gain.gain.value = g;
+    // distance takes the top end off and pushes more of the sound into the echo
+    const dist = p ? Math.hypot(p.x - this.listener.x, p.z - this.listener.z) : 0;
+    let head = gain;
+    if (dist > 6) {
+      const lp = c.createBiquadFilter();
+      lp.type = 'lowpass';
+      lp.frequency.value = Math.max(700, 16000 / (1 + (dist - 6) * 0.12));
+      gain.connect(lp);
+      head = lp;
+    }
     const panner = c.createStereoPanner ? c.createStereoPanner() : null;
-    if (panner) { panner.pan.value = pan; gain.connect(panner).connect(this.master); } else gain.connect(this.master);
+    if (panner) { panner.pan.value = pan; head.connect(panner).connect(this.master); } else head.connect(this.master);
+    if (this.verb) {
+      const send = c.createGain();
+      send.gain.value = 0.25 + Math.min(0.9, dist / 40);
+      head.connect(send).connect(this.verb);
+    }
+    this.near = dist < 10;
     return gain;
   }
 
@@ -97,15 +164,17 @@ export class Audio {
     if (!d) return;
     switch (kind) {
       case 'rifle':
-        this.noiseBurst(d, { dur: 0.32, f: 2600, f2: 300, peak: 0.9 });
-        this.tone(d, { dur: 0.16, f: 140, f2: 50, peak: 0.6 });
+        if (this.near) this.noiseBurst(d, { dur: 0.03, type: 'highpass', f: 3500, peak: 0.7, attack: 0.001 });
+        this.noiseBurst(d, { dur: 0.36, f: 2600, f2: 260, peak: 0.9 });
+        this.tone(d, { dur: 0.18, f: 140, f2: 45, peak: 0.6 });
         break;
       case 'smg':
         this.noiseBurst(d, { dur: 0.11, f: 3000, f2: 500, peak: 0.5 });
         this.tone(d, { dur: 0.07, f: 170, f2: 70, peak: 0.3 });
         break;
       case 'mg':
-        this.noiseBurst(d, { dur: 0.16, f: 2200, f2: 300, peak: 0.7 });
+        if (this.near) this.noiseBurst(d, { dur: 0.025, type: 'highpass', f: 3200, peak: 0.5, attack: 0.001 });
+        this.noiseBurst(d, { dur: 0.18, f: 2200, f2: 280, peak: 0.75 });
         this.tone(d, { dur: 0.1, f: 120, f2: 50, peak: 0.45 });
         break;
       case 'plasma':
@@ -123,8 +192,19 @@ export class Audio {
         this.noiseBurst(d, { dur: 0.2, type: 'bandpass', f: 900, f2: 400, q: 1.2, peak: 0.2, attack: 0.04 });
         break;
       case 'boom':
-        this.noiseBurst(d, { dur: 1.4, f: 900, f2: 60, peak: 1 });
-        this.tone(d, { dur: 0.7, f: 70, f2: 28, peak: 1 });
+        if (this.near) this.noiseBurst(d, { dur: 0.08, type: 'highpass', f: 1800, peak: 0.9, attack: 0.001 });
+        this.noiseBurst(d, { dur: 1.8, f: 1100, f2: 50, peak: 1 });
+        this.tone(d, { dur: 0.9, f: 72, f2: 24, peak: 1 });
+        // debris pattering down afterwards
+        for (let i = 0; i < 5; i++) this.noiseBurst(d, { t: 0.35 + Math.random() * 0.9, dur: 0.05, type: 'bandpass', f: 1500 + Math.random() * 1500, q: 4, peak: 0.12 });
+        break;
+      case 'thud':
+        this.tone(d, { dur: 0.16, f: 85, f2: 45, peak: 0.55 });
+        this.noiseBurst(d, { dur: 0.12, f: 600, f2: 200, peak: 0.35 });
+        this.tone(d, { t: 0.05, dur: 0.07, type: 'triangle', f: 1100 + Math.random() * 500, f2: 800, peak: 0.08 });
+        break;
+      case 'whiz':
+        this.noiseBurst(d, { dur: 0.16, type: 'bandpass', f: 4200, f2: 1600, q: 3, peak: 0.6, attack: 0.03 });
         break;
       case 'zap':
         this.tone(d, { dur: 0.3, type: 'square', f: 300, f2: 60, peak: 0.12 });
