@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { hostile } from './factions.js';
 import { wrap } from './physics.js';
 import { U } from './rig.js';
+import { height } from './terrain.js';
 
 // Three layers of AI:
 //  Commander (one per army): every few seconds hands each squad an objective, a control point
@@ -42,33 +43,52 @@ export class Commander {
     const load = new Map(pts.map((p) => [p, 0]));
     for (const s of squads) if (s.objective && !s.retreating) load.set(s.objective, (load.get(s.objective) || 0) + 1);
     const cap = Math.max(1, Math.ceil(squads.length / Math.max(1, pts.length - 1)) + 1);
+    // a couple of squads garrison held ground, the rest push on; nobody sits on a safe point
+    const garrisonMax = Math.max(1, Math.floor(squads.length / 4));
+    let garrison = squads.filter((s) => s.objective && s.objective.owner === this.team && !s.objective.contested && !s.retreating).length;
+    const enemyDist = (p) => {
+      let bd = Infinity;
+      for (const t of w.teams) if (t.id !== this.team) bd = Math.min(bd, t.base.distanceTo(p.pos));
+      return bd;
+    };
     for (const s of squads) {
       if (s.manual || s.retreating) continue;
       const lead = s.leader;
       if (!lead) continue;
-      // keep going if the current objective still makes sense
       const cur = s.objective;
-      if (cur && cur.owner !== this.team && s.objT < 50) continue;
-      if (cur && cur.owner === this.team && cur.contested) continue;
+      // commit: keep going while the point is still being taken, or we are on it and winning
+      if (cur && cur.owner !== this.team) {
+        const onIt = flat(lead.pos, cur.pos) < cur.r * 2;
+        if (s.objT < (onIt ? 90 : 60)) continue;
+      }
+      if (cur && cur.owner === this.team && cur.contested) continue; // defend a point under attack
+      const sitting = cur && cur.owner === this.team && !cur.contested;
+      if (sitting && garrison <= garrisonMax && s.objT < 45) continue; // allowed garrison, rotates out after a while
       let best = null, bs = -Infinity;
       for (const p of pts) {
-        const d = lead.pos.distanceTo(p.pos);
-        let sc = -d;
-        if (p.owner === this.team) sc -= p.contested ? -25 : 70; // defend a point under attack
-        else if (p.owner < 0) sc += 22;
-        else sc += 8;
+        let sc = -lead.pos.distanceTo(p.pos);
+        if (p.owner === this.team) {
+          if (p.contested) sc += 45; // reinforce a point under attack
+          else sc -= 120 + (p === cur ? 40 : 0); // safe: no need
+        } else if (p.owner < 0) sc += 26;
+        else sc += 34; // enemy ground: take it back
         const l = load.get(p) || 0;
         if (l >= cap) sc -= 60 * (l - cap + 1);
+        // points nearer the enemy first, so the line moves forward
+        sc -= enemyDist(p) * 0.15;
+        if (p === cur) sc -= 25; // freshly done with this one
         sc += Math.random() * 8;
         if (sc > bs) { bs = sc; best = p; }
       }
       if (best && best !== cur) {
         if (cur) load.set(cur, (load.get(cur) || 1) - 1);
         load.set(best, (load.get(best) || 0) + 1);
+        if (sitting) garrison--;
+        if (best.owner === this.team && !best.contested) garrison++;
         // a second squad on the same point swings wide
         const others = squads.filter((q) => q !== s && q.objective === best);
         s.setObjective(best, others.length % 2 === 1 ? (Math.random() < 0.5 ? -1 : 1) : 0);
-      }
+      } else if (best === cur) s.objT = 0;
     }
   }
 }
@@ -96,12 +116,38 @@ export class Squad {
   }
 
   get alive() { return this.members.filter((m) => m.alive); }
-  get leader() { return this.members.find((m) => m.alive) || null; }
+  get size() { let n = 0; for (const m of this.members) if (m.alive) n++; return n; }
+  get leader() {
+    const l = this.lead;
+    if (l && l.alive && l.squad === this) return l;
+    return this.members.find((m) => m.alive) || null;
+  }
+
+  // the leader is wedged against something: someone nearer the goal takes the lead
+  stalled(u) { if (u === this.leader) this.rotate = true; }
+
+  rotateLeader(goal) {
+    const cur = this.leader;
+    let best = null, bd = Infinity;
+    for (const m of this.members) {
+      if (!m.alive || m === cur || (m.brain && m.brain.stallT > 1.5)) continue;
+      const d = goal ? flat(m.pos, goal) : 0;
+      if (d < bd) { bd = d; best = m; }
+    }
+    if (best) { this.lead = best; this.anchor = best.pos.clone().setY(0); }
+    this.ldStall = 0; this.rotate = false;
+  }
 
   add(u) { this.members.push(u); this.started++; u.slot = this.members.length - 1; }
 
   setObjective(p, flank = 0) {
     this.objective = p;
+    if (p) {
+      // squads sharing a point settle on different sides of it
+      const n = this.world.squads.filter((q) => q !== this && q.team === this.team && q.objective === p).length;
+      this.holdA = (Math.atan2(this.world.teams[this.team]?.base.z - p.pos.z, this.world.teams[this.team]?.base.x - p.pos.x) || 0) + n * 2.2 + rand(-0.3, 0.3);
+      this.holdR = 4 + (n % 3) * 2;
+    }
     this.objT = 0;
     this.flank = flank;
     this.waypoint = null;
@@ -135,7 +181,7 @@ export class Squad {
     const alive = this.alive;
     if (!alive.length) return;
     this.objT += dt;
-    const lead = alive[0];
+    const lead = this.leader;
     const w = this.world;
     // shot to pieces in a fight: fall back to friendly ground and wait for help
     if (!this.retreating && this.started >= 4 && alive.length <= Math.max(1, Math.floor(this.started * 0.34)) && this.inContact()) {
@@ -171,12 +217,24 @@ export class Squad {
       if (flat(lead.pos, this.waypoint) < 6) this.waypoint = null;
     }
     // each squad aims for its own side of a point so they don't all pile onto the flag
-    if (!goal && this.objective) { const o = this.objective.pos; goal = V().set(o.x + Math.cos(this.holdA) * 5, 0, o.z + Math.sin(this.holdA) * 5); }
+    if (!goal && this.objective) { const o = this.objective.pos; goal = V().set(o.x + Math.cos(this.holdA) * (this.holdR || 5), 0, o.z + Math.sin(this.holdA) * (this.holdR || 5)); }
     if (!goal && !this.manual) {
       const e = this.nearestEnemy(lead.pos);
       goal = e ? e.pos : null;
     }
     if (this.manual && this.order) goal = this.order;
+
+    // the whole squad follows the leader, so a stuck leader stalls everyone: pass the lead on
+    this.ldT = (this.ldT || 0) + dt;
+    if (this.ldT >= 1) {
+      this.ldT = 0;
+      if (!this.ldPos) this.ldPos = lead.pos.clone();
+      const moved = this.ldPos.distanceTo(lead.pos);
+      this.ldPos.copy(lead.pos);
+      const far = goal && flat(lead.pos, goal) > 8;
+      if (far && !this.inContact() && !this.holding && moved < 0.5) this.ldStall = (this.ldStall || 0) + 1; else this.ldStall = 0;
+    }
+    if (this.rotate || (this.ldStall || 0) >= 4) this.rotateLeader(goal);
 
     // bounding overwatch: under fire the anchor creeps forward a few metres at a time
     const contact = this.inContact();
@@ -185,6 +243,24 @@ export class Squad {
       const to = V().subVectors(goal, this.anchor).setY(0);
       const d = to.length();
       if (contact) {
+        // pinned down head-on for too long: swing wide round the enemy's flank
+        this.pinT = (this.pinT || 0) + dt;
+        if (this.pinT > 14 && !this.waypoint && w.time > (this.flankCool || 0) && this.contact?.pos) {
+          const cp = this.contact.pos, to = V().subVectors(cp, lead.pos).setY(0), cd = to.length();
+          const progress = this.pinRef == null ? 99 : this.pinRef - cd;
+          this.pinRef = cd;
+          if (progress < 5 && cd > 12 && this.size >= 3) {
+            to.normalize();
+            const side = this.flankSide = -(this.flankSide || (Math.random() < 0.5 ? -1 : 1));
+            const wp = lead.pos.clone().addScaledVector(to, Math.min(cd * 0.6, 20)).addScaledVector(V().set(-to.z, 0, to.x), side * 24);
+            wp.x = THREE.MathUtils.clamp(wp.x, -w.edge, w.edge); wp.z = THREE.MathUtils.clamp(wp.z, -w.edge, w.edge);
+            wp.y = 0;
+            this.waypoint = wp;
+            this.flankCool = w.time + 45;
+            this.anchor.copy(lead.pos).setY(0);
+          }
+          this.pinT = 0;
+        }
         this.boundT -= dt;
         if (this.boundT <= 0) {
           this.boundT = rand(5, 8);
@@ -201,13 +277,15 @@ export class Squad {
       } else {
         // free movement: anchor runs ahead of the leader
         this.bound = 0;
+        this.pinT = 0;
+        this.pinRef = null;
         const ahead = Math.min(d, 9);
         if (d > 0.5) this.anchor.copy(lead.pos).addScaledVector(to.normalize(), ahead).setY(0);
         // on the point: settle on one side of it and watch the way the enemy will come
         this.holding = false;
         if (this.objective && flat(lead.pos, this.objective.pos) < this.objective.r * 1.2) {
           const o = this.objective.pos;
-          this.anchor.set(o.x + Math.cos(this.holdA) * 4, 0, o.z + Math.sin(this.holdA) * 4);
+          this.anchor.set(o.x + Math.cos(this.holdA) * (this.holdR || 4), 0, o.z + Math.sin(this.holdA) * (this.holdR || 4));
           this.holding = true;
           let bd = Infinity;
           for (const t of w.teams) if (t.id !== this.team) { const d = t.base.distanceTo(o); if (d < bd) { bd = d; this.watch = t.base; } }
@@ -274,6 +352,18 @@ export class Brain {
     this.cands = [];
     this.lastPos = unit.pos.clone();
     this.stuckT = 0;
+    this.defT = 0;
+    this.overwatch = false;
+    this.stallT = 0; // how long we've wanted to move and haven't
+    this.path = null;
+    this.pathGoal = V();
+    this.laneP = { x: 0, z: 0 };
+    this.pi = 0;
+    this.direct = true;
+    this.directT = Math.random() * 0.3;
+    this.repath = false;
+    this.badCover = null;
+    this.badUntil = 0;
     this.skill = rand(0.75, 1.2);
     this.blocked = false;
     unit.ctrl.turnRate = 4.5 * this.skill;
@@ -373,10 +463,18 @@ export class Brain {
       this.goal = Math.hypot(t.pos.x - u.pos.x, t.pos.z - u.pos.z) < 1.5 ? u.pos.clone() : t.pos.clone();
     } else if (contact && threat) {
       // in a fight: take the best cover near the slot that faces the threat
-      if (!this.cover || this.coverBad(this.cover, threat) || this.cover.prop.alive === false || this.cover.dist2(slot) > 100) {
+      // bounding overwatch: one half of the squad (by slot parity) keeps its cover and shoots
+      // while the other half moves up to the next cover; they swap on the squad's bound
+      const bounding = !sq.retreating && sq.size >= 4 && !lowHp;
+      this.overwatch = bounding && this.slotIndex() % 2 !== sq.bound;
+      const held = this.cover && !this.coverBad(this.cover, threat) && this.cover.prop.alive !== false && (!this.cover.terrain || w.time - this.cover.t < 10);
+      if (!held || (!this.overwatch && this.cover.dist2(slot) > 100)) {
         this.releaseCover();
         const range = sq.retreating || lowHp ? 14 : 9;
-        const cv = this.findCover(sq.retreating || lowHp ? u.pos : slot, threat, range);
+        const from = sq.retreating || lowHp ? u.pos : slot;
+        let cv = this.findCover(from, threat, range);
+        // no solid cover about: use the lie of the land, a dip or reverse slope to fight from
+        if (!cv && w.time > this.defT) { this.defT = w.time + 1.5; cv = this.findDefilade(from, threat, range + 4); }
         if (cv) { this.cover = cv; cv.owner = u; }
       }
       if (this.cover) {
@@ -423,6 +521,32 @@ export class Brain {
         } else this.nadeT = rand(1.5, 4);
       }
     }
+  }
+
+  // ground cover: a spot where a soldier lying or kneeling is hidden from the threat but can
+  // still see over the crest when standing (hull-down), or failing that simply hidden
+  findDefilade(around, threat, range) {
+    const w = this.w, u = this.u, rng = u.weapon.def.range;
+    const eye = V().set(threat.x, (threat.y || 0) + 1.5, threat.z);
+    let best = null, bs = Infinity;
+    for (let i = 0; i < 10; i++) {
+      const a = (i / 10) * Math.PI * 2 + Math.random() * 0.6, r = rand(2.5, range);
+      const x = around.x + Math.cos(a) * r, z = around.z + Math.sin(a) * r;
+      if (Math.abs(x) > w.edge || Math.abs(z) > w.edge) continue;
+      const dt = Math.hypot(threat.x - x, threat.z - z);
+      if (dt < 12 || dt > rng * 0.85) continue;
+      w.nav.build(w.props, w.propVer);
+      if (w.nav.blocked[w.nav.cellOf(x, z)]) continue;
+      const y = height(x, z);
+      if (w.los(eye, V().set(x, y + 0.55, z))) continue; // exposed even when low
+      const peek = w.los(eye, V().set(x, y + 1.55, z));
+      const sc = Math.hypot(x - u.pos.x, z - u.pos.z) + (peek ? 0 : 6);
+      if (sc < bs) { bs = sc; best = { x, z, y }; }
+    }
+    if (!best) return null;
+    const dx = best.x - threat.x, dz = best.z - threat.z, l = Math.hypot(dx, dz) || 1;
+    return { x: best.x, z: best.z, nx: dx / l, nz: dz / l, high: false, px: best.x, pz: best.z, prop: { alive: true }, terrain: true, t: w.time, owner: null,
+      dist2(p) { return (this.x - p.x) ** 2 + (this.z - p.z) ** 2; } };
   }
 
   // nearest soldier who needs a medic: a fresh body to revive, or a wounded friend to patch up
@@ -480,6 +604,7 @@ export class Brain {
     for (const p of w.propGrid.near(around.x, around.z, range, [])) {
       for (const s of p.cover) {
         if (s.owner && s.owner !== u && s.owner.alive) continue;
+        if (s === this.badCover && w.time < this.badUntil) continue;
         const dx = s.x - around.x, dz = s.z - around.z;
         const d = Math.hypot(dx, dz);
         if (d > range) continue;
@@ -497,6 +622,59 @@ export class Brain {
     return best;
   }
 
+  // where to point the legs this frame: straight at the goal when the way is clear, otherwise
+  // along a route round whatever is in the way
+  steer(goal, gd, dt) {
+    const u = this.u, w = this.w;
+    this.directT -= dt;
+    if (this.directT <= 0) {
+      this.directT = rand(0.2, 0.35);
+      this.direct = !w.segBlocked(u.pos.x, u.pos.z, goal.x, goal.z, 0.4);
+    }
+    if (this.direct && !this.repath) { this.path = null; return goal; }
+    const moved = !this.path || (goal.x - this.pathGoal.x) ** 2 + (goal.z - this.pathGoal.z) ** 2 > 9;
+    if ((moved || this.repath) && w.navBudget > 0) {
+      w.navBudget--;
+      this.repath = false;
+      this.path = w.route(u.pos.x, u.pos.z, goal.x, goal.z, this.stallT >= 1);
+      this.pathGoal.copy(goal);
+      this.pi = 0;
+    }
+    const path = this.path;
+    if (!path || !path.length) return goal;
+    // cut corners: skip ahead while the next leg is clear
+    while (this.pi < path.length - 1 && (Math.hypot(path[this.pi].x - u.pos.x, path[this.pi].z - u.pos.z) < 1 || !w.segBlocked(u.pos.x, u.pos.z, path[this.pi + 1].x, path[this.pi + 1].z, 0.4))) this.pi++;
+    // each soldier takes its own lane so a squad doesn't file down a route in one clump
+    const wp = path[this.pi], nx = path[Math.min(this.pi + 1, path.length - 1)];
+    if (this.pi < path.length - 1) {
+      const dx = nx.x - wp.x, dz = nx.z - wp.z, l = Math.hypot(dx, dz) || 1, lane = ((this.u.id % 5) - 2) * 0.55;
+      this.laneP.x = wp.x - (dz / l) * lane; this.laneP.z = wp.z + (dx / l) * lane;
+      return this.laneP;
+    }
+    return wp;
+  }
+
+  // nobody stands about without a reason: wanting to move and not moving gets a fresh route, then a
+  // sidestep, then a different cover or slot
+  watchdog(dt, gd, wl) {
+    const u = this.u, w = this.w;
+    this.stuckT += dt;
+    if (this.stuckT < 0.5) return;
+    const moved = this.lastPos.distanceTo(u.pos);
+    this.lastPos.copy(u.pos);
+    this.stuckT = 0;
+    const wants = gd > 1.5 && wl > 0.3 && !u.busy;
+    if (wants && moved < 0.2) this.stallT += 0.5; else { this.stallT = 0; return; }
+    if (this.stallT >= 1) this.repath = true;
+    if (this.stallT >= 2.5 && this.stallT < 3) {
+      const side = Math.random() < 0.5 ? -1 : 1, l = wl || 1;
+      this.path = null;
+      this.sidestep = { x: u.pos.x - (u.ctrl.wz / l) * 3 * side - (u.ctrl.wx / l) * 1.2, z: u.pos.z + (u.ctrl.wx / l) * 3 * side - (u.ctrl.wz / l) * 1.2, t: w.time + 1.5 };
+    }
+    if (this.stallT >= 5 && this.cover) { this.badCover = this.cover; this.badUntil = w.time + 20; this.releaseCover(); }
+    if (this.stallT >= 5) this.squad.stalled(u);
+  }
+
   // ---- every frame: move, aim, shoot ----
   act(dt) {
     const u = this.u, c = u.ctrl, w = this.w, sq = this.squad;
@@ -505,39 +683,24 @@ export class Brain {
     if (this.mission && this.doMission(dt)) { c.wx = c.wz = 0; c.sprint = false; return; }
     // movement toward the goal, around props
     let wx = 0, wz = 0;
-    const goal = this.goal || u.pos;
+    let goal = this.goal || u.pos;
+    if (this.sidestep && w.time < this.sidestep.t) goal = this.sidestep; else this.sidestep = null;
     const gx = goal.x - u.pos.x, gz = goal.z - u.pos.z;
     const gd = Math.hypot(gx, gz);
     const inCover = this.cover && gd < 0.6;
     if (gd > 0.5) {
-      let tx = goal.x, tz = goal.z;
-      this.detourT -= dt;
-      if (this.detour && this.detourT > 0) { tx = this.detour.x; tz = this.detour.z; if (Math.hypot(tx - u.pos.x, tz - u.pos.z) < 0.6) this.detour = null; }
-      else {
-        this.detour = null;
-        const look = Math.min(gd, 7);
-        const ex = u.pos.x + (gx / gd) * look, ez = u.pos.z + (gz / gd) * look;
-        const p = w.segBlocked(u.pos.x, u.pos.z, ex, ez, 0.35);
-        if (p && !(this.cover && this.cover.prop === p && gd < 2)) {
-          // round the nearest clear corner
-          let best = null, bs = Infinity;
-          for (const [cx, cz] of w.boxCorners(p.box, 0.75)) {
-            if (w.segBlocked(u.pos.x, u.pos.z, cx, cz, 0.3) === p) continue;
-            const sc = Math.hypot(cx - u.pos.x, cz - u.pos.z) + Math.hypot(goal.x - cx, goal.z - cz);
-            if (sc < bs) { bs = sc; best = { x: cx, z: cz }; }
-          }
-          if (best) { this.detour = best; this.detourT = 1.2; tx = best.x; tz = best.z; }
-        }
-      }
-      const dx = tx - u.pos.x, dz = tz - u.pos.z, dl = Math.hypot(dx, dz) || 1;
+      const t = this.steer(goal, gd, dt);
+      const dx = t.x - u.pos.x, dz = t.z - u.pos.z, dl = Math.hypot(dx, dz) || 1;
       const k = Math.min(1, gd / 1.2);
       wx = (dx / dl) * k; wz = (dz / dl) * k;
-    }
+    } else this.path = null;
     // spacing from squadmates
-    for (const m of w.nearUnits(u.pos.x, u.pos.z, 2.8)) {
+    // in the open under threat, spread out so one burst or blast can't take a clump
+    const sp = !this.cover && (this.seen || sq.inContact()) ? 3.8 : 2.8;
+    if (this.stallT < 3) for (const m of w.nearUnits(u.pos.x, u.pos.z, sp + 0.2)) {
       if (m === u || !m.alive || m.team !== u.team) continue;
       const dx = u.pos.x - m.pos.x, dz = u.pos.z - m.pos.z, d = Math.hypot(dx, dz);
-      if (d > 0.01 && d < 2.6) { wx += (dx / d) * (2.6 - d) * 0.5; wz += (dz / d) * (2.6 - d) * 0.5; }
+      if (d > 0.01 && d < sp) { wx += (dx / d) * (sp - d) * 0.5; wz += (dz / d) * (sp - d) * 0.5; }
     }
     // a little lateral shuffle in a firefight when not in cover
     if (this.seen && !this.cover && def.id !== 'mg' && gd < 1.5) {
@@ -567,18 +730,7 @@ export class Brain {
     c.sprint = evading || open && ((gd > 7 && (!this.seen || sq.retreating || u.suppression > 0.25)) || gd > 16 || (sq.retreating && gd > 3));
     c.speed = 1;
 
-    // stuck on something: step sideways, away from the way we were pushing
-    this.stuckT += dt;
-    if (this.stuckT > 1) {
-      const moved = this.lastPos.distanceTo(u.pos);
-      if (wl > 0.4 && moved < 0.3) {
-        const side = Math.random() < 0.5 ? -1 : 1, l = wl || 1;
-        this.detour = { x: u.pos.x - (c.wz / l) * 2.5 * side - (c.wx / l) * 0.8, z: u.pos.z + (c.wx / l) * 2.5 * side - (c.wz / l) * 0.8 };
-        this.detourT = 1.2;
-      }
-      this.lastPos.copy(u.pos);
-      this.stuckT = 0;
-    }
+    this.watchdog(dt, gd, wl);
 
     // grenade throw in progress
     if (this.nade) {
