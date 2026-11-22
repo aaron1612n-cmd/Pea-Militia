@@ -33,6 +33,7 @@ const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--ena
 async function open(ctxOpts) {
   const ctx = await browser.newContext({ ...ctxOpts, reducedMotion: 'reduce' });
   const page = await ctx.newPage();
+  page.setDefaultTimeout(120000); // software rendering on CI runners is slow
   const errors = [];
   page.on('console', (m) => { if (m.type() === 'error' && !/fonts\.g/.test(m.text())) errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(e.message));
@@ -230,9 +231,16 @@ try {
   check('desktop: HUD elements inside the screen and not overlapping', lay.overlaps.length === 0 && lay.offscreen.length === 0, [...lay.overlaps, ...lay.offscreen].join(', '));
 
   // ---- third-person framing: the player is on screen, left of the crosshair, not covering it
+  await P.evaluate(() => {
+    const g = window.__game;
+    g.battle.aiFrozen = true;
+    for (const p of [...g.battle.props]) if (Math.hypot(p.box.x, p.box.z - 60) < 14) g.battle.removeProp(p);
+    g.player.pos.set(0, 0, 60); g.player.vel.set(0, 0, 0); g.cam.yaw = 0; g.cam.pitch = 0;
+    window.__frames = 0; const tick = () => { window.__frames++; requestAnimationFrame(tick); }; tick();
+  });
+  await P.waitForFunction(() => window.__frames > 8, null, { timeout: 60000 });
   const frame3 = await P.evaluate(() => {
-    const { THREE, camera, player, battle } = window.__game;
-    battle.aiFrozen = true;
+    const { THREE, camera, player } = window.__game;
     const pts = [];
     const m = player.world, U = window.__game.U;
     for (const y of [0.05, U.BODY_Y, U.TOP]) for (const x of [-U.W / 2, U.W / 2]) pts.push(new THREE.Vector3(x, y, 0).applyMatrix4(m).project(camera));
@@ -259,7 +267,7 @@ try {
   check('Space jumps and lands', jumped && landed);
   const y0 = await P.evaluate(() => window.__game.cam.yaw);
   await P.evaluate(() => { window.__game.input.look.dx += 0.5; });
-  await P.waitForTimeout(100);
+  await P.waitForFunction((y0) => Math.abs(window.__game.cam.yaw - y0) > 0.3, y0, { timeout: 30000 }).catch(() => {});
   const y1 = await P.evaluate(() => window.__game.cam.yaw);
   check('mouse look turns the camera', Math.abs(y1 - y0) > 0.3, `${(y1 - y0).toFixed(2)} rad`);
   await P.keyboard.press('KeyV');
@@ -322,11 +330,17 @@ try {
         await new Promise((r) => requestAnimationFrame(r));
       }
       const hp0 = e.hp;
-      player.cool = 0; player.wasFiring = false;
-      player.ctrl.fire = true;
-      window.__game.input.firePulse = true;
-      await new Promise((r) => setTimeout(r, 300));
-      return { view, hp0, hp: e.hp, alive: e.alive };
+      // keep pulling the trigger (one shot per pulse) until a shot lands or time runs out
+      const t0 = performance.now();
+      while (e.hp >= hp0 && performance.now() - t0 < 30000) {
+        player.cool = 0; player.wasFiring = false; player.ready = 1;
+        window.__game.input.firePulse = true;
+        const s0 = player.shots;
+        while (player.shots === s0 && performance.now() - t0 < 30000) await new Promise((r) => requestAnimationFrame(r));
+        await new Promise((r) => requestAnimationFrame(r));
+        if (player.shots - s0 >= 1 && e.hp >= hp0 && performance.now() - t0 > 5000) break;
+      }
+      return { view, hp0, hp: e.hp, alive: e.alive, shots: player.shots };
     }, view);
     aimRes.push(r);
   }

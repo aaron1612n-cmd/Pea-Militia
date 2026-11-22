@@ -22,7 +22,7 @@ const testing = params.has('test');
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: testing, powerPreference: 'high-performance' });
-renderer.setPixelRatio(Math.min(devicePixelRatio, 2));
+renderer.setPixelRatio(testing ? 1 : Math.min(devicePixelRatio, 2)); // the check suite renders in software
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -39,7 +39,7 @@ scene.add(new THREE.HemisphereLight('#e2e6e8', '#5f615c', 1.25));
 const SUN = new THREE.Vector3(30, 60, 22);
 const sun = new THREE.DirectionalLight('#f3f3ef', 2.2);
 sun.castShadow = true;
-sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.mapSize.set(testing ? 1024 : 2048, testing ? 1024 : 2048);
 const SH = 26;
 Object.assign(sun.shadow.camera, { left: -SH, right: SH, top: SH, bottom: -SH, near: 1, far: 160 });
 sun.shadow.bias = -0.0004;
