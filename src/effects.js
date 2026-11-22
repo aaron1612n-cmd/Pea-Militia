@@ -246,7 +246,7 @@ export class Effects {
     }
     this.ri = 0;
     // marks left on the field: bullet scuffs and blast scorches (ring buffers of instances)
-    this.holes = decalMesh(scene, 600, holeTexture(), 0.9);
+    this.holes = decalMesh(scene, 1800, holeTexture(), 0.9);
     this.scorch = decalMesh(scene, 60, scorchTexture(), 0.92);
     this.gore = new Gore(scene, this);
     // things that keep smoking for a while (blast sites, burning bodies)
@@ -379,6 +379,7 @@ export class Effects {
 
   impact(pos, normal, kind = 'dust') {
     const base = normal || new THREE.Vector3(0, 1, 0);
+    if (kind === 'metalhole' && normal) { stamp(this.holes, pos, normal, 0.12 + Math.random() * 0.08); kind = 'metal'; }
     if (kind === 'metal') {
       for (let i = 0; i < 6; i++) this.add.emit({ pos, vel: base.clone().multiplyScalar(2).add(this.dir(3)), life: 0.25, size: [0.03, 0.01], color: [PAL.spark, PAL.flash2], grav: 9, drag: 1 });
       return;

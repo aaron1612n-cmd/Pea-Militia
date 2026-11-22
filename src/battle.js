@@ -412,7 +412,7 @@ export class Battle {
     this.fx.tracer(from.clone().addScaledVector(dir, 0.15), end, def.id === 'mg' ? 0.02 : 0.014);
     this.suppress(shooter, from, end);
     if (hit.unit) this.damageUnit(hit.unit, def.damage, shooter, 'bullet', dir);
-    else if (hit.prop) { this.damageProp(hit.prop, def.damage * 0.15, shooter); this.fx.impact(end, hit.normal, hit.prop.type === 'wall' || hit.prop.type === 'drum' || hit.prop.type === 'trap' ? 'metal' : 'dust'); }
+    else if (hit.prop) { this.damageProp(hit.prop, def.damage * 0.15, shooter); this.fx.impact(end, hit.normal, hit.prop.type === 'wall' || hit.prop.type === 'drum' || hit.prop.type === 'trap' ? 'metalhole' : 'dust'); }
     else if (hit.ground) this.fx.impact(end, hit.normal, 'dust');
   }
 
@@ -440,6 +440,7 @@ export class Battle {
     this.fx.gore.hit(c, dir, dmg, kind, u);
     u.lastHit = { dir: dir ? dir.clone() : null, dmg, kind, t: u.t };
     u.hurt(dmg, from, this, kind);
+    if (u.alive && dir && (kind === 'bullet' || kind === 'plasma') && this.fx.gore.level) u.impulse(dir.clone().setY(0).normalize().multiplyScalar(Math.min(2.4, dmg / 35)));
     if (from && from === this.player) this.onHitMarker?.(!u.alive);
     if (u.isPlayer) this.onPlayerHurt?.(dmg, from);
     if (u.squad && from?.pos) u.squad.know(from, from.pos, true);
@@ -624,7 +625,7 @@ export class Battle {
   // a medic gets a fallen soldier back on their feet
   revive(u) {
     u.alive = true; u.rag = null; u.hp = 45; u.deadT = 0; u.vel.set(0, 0, 0); u.suppression = 0; u.burn = 0; u.flinch = 0;
-    u.wound = 0; u.lost = 0;
+    u.wound = 0; u.lost = 0; u.wounds = null;
     u.onRevive?.();
     this.events.push({ type: 'revive', unit: u });
   }
@@ -635,7 +636,7 @@ export class Battle {
     this.fx.impact(c, UP, 'metal');
     const k = u.lastHit?.kind;
     if (k === 'blast' || k === 'fire' || k === 'plasma' || u.burn > 0) this.fx.smoulder(() => (u.rag ? u.rag.body.pos.clone() : u.center()), k === 'fire' || u.burn > 0 ? 5 : 3);
-    this.fx.gore.death(u, k);
+    this.fx.gore.death(u, k, this);
     this.events.push({ type: 'death', unit: u, from });
     this.stats.kills++;
     u.brain?.releaseCover();

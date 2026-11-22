@@ -16,6 +16,7 @@ export const PART_GEO = {
 };
 // the foot's sole sits at its local origin's -half height; nothing to shift
 
+const WQ = new THREE.Quaternion();
 const WOUND = new THREE.Color('#5a1212');
 const BODY_COL = TEAMS.map((t) => new THREE.Color(t.body));
 const TRIM_COL = TEAMS.map((t) => new THREE.Color(t.trim));
@@ -55,13 +56,17 @@ export class Crowd {
         return m;
       });
     }
+    // wounds stuck to the shell: thin wet-red slabs, drawn at each body's local spots
+    this.wound = mk(new THREE.BoxGeometry(1, 1, 1), std({ color: '#ffffff', roughness: 0.2, metalness: 0 }), cap * 6, true);
+    this.wound.castShadow = false;
+    this.nw = 0;
     this.n = 0; this.nf = 0; this.nh = 0;
     this.wn = {};
     this.tmp = new THREE.Matrix4();
   }
 
   begin() {
-    this.n = this.nf = this.nh = 0;
+    this.n = this.nf = this.nh = this.nw = 0;
     for (const id in this.weapons) this.wn[id] = 0;
   }
 
@@ -75,6 +80,17 @@ export class Crowd {
       const w = opts.wound || 0, bc = BODY_COL[team];
       if (w > 0) this.body.instanceColor.setXYZ(i, bc.r + (WOUND.r - bc.r) * w * 0.5, bc.g + (WOUND.g - bc.g) * w * 0.5, bc.b + (WOUND.b - bc.b) * w * 0.5);
       else this.body.instanceColor.setXYZ(i, bc.r, bc.g, bc.b);
+      if (opts.wounds) {
+        const bm = t.multiplyMatrices(world, p.body), wm = this.wm || (this.wm = new THREE.Matrix4()), ws = this.ws || (this.ws = new THREE.Vector3()), wp = this.wp || (this.wp = new THREE.Vector3());
+        for (const w of opts.wounds) {
+          if (this.nw >= this.cap * 6) break;
+          const j = this.nw++;
+          this.wound.setMatrixAt(j, wm.compose(wp.set(w.x, w.y, w.z), WQ, ws.set(w.a, w.b, w.c)).premultiply(bm));
+          const k = 0.75 + w.sh * 0.5;
+          if (w.hole) this.wound.instanceColor.setXYZ(j, 0.03, 0.005, 0.005);
+          else this.wound.instanceColor.setXYZ(j, 0.42 * k, 0.04 * k, 0.04 * k);
+        }
+      }
       this.visor.setMatrixAt(i, t.multiplyMatrices(world, p.visor));
       this.pack.setMatrixAt(i, t.multiplyMatrices(world, p.pack));
       this.pack.instanceColor.setXYZ(i, PACK_COL[team].r, PACK_COL[team].g, PACK_COL[team].b);
@@ -114,7 +130,7 @@ export class Crowd {
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
     };
     fin(this.body, this.n); fin(this.visor, this.n); fin(this.pack, this.n);
-    fin(this.foot, this.nf); fin(this.hand, this.nh);
+    fin(this.foot, this.nf); fin(this.hand, this.nh); fin(this.wound, this.nw);
     for (const id in this.weapons) for (const m of this.weapons[id]) fin(m, this.wn[id]);
   }
 }
