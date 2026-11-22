@@ -368,7 +368,10 @@ export class Brain {
       }
       if (this.cover) {
         // peek from tall cover, crouch behind low cover
-        const shooting = this.seen && this.react <= 0 && !u.busy && u.suppression < 0.75;
+        // (hysteresis: hold a peek or a duck for at least a moment so they don't bob in and out)
+        const want = this.seen && this.react <= 0 && !u.busy && u.suppression < 0.75;
+        if (want !== this.peeking && w.time - (this.peekT || 0) > 0.9) { this.peeking = want; this.peekT = w.time; }
+        const shooting = this.peeking;
         this.goal = this.cover.high && shooting ? new THREE.Vector3(this.cover.px, 0, this.cover.pz) : new THREE.Vector3(this.cover.x, 0, this.cover.z);
       } else if (this.seen && (def.id === 'smg' || def.id === 'flame') && !lowHp) {
         // close-range weapons press in to their range
@@ -492,18 +495,26 @@ export class Brain {
       const yaw = Math.atan2(this.target.pos.x - u.pos.x, this.target.pos.z - u.pos.z);
       wx += Math.cos(yaw) * this.strafe * 0.35; wz += -Math.sin(yaw) * this.strafe * 0.35;
     }
-    const wl = Math.hypot(wx, wz);
+    let wl = Math.hypot(wx, wz);
     if (wl > 1) { wx /= wl; wz /= wl; }
-    c.wx = wx; c.wz = wz;
+    // smooth the steering so pushes from squadmates and detours don't twitch the legs
+    const sm = 1 - Math.exp(-7 * dt);
+    c.wx += (wx - c.wx) * sm; c.wz += (wz - c.wz) * sm;
+    if (Math.hypot(c.wx, c.wz) < 0.06) c.wx = c.wz = 0;
+    wl = Math.hypot(c.wx, c.wz);
     // sprint when far from the squad and nobody is shooting
     c.sprint = !this.seen && !sq.inContact() && gd > 10;
     c.speed = 1;
 
-    // stuck on something: hop or sidestep
+    // stuck on something: step sideways, away from the way we were pushing
     this.stuckT += dt;
     if (this.stuckT > 1) {
       const moved = this.lastPos.distanceTo(u.pos);
-      if (wl > 0.4 && moved < 0.3) { c.jump = true; this.detour = { x: u.pos.x + rand(-3, 3), z: u.pos.z + rand(-3, 3) }; this.detourT = 1; }
+      if (wl > 0.4 && moved < 0.3) {
+        const side = Math.random() < 0.5 ? -1 : 1, l = wl || 1;
+        this.detour = { x: u.pos.x - (c.wz / l) * 2.5 * side - (c.wx / l) * 0.8, z: u.pos.z + (c.wx / l) * 2.5 * side - (c.wz / l) * 0.8 };
+        this.detourT = 1.2;
+      }
       this.lastPos.copy(u.pos);
       this.stuckT = 0;
     }
@@ -543,6 +554,7 @@ export class Brain {
         aim.y = u.eye(V()).y + Math.tan(th) * d;
       }
       c.aimAt = aim;
+      this.lastAim = aim; this.lastAimT = w.time;
       const inRange = d < def.range * (def.kind === 'flame' ? 1 : 0.95);
       // bursts with pauses; low cover means kneeling between bursts
       let fire = false;
@@ -563,12 +575,18 @@ export class Brain {
       c.fire = fire;
       c.kneel = (inCover && !this.cover.high) || (!this.cover && (def.id === 'mg' || def.id === 'rifle' || def.id === 'launcher') && wl < 0.3) || sup > 0.6;
       if (inCover && !this.cover.high && sup > 0.6) c.fire = false;
+      // caught in the open under heavy fire, or a gunner settling in: go prone for a while
+      if (!this.cover && (sup > 0.8 || (def.id === 'mg' && wl < 0.2 && this.seenT > 1.5))) this.proneUntil = w.time + rand(2, 4);
+      c.prone = w.time < (this.proneUntil || 0) && !sq.retreating;
     } else {
       this.react = Math.max(this.react, 0.15);
       c.fire = false;
+      c.prone = w.time < (this.proneUntil || 0) && gd < 1;
       // look where trouble was, or where we're going
       const look = sq.contact && w.time - sq.contact.t < 8 ? sq.contact.pos : sq.holding && gd < 1 ? sq.watch : null;
-      c.aimAt = look ? look.clone().setY(U.BODY_Y + look.y) : null;
+      // keep the gun on the last spot for a moment after losing sight, instead of snapping away
+      if (this.lastAim && w.time - this.lastAimT < 1.2) c.aimAt = this.lastAim;
+      else c.aimAt = look ? look.clone().setY(U.BODY_Y + look.y) : null;
       c.kneel = !!(inCover && sq.inContact());
       if (u.weapon.mag < u.weapon.def.mag * 0.5 && !u.busy) c.reload = true;
     }

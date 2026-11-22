@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#101316" />
     <title>Pea Militia</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
@@ -52,16 +52,16 @@
             </div>
           </fieldset>
           <fieldset class="field">
-            <legend>View</legend>
+            <legend>Camera</legend>
             <div class="seg" role="radiogroup">
-              <label><input type="radio" name="view" value="3p" checked /><span>Third person</span></label>
-              <label><input type="radio" name="view" value="1p" /><span>First person</span></label>
+              <label><input type="radio" name="view" value="3p" checked /><span>Third</span></label>
+              <label><input type="radio" name="view" value="1p" /><span>First</span></label>
             </div>
           </fieldset>
           <button id="deploy" class="deploy" type="submit">Deploy</button>
         </form>
         <p class="keys mouse-only">WASD move · Mouse aim · Click fire · Right-click sights · V view · B sandbox · Esc pause</p>
-        <p class="keys touch-only">Left thumb move · Right thumb aim · Buttons fire, jump, view</p>
+        <p class="keys touch-only">Left thumb move, push past the edge to run · Right thumb aim</p>
       </div>
     </section>
 
@@ -70,11 +70,14 @@
       <div class="topbar">
         <div id="tickets" class="tickets"></div>
         <div id="points" class="points"></div>
+        <div class="compass" aria-hidden="true"><div id="compass"></div><i></i></div>
       </div>
+      <canvas id="marks" class="marks" aria-hidden="true"></canvas>
+      <div id="supp" class="supp" aria-hidden="true"></div>
       <canvas id="radar" class="radar" width="300" height="300" aria-hidden="true"></canvas>
       <ol id="feed" class="feed" aria-live="polite"></ol>
       <div class="vitals">
-        <span class="label">HP</span><div class="hp"><i id="hpbar"></i></div><b id="hpnum" class="num">100</b>
+        <span class="label">HP</span><div class="hp"><i id="hpbar"></i><s id="stambar"></s></div><b id="hpnum" class="num">100</b>
       </div>
       <div class="gun">
         <div class="gun-row"><span id="wname" class="wname"></span><b id="ammo" class="num"></b></div>
@@ -113,7 +116,7 @@
           <button id="restart" class="ghost" type="button">Restart</button>
           <button id="toMenu" class="ghost" type="button">Setup</button>
         </div>
-        <p class="keys mouse-only">V view · Shift sprint · C crouch · R reload · G grenade · 1–7 weapons · M mute · H controls</p>
+        <p class="keys mouse-only">Shift sprint · C crouch · Z prone · Q/E lean · R reload · G grenade · 1–7 or wheel weapons · V view · M mute</p>
       </div>
     </section>
     <section id="end" class="sheet" hidden aria-label="Battle over">

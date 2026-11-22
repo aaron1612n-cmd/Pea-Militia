@@ -21,6 +21,8 @@ export class PlayerCam {
     this.shoulder = 0.78;
     this.lift = 0.32;
     this.blend = 0; // 0 = 3p, 1 = 1p (smooth switch)
+    this.roll = 0;
+    this.fpFov = 84;
     this.pos = V();
     this.focus = V();
     // overview
@@ -111,16 +113,27 @@ export class PlayerCam {
       if (t < len + 0.25) tp = pivot.clone().addScaledVector(dir, Math.max(0.2, t - 0.25));
     }
     tp.y = Math.max(tp.y, 0.25);
-    const fp = this.focus.clone().addScaledVector(f, 0.12);
+    // first person is a chest-mounted bodycam: a touch low, wide, and it moves with the stride
+    const fp = this.focus.clone().addScaledVector(f.clone().setY(0).normalize(), 0.16);
+    const w = unit.walk * (1 - 0.6 * this.ads) * (unit.sprinting ? 1.6 : 1);
+    const c = unit.cycle * Math.PI * 2;
+    fp.y -= 0.04;
+    fp.y += -Math.abs(Math.cos(c)) * 0.028 * w + 0.014 * w;
+    fp.addScaledVector(right, Math.sin(c) * 0.016 * w);
     this.pos.lerpVectors(tp, fp, this.blend);
     cam.position.copy(this.pos);
     cam.lookAt(this.pos.clone().add(f));
+    if (this.blend > 0.01) {
+      this.roll += ((Math.sin(c) * 0.012 * w - (unit.mx || 0) * unit.walk * 0.02) - this.roll) * (1 - Math.exp(-10 * dt));
+      cam.rotateZ(this.roll * this.blend);
+    }
     if (this.shake > 0.001) {
       const s = this.shake * 0.02;
       cam.rotation.x += (Math.random() - 0.5) * s;
       cam.rotation.y += (Math.random() - 0.5) * s;
     }
-    this.setFov(THREE.MathUtils.lerp(this.fov, this.fov * 0.62, this.ads), dt);
+    const base = THREE.MathUtils.lerp(this.fov, this.fpFov, this.blend);
+    this.setFov(THREE.MathUtils.lerp(base, base * 0.6, this.ads), dt);
   }
 
   setFov(goal, dt) {

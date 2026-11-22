@@ -120,6 +120,9 @@ const modelChecks = () => {
   for (const r of [0.1, 0.3, 0.5, 0.7, 0.9]) phases.push({ name: `reload ${r}`, reload: r, ready: 1 });
   phases.push({ name: 'recoil', recoil: 1, ready: 1 }, { name: 'flinch', flinch: 1, ready: 1 });
   for (let r = 0; r <= 1; r += 0.125) phases.push({ name: `throw ${r}`, throw: r, weapon: 'grenade', only: true });
+  for (const l of [-1, -0.5, 0.5, 1]) phases.push({ name: `lean ${l}`, lean: l, ready: 1 });
+  phases.push({ name: 'lean kneel', lean: 1, kneel: 1, ready: 1 });
+  for (const pr of [0.5, 1]) phases.push({ name: `prone ${pr}`, prone: pr, ready: 1 }, { name: `prone ${pr} aimed`, prone: pr, ready: 1, aimPitch: 0.3 });
   for (const d of [0, 0.5, 1]) phases.push({ name: `dead ${d}`, dead: d });
   const pz = makePose();
   for (const ph of phases) {
@@ -150,7 +153,7 @@ const modelChecks = () => {
         r.grip = grip.distanceTo(hand);
         if (s.weapon === 'grenade' ? r.grip > 0.1 : r.grip > 0.08) r.loose.push(`grip ${r.grip.toFixed(3)}`);
         // muzzle out ahead of the body when shouldered
-        if (s.ready === 1 && !ph.reload && s.weapon !== 'grenade' && Math.abs(ph.twist || 0) < 0.1) {
+        if (s.ready === 1 && !ph.reload && !ph.prone && !ph.lean && s.weapon !== 'grenade' && Math.abs(ph.twist || 0) < 0.1) {
           const mz = pz.muzzle.clone().applyMatrix4(bodyInv);
           if (mz.z < U.D / 2 + 0.1) r.loose.push(`muzzle behind (${mz.z.toFixed(2)})`);
         }
@@ -162,7 +165,7 @@ const modelChecks = () => {
           const h = new THREE.Vector3().setFromMatrixPosition(pz.hands[i]);
           if (h.distanceTo(c) > 0.8) r.loose.push(`hand${i} ${h.distanceTo(c).toFixed(2)}m out`);
           const f = new THREE.Vector3().setFromMatrixPosition(pz.feet[i]);
-          if (Math.abs(f.x) > 0.4 || Math.abs(f.z) > 0.5 || f.y > 0.3) r.loose.push(`foot${i} off`);
+          if (Math.abs(f.x) > 0.5 || Math.abs(f.z) > (ph.prone ? 1.1 : 0.5) || f.y > (ph.prone ? 0.6 : 0.3)) r.loose.push(`foot${i} off`);
         }
       }
       r.air = !!ph.air;
@@ -265,6 +268,24 @@ try {
   const jumped = await P.waitForFunction((j) => window.__game.player.jumps > j && window.__game.player.pos.y > 0.2, j0, { timeout: 20000 }).then(() => true, () => false);
   const landed = await P.waitForFunction(() => window.__game.player.grounded, null, { timeout: 20000 }).then(() => true, () => false);
   check('Space jumps and lands', jumped && landed);
+  // sprint: Shift+W is faster than W and drains stamina
+  const sp0 = await P.evaluate(() => ({ z: window.__game.player.pos.z, s: window.__game.player.stamina }));
+  await P.keyboard.down('ShiftLeft'); await P.keyboard.down('KeyW');
+  const sprinted = await P.waitForFunction(() => window.__game.player.sprinting && window.__game.player.stamina < 0.97, null, { timeout: 30000 }).then(() => true, () => false);
+  const sv = await P.evaluate(() => Math.hypot(window.__game.player.vel.x, window.__game.player.vel.z));
+  await P.keyboard.up('KeyW'); await P.keyboard.up('ShiftLeft');
+  check('Shift sprints faster than walking and uses stamina', sprinted && sv > 2.8, `speed ${sv.toFixed(2)}`);
+  // prone (Z) and lean (E)
+  await P.keyboard.press('KeyZ');
+  const proned = await P.waitForFunction(() => window.__game.player.proneK > 0.9, null, { timeout: 30000 }).then(() => true, () => false);
+  await P.keyboard.press('KeyZ');
+  await P.waitForFunction(() => window.__game.player.proneK < 0.1, null, { timeout: 30000 }).catch(() => {});
+  await P.keyboard.down('KeyE');
+  const leaned = await P.waitForFunction(() => window.__game.player.leanK > 0.8, null, { timeout: 30000 }).then(() => true, () => false);
+  await P.keyboard.up('KeyE');
+  check('Z goes prone, E leans, both come back', proned && leaned);
+  const compass = await P.evaluate(() => { const r = document.querySelector('.compass').getBoundingClientRect(); return r.width > 50 && r.top >= 0 && document.querySelectorAll('#compass .card').length >= 8; });
+  check('compass strip shows', compass);
   const y0 = await P.evaluate(() => window.__game.cam.yaw);
   await P.evaluate(() => { window.__game.input.look.dx += 0.5; });
   await P.waitForFunction((y0) => Math.abs(window.__game.cam.yaw - y0) > 0.3, y0, { timeout: 30000 }).catch(() => {});

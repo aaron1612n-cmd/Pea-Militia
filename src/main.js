@@ -14,6 +14,7 @@ import { Hud } from './hud.js';
 import { SLOTS } from './weapons.js';
 import { Sandbox } from './sandbox.js';
 import { TEAMS } from './factions.js';
+import { ViewModel } from './viewmodel.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('scene');
@@ -67,6 +68,9 @@ let settings = { mode: 'battle', teams: 2, size: 50, tickets: 4, view: '3p', pla
 let adsToggle = false;
 let snap = true;
 let quickThrow = -1;
+const vm = new ViewModel();
+let lastLook = { dx: 0, dy: 0 };
+let lastShots = 0;
 
 cam.collide = (o, d, max) => {
   const h = battle.raycast(o, d, max, { units: false });
@@ -236,7 +240,12 @@ const sandbox = new Sandbox({
 
 // touch: aim and crouch are toggles
 const aimBtn = $('aimBtn'), crouchBtn = $('crouchBtn');
-for (const [el, fn] of [[aimBtn, () => { adsToggle = !adsToggle; aimBtn.setAttribute('aria-pressed', adsToggle); }], [crouchBtn, () => { input.crouchToggle = !input.crouchToggle; crouchBtn.setAttribute('aria-pressed', input.crouchToggle); }]]) {
+for (const [el, fn] of [[aimBtn, () => { adsToggle = !adsToggle; aimBtn.setAttribute('aria-pressed', adsToggle); }], [crouchBtn, () => {
+  // stand -> crouch -> prone -> stand
+  if (input.prone) { input.prone = false; input.crouchToggle = false; } else if (input.crouchToggle) { input.crouchToggle = false; input.prone = true; } else input.crouchToggle = true;
+  crouchBtn.setAttribute('aria-pressed', input.crouchToggle || input.prone);
+  crouchBtn.dataset.stance = input.prone ? 'prone' : input.crouchToggle ? 'crouch' : 'stand';
+}]]) {
   el.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); fn(); });
 }
 
@@ -327,6 +336,33 @@ function updateAim() {
   aimPoint.copy(hit.hit ? hit.point : o.addScaledVector(d, 300));
 }
 
+// Touch aim assist: the view slows down over an enemy (friction) and, while you move or shoot,
+// drifts gently onto them (magnetism). Only for visible enemies close to the crosshair.
+const AA = { dir: new THREE.Vector3(), to: new THREE.Vector3(), c: new THREE.Vector3() };
+function aimAssist(dt, inp) {
+  camera.getWorldDirection(AA.dir);
+  let best = null, bestA = Infinity;
+  for (const u of battle.units) {
+    if (!u.alive || u.team === player.team) continue;
+    u.center(AA.c);
+    AA.to.subVectors(AA.c, camera.position);
+    const d = AA.to.length();
+    if (d > 60 || d < 1) continue;
+    const ang = AA.dir.angleTo(AA.to);
+    const cone = 0.035 + 0.9 / d; // wider up close
+    if (ang < cone && ang < bestA) { bestA = ang; best = u; }
+  }
+  if (!best || !battle.los(camera.position, best.center(AA.c))) return;
+  inp.look.dx *= 0.5; inp.look.dy *= 0.5;
+  const busy = inp.fire || Math.hypot(inp.move.x, inp.move.y) > 0.2 || Math.hypot(inp.look.dx, inp.look.dy) > 0;
+  if (!busy) return;
+  AA.to.subVectors(best.center(AA.c), camera.position).normalize();
+  const yawT = Math.atan2(-AA.to.x, -AA.to.z), pitchT = Math.asin(THREE.MathUtils.clamp(AA.to.y, -1, 1));
+  const dy = Math.atan2(Math.sin(yawT - cam.yaw), Math.cos(yawT - cam.yaw)), dp = pitchT - cam.pitch;
+  const k = 1 - Math.exp(-(inp.fire ? 4 : 2) * dt);
+  cam.yaw += dy * k; cam.pitch += dp * k;
+}
+
 function updatePlayer(dt, inp) {
   const c = player.ctrl;
   if (!player.alive) {
@@ -349,9 +385,11 @@ function updatePlayer(dt, inp) {
   c.fire = !building && inp.fire;
   c.sprint = !building && inp.sprint && mv.y > 0.3;
   c.kneel = !building && inp.crouch;
+  c.prone = !building && inp.prone;
+  c.lean = building ? 0 : inp.lean;
   c.faceYaw = cam.mode === 'over' ? undefined : cam.bodyYaw;
   c.aimAt = building ? null : aimPoint.clone();
-  const ads = !building && (inp.aim || adsToggle) && !player.sprinting && player.weapon.def.kind !== 'throw';
+  const ads = !building && (inp.aim || adsToggle || window.__adsForce) && !player.sprinting && player.weapon.def.kind !== 'throw';
   cam.ads += ((ads ? 1 : 0) - cam.ads) * (1 - Math.exp(-14 * dt));
   player.ads = cam.mode === '1p' ? cam.ads : 0;
   player.fp = cam.blend;
@@ -386,7 +424,7 @@ function drawUnits() {
     if (u.removed) continue;
     if (u === player && fp) {
       if (!u.alive) continue;
-      crowd.add(u.world, u.poseOut, u.team, { body: false, weapon: u.weapon.id });
+      crowd.add(vm.identity, vm.pose, u.team, { body: false, weapon: u.weapon.id });
       continue;
     }
     crowd.add(u.world, u.poseOut, u.team, { weapon: u.weapon.id });
@@ -419,7 +457,9 @@ function frame() {
           if (inp.zoom) cam.zoom(Math.exp(inp.zoom * 0.0012));
           cam.look(inp.look.dx, inp.look.dy);
         } else {
+          if (input.touch && player?.alive) aimAssist(dt, inp);
           cam.look(inp.look.dx, inp.look.dy);
+          lastLook = inp.look;
           tut.looked += Math.abs(inp.look.dx) + Math.abs(inp.look.dy);
         }
         handle(inp.actions);
@@ -442,8 +482,20 @@ function frame() {
     }
   }
   if (state !== 'menu' && player) {
+    // real recoil: each shot kicks the view up a little
+    if (player.shots !== lastShots) {
+      const k = { rifle: 0.022, smg: 0.007, mg: 0.009, plasma: 0.008, flame: 0.001, launcher: 0.03, grenade: 0 }[player.weapon.id] ?? 0.01;
+      cam.pitch += k * (player.shots - lastShots > 3 ? 1 : player.shots - lastShots) * (1 - 0.4 * cam.ads);
+      cam.yaw += (Math.random() - 0.5) * k * 0.6;
+      lastShots = player.shots;
+    }
     cam.update(dt, player, snap);
     snap = false;
+    const fpOn = cam.mode === '1p' && cam.blend > 0.6 && player.alive;
+    if (fpOn) {
+      vm.update(dt, camera, player, cam.ads, lastLook);
+      player.muzzleOverride = vm.pose.muzzle;
+    } else player.muzzleOverride = null;
     updateAim();
   }
   if (state === 'menu') for (const u of battle.units) u.animate(dt);
@@ -452,7 +504,7 @@ function frame() {
   const look = state === 'menu' ? new THREE.Vector3() : cam.mode === 'over' ? new THREE.Vector3(cam.over.x, 0, cam.over.z) : player.pos.clone().add(cam.forward().setY(0).multiplyScalar(12));
   sun.position.copy(look).add(SUN);
   sun.target.position.copy(look);
-  if (state !== 'menu' && player) hud.update(dt, player, battle, cam);
+  if (state !== 'menu' && player) { hud.update(dt, player, battle, cam); if (cam.mode !== 'over') hud.drawMarks(player, battle, camera); }
   drawUnits();
   renderer.render(scene, camera);
 }
@@ -482,3 +534,15 @@ window.__game = {
   view(pos, target) { cam.frozen = true; camera.position.set(...pos); camera.lookAt(...target); sun.position.set(target[0], 0, target[2]).add(SUN); sun.target.position.set(...target); },
   unfreezeCam() { cam.frozen = false; },
 };
+
+// Phones: no pinch or double-tap zoom anywhere in the game (iOS ignores the viewport flag).
+for (const ev of ['gesturestart', 'gesturechange', 'gestureend', 'dblclick']) document.addEventListener(ev, (e) => e.preventDefault(), { passive: false });
+document.addEventListener('touchmove', (e) => { if (e.touches.length > 1 || (e.scale && e.scale !== 1)) e.preventDefault(); }, { passive: false });
+{
+  let lastTap = 0;
+  document.addEventListener('touchend', (e) => {
+    const now = e.timeStamp;
+    if (now - lastTap < 320 && !e.target.closest('input, select, textarea, button, label, a, [data-t], .pal-grid')) e.preventDefault();
+    lastTap = now;
+  }, { passive: false });
+}

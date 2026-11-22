@@ -44,8 +44,8 @@ export class Crowd {
     // weapons: one instanced mesh per (weapon, material)
     this.weapons = {};
     for (const id of Object.keys(WEAPONS)) {
-      const { parts, muzzle, box } = weaponParts(id);
-      setWeaponBounds(id, box, muzzle);
+      const { parts, muzzle, box, sight } = weaponParts(id);
+      setWeaponBounds(id, box, muzzle, sight);
       const sc = new THREE.Matrix4().makeScale(U.WEAPON_SCALE, U.WEAPON_SCALE, U.WEAPON_SCALE);
       this.weapons[id] = parts.map(({ geometry, material }) => {
         const g = geometry.clone().applyMatrix4(sc);
