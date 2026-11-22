@@ -107,10 +107,16 @@ form.addEventListener('change', (e) => { if (e.target.name === 'teams') fillSide
 form.size.addEventListener('input', syncForm);
 fillSides();
 syncForm();
+// phones: the setup folds down to a slim bar (title, Options, Deploy) so the field stays visible
+$('optBtn').addEventListener('click', () => {
+  const open = menu.dataset.open !== '1';
+  menu.dataset.open = open ? '1' : '0';
+  $('optBtn').setAttribute('aria-expanded', open);
+});
 form.addEventListener('submit', (e) => {
   e.preventDefault();
   const s = {
-    mode: form.mode.value, teams: +form.teams.value, size: +form.size.value,
+    mode: form.mode.value === 'free' ? 'battle' : form.mode.value, startFree: form.mode.value === 'free', teams: +form.teams.value, size: +form.size.value,
     tickets: +form.tickets.value, view: form.view.value, playerTeam: +(form.querySelector('[name=side]:checked')?.value ?? 0),
   };
   audio.init();
@@ -181,7 +187,7 @@ function startBattle(s) {
         const m = Math.min(SQUAD_SIZE, n - k * SQUAD_SIZE);
         const row = Math.floor(k / 5), col = (k % 5) - 2;
         const at = t.base.clone().add(new THREE.Vector3(Math.cos(f) * col * 8 - Math.sin(f) * row * 7, 0, -Math.sin(f) * col * 8 - Math.cos(f) * row * 7));
-        battle.spawnSquad(t.id, at, Array.from({ length: m }, (_, i) => SQUAD_MIX[t.id][(i + k) % 8]), f);
+        battle.spawnSquad(t.id, at, Array.from({ length: m }, (_, i) => SQUAD_MIX[t.id][(i + k) % SQUAD_MIX[t.id].length]), f);
       }
       t.tickets = tickets;
     }
@@ -204,7 +210,36 @@ function startBattle(s) {
   if (settings.mode === 'sandbox') { sandbox.toggle(true); hud.say('Sandbox', 1.6); }
   else hud.say('Take the points', 2.4);
   document.documentElement.dataset.view = cam.mode;
+  document.documentElement.dataset.free = '0';
   startTutorial();
+  if (settings.startFree) toggleFree(true, true);
+}
+
+// Free camera: fly over the field with no soldier. The player's soldier steps out of the battle
+// while you do, and drops back in wherever you were when you switch back.
+function toggleFree(on = cam.mode !== 'free', start = false) {
+  if (state !== 'play' || (on && cam.mode === 'free') || (!on && cam.mode !== 'free')) return;
+  if (on) {
+    if (sandbox.open) sandbox.toggle(false);
+    cam.fr.copy(camera.position);
+    if (start) { const T = battle.teams[player.team]; cam.fr.set(T.base.x * 0.5, 22, T.base.z * 0.5 + Math.sign(T.base.z || 1) * 14); cam.yaw = Math.atan2(cam.fr.x, cam.fr.z); cam.pitch = -0.4; }
+    cam.mode = 'free';
+    battle.units = battle.units.filter((u) => u !== player);
+    player.muzzleOverride = null;
+    tut.done = true; prompt.classList.remove('on');
+    if (!input.touch) input.requestLock();
+  } else {
+    const gx = THREE.MathUtils.clamp(cam.fr.x, -HALF + 2, HALF - 2), gz = THREE.MathUtils.clamp(cam.fr.z, -HALF + 2, HALF - 2);
+    player.pos.set(gx, 0, gz); player.vel.set(0, 0, 0);
+    player.hp = 100; player.alive = true; player.deadT = 0; player.respawnT = 0; player.grounded = false;
+    for (const w of player.weapons) { w.mag = w.def.mag; }
+    if (!battle.units.includes(player)) battle.units.push(player);
+    cam.yaw = cam.yaw; cam.mode = settings.view; cam.blend = settings.view === '1p' ? 1 : 0;
+    snap = true;
+  }
+  document.documentElement.dataset.free = on ? '1' : '0';
+  document.documentElement.dataset.view = cam.mode;
+  if (on) hud.say('Free camera · F returns to your soldier', 2.2);
 }
 
 function pause(on) {
@@ -221,7 +256,8 @@ $('again').addEventListener('click', () => { if (!input.touch) input.requestLock
 $('endMenu').addEventListener('click', openMenu);
 $('pauseBtn').addEventListener('click', () => pause(true));
 $('sbxBtn').addEventListener('click', () => sandbox.toggle());
-for (const id of ['pauseBtn', 'sbxBtn']) $(id).addEventListener('pointerdown', (e) => e.stopPropagation());
+$('freeBtn').addEventListener('click', () => toggleFree());
+for (const id of ['pauseBtn', 'sbxBtn', 'freeBtn']) $(id).addEventListener('pointerdown', (e) => e.stopPropagation());
 
 // losing the mouse lock mid-battle (Esc) pauses, unless the palette took it
 input.onLockRequest = () => { window.__lockAsked = (window.__lockAsked || 0) + 1; };
@@ -302,9 +338,10 @@ function tutorialTick() {
 // ---------------- player control ----------------
 function handle(actions) {
   for (const a of actions) {
+    if (a.type === 'free') { toggleFree(); continue; }
     if (a.type === 'menu') { if (state === 'play') sandbox.toggle(); continue; }
-    if (a.type === 'view') { if (cam.mode !== 'over') { cam.mode = cam.mode === '1p' ? '3p' : '1p'; document.documentElement.dataset.view = cam.mode; } continue; }
-    if (!player.alive || sandbox.open) continue;
+    if (a.type === 'view') { if (cam.mode !== 'over' && cam.mode !== 'free') { cam.mode = cam.mode === '1p' ? '3p' : '1p'; document.documentElement.dataset.view = cam.mode; } continue; }
+    if (!player.alive || sandbox.open || cam.mode === 'free') continue;
     if (a.type === 'slot') player.setWeapon(a.n);
     else if (a.type === 'next') player.cycleWeapon(1);
     else if (a.type === 'prev') player.cycleWeapon(-1);
@@ -456,6 +493,10 @@ function frame() {
           cam.pan(inp.move.x * dt * cam.over.height * 0.8, inp.move.y * dt * cam.over.height * 0.8);
           if (inp.zoom) cam.zoom(Math.exp(inp.zoom * 0.0012));
           cam.look(inp.look.dx, inp.look.dy);
+        } else if (cam.mode === 'free') {
+          cam.look(inp.look.dx, inp.look.dy);
+          const up = (inp.jumpHeld ? 1 : 0) - (inp.crouch ? 1 : 0);
+          cam.fly(dt, inp.move, up, inp.sprint);
         } else {
           if (input.touch && player?.alive) aimAssist(dt, inp);
           cam.look(inp.look.dx, inp.look.dy);
@@ -465,9 +506,9 @@ function frame() {
         handle(inp.actions);
       }
       const sdt = dt * battle.timeScale;
-      updatePlayer(sdt, inp);
+      if (cam.mode !== 'free') updatePlayer(sdt, inp);
       battle.update(dt);
-      tutorialTick();
+      if (cam.mode !== 'free') tutorialTick();
       cam.shake = Math.max(cam.shake, fx.shake);
       for (const e of battle.events) {
         if (e.type === 'boom') cam.shake = Math.min(1.2, cam.shake + Math.max(0, 1 - e.pos.distanceTo(player.pos) / (e.r * 5)));
@@ -496,15 +537,15 @@ function frame() {
       vm.update(dt, camera, player, cam.ads, lastLook);
       player.muzzleOverride = vm.pose.muzzle;
     } else player.muzzleOverride = null;
-    updateAim();
+    if (cam.mode !== 'free') updateAim();
   }
   if (state === 'menu') for (const u of battle.units) u.animate(dt);
   audio.listener.x = camera.position.x; audio.listener.z = camera.position.z; audio.listener.yaw = state === 'menu' ? 0 : cam.yaw;
   // shadows follow what the camera is looking at
-  const look = state === 'menu' ? new THREE.Vector3() : cam.mode === 'over' ? new THREE.Vector3(cam.over.x, 0, cam.over.z) : player.pos.clone().add(cam.forward().setY(0).multiplyScalar(12));
+  const look = state === 'menu' ? new THREE.Vector3() : cam.mode === 'over' ? new THREE.Vector3(cam.over.x, 0, cam.over.z) : cam.mode === 'free' ? cam.fr.clone().add(cam.forward().setY(0).normalize().multiplyScalar(22)).setY(0) : player.pos.clone().add(cam.forward().setY(0).multiplyScalar(12));
   sun.position.copy(look).add(SUN);
   sun.target.position.copy(look);
-  if (state !== 'menu' && player) { hud.update(dt, player, battle, cam); if (cam.mode !== 'over') hud.drawMarks(player, battle, camera); }
+  if (state !== 'menu' && player) { hud.update(dt, player, battle, cam); if (cam.mode !== 'over' && cam.mode !== 'free') hud.drawMarks(player, battle, camera); }
   drawUnits();
   renderer.render(scene, camera);
 }

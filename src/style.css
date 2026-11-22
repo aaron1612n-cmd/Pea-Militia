@@ -311,3 +311,30 @@ input[type='range']::-moz-range-thumb { width: 24px; height: 24px; border-radius
   .keys { display: none; }
 }
 @media (max-height: 500px) { .compass { display: none; } }
+
+/* free camera: no soldier, so no weapon, health or crosshair */
+html[data-free='1'] .vitals, html[data-free='1'] .gun, html[data-free='1'] #cross, html[data-free='1'] .slots, html[data-free='1'] #hurt, html[data-free='1'] #supp,
+html[data-free='1'] .tbtn.fire, html[data-free='1'] .tbtn.aim, html[data-free='1'] .tbtn.swap, html[data-free='1'] .tbtn.view { display: none !important; }
+html[data-free='1'] #freeBtn { border-color: var(--accent); color: var(--accent); }
+
+.opt-btn { display: none; }
+@media (max-width: 640px), (max-height: 500px) {
+  .opt-btn { display: inline-flex; align-items: center; gap: 4px; margin-left: auto; min-height: 36px; padding: 0 12px; border-radius: 10px; background: rgba(230, 232, 228, 0.1); border: 0; color: var(--ink); font: 500 14px/1 var(--body); cursor: pointer; }
+  .opt-btn svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.2s; transform: rotate(180deg); }
+  .menu[data-open='1'] .opt-btn svg { transform: none; }
+  .menu:not([data-open='1']) .setup .field { display: none; }
+  .menu:not([data-open='1']) .menu-frame { max-height: none; }
+  .menu:not([data-open='1']) .setup { overflow: visible; }
+  .menu:not([data-open='1']) .deploy { position: static; box-shadow: none; min-height: 46px; }
+  .menu .sub { display: none; }
+}
+@media (max-width: 640px) {
+  .menu:not([data-open='1']) { background: none; }
+  .menu:not([data-open='1']) .menu-frame { padding: 10px 12px max(10px, env(safe-area-inset-bottom)); }
+  .menu:not([data-open='1']) .menu-head { margin-bottom: 8px; }
+  .menu-frame { max-height: 58dvh; }
+}
+@media (max-height: 500px) {
+  .menu:not([data-open='1']) .menu-frame { width: 300px; max-height: none; margin: 0 0 8px 8px; align-self: flex-end; }
+  .menu:not([data-open='1']) { background: none; align-items: flex-end; }
+}

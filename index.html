@@ -19,6 +19,7 @@
         <header class="menu-head">
           <h1 class="title">Steel Meridian</h1>
           <p class="sub">Combined-arms field battle</p>
+          <button id="optBtn" class="opt-btn" type="button" aria-expanded="false" aria-controls="setup">Options <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6" /></svg></button>
         </header>
         <form id="setup" class="setup" autocomplete="off">
           <fieldset class="field">
@@ -26,6 +27,7 @@
             <div class="seg" role="radiogroup">
               <label><input type="radio" name="mode" value="battle" checked /><span>Battle</span></label>
               <label><input type="radio" name="mode" value="sandbox" /><span>Sandbox</span></label>
+              <label><input type="radio" name="mode" value="free" /><span>Free cam</span></label>
             </div>
           </fieldset>
           <fieldset class="field">
@@ -142,6 +144,7 @@
     </div>
     <div id="corner" class="corner" hidden>
       <button id="sbxBtn" class="icon-btn" type="button" aria-label="Sandbox tools" title="Sandbox (B)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM17 14v6M14 17h6" /></svg></button>
+      <button id="freeBtn" class="icon-btn" type="button" aria-label="Free camera" title="Free camera (F)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h4l2-3h6l2 3h4v11H3zM12 11a3.5 3.5 0 100 7 3.5 3.5 0 000-7z" /></svg></button>
       <button id="pauseBtn" class="icon-btn" type="button" aria-label="Pause" title="Pause (Esc)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14" /></svg></button>
     </div>
     <script type="module" src="/src/main.js"></script>

@@ -329,6 +329,8 @@ export class Brain {
       let sc = d;
       if (!noticed) sc += 200;
       if (e === this.target) sc -= 6;
+      if (sq.focus && e === sq.focus && sq.focus.alive && w.time - sq.focusT < 5) sc -= 12; // the squad's chosen target
+      if (e.hp < 40) sc -= 7; // finish the wounded
       if (e.isPlayer) sc -= 2;
       if (d > def.range * 1.1) sc += 40;
       if (sc < bs) { bs = sc; best = e; bestSeen = noticed; }
@@ -345,7 +347,11 @@ export class Brain {
     }
     this.seen = !!(this.target && bestSeen && best === this.target);
     if (this.target && !this.target.alive) { this.target = null; this.seen = false; }
-    if (this.seen) { sq.know(this.target, this.target.pos, true); this.target.spottedUntil = w.time + 2; }
+    if (this.seen) {
+      sq.know(this.target, this.target.pos, true); this.target.spottedUntil = w.time + 2;
+      // call the target so the rest of the squad piles on
+      if (!sq.focus || !sq.focus.alive || w.time - sq.focusT > 3.5) { sq.focus = this.target; sq.focusT = w.time; }
+    }
 
     // friendlies in the way?
     if (this.seen) {
@@ -358,7 +364,12 @@ export class Brain {
     const contact = sq.inContact() || this.seen;
     const threat = this.seen ? this.target.pos : sq.contact?.pos;
     const lowHp = u.hp < 35;
-    if (contact && threat) {
+    this.mission = u.kind === 'medic' && !this.seen && !sq.retreating && u.suppression < 0.3 ? this.medicMission() : null;
+    if (this.mission) {
+      this.releaseCover();
+      const t = this.mission.unit;
+      this.goal = Math.hypot(t.pos.x - u.pos.x, t.pos.z - u.pos.z) < 1.5 ? u.pos.clone() : t.pos.clone();
+    } else if (contact && threat) {
       // in a fight: take the best cover near the slot that faces the threat
       if (!this.cover || this.coverBad(this.cover, threat) || this.cover.prop.alive === false || this.cover.dist2(slot) > 100) {
         this.releaseCover();
@@ -412,6 +423,43 @@ export class Brain {
     }
   }
 
+  // nearest soldier who needs a medic: a fresh body to revive, or a wounded friend to patch up
+  medicMission() {
+    const u = this.u, w = this.w;
+    let best = null, bs = Infinity;
+    for (const m of w.units) {
+      if (m === u || m.team !== u.team || m.removed) continue;
+      const d = Math.hypot(m.pos.x - u.pos.x, m.pos.z - u.pos.z);
+      if (d > 40) continue;
+      let sc;
+      if (!m.alive) { if (m.isPlayer || m.deadT > 10 || d > 30) continue; sc = d - 8; }
+      else if (m.hp < 75) sc = d + m.hp * 0.15;
+      else continue;
+      if (sc >= bs) continue;
+      // not into the middle of a firefight
+      let danger = false;
+      for (const e of w.nearUnits(m.pos.x, m.pos.z, 13)) if (e.alive && hostile(e.team, u.team)) { danger = true; break; }
+      if (danger) continue;
+      bs = sc; best = { unit: m, kind: m.alive ? 'heal' : 'revive' };
+    }
+    return best;
+  }
+
+  doMission(dt) {
+    const m = this.mission, u = this.u, c = u.ctrl;
+    const t = m.unit;
+    if (!t || (m.kind === 'revive') === t.alive) { this.mission = null; this.reviveT = 0; return false; }
+    const d = Math.hypot(t.pos.x - u.pos.x, t.pos.z - u.pos.z);
+    if (d > 2.4) { this.reviveT = 0; return false; }
+    c.aimAt = null; c.fire = false; c.kneel = true;
+    if (m.kind === 'heal') t.hp = Math.min(100, t.hp + 16 * dt);
+    else {
+      this.reviveT = (this.reviveT || 0) + dt;
+      if (this.reviveT >= 2.5) { this.w.revive(t); this.reviveT = 0; this.mission = null; }
+    }
+    return true;
+  }
+
   slotIndex() {
     const m = this.squad.members.filter((x) => x.alive);
     return Math.max(0, m.indexOf(this.u));
@@ -452,6 +500,7 @@ export class Brain {
     const u = this.u, c = u.ctrl, w = this.w, sq = this.squad;
     const def = u.weapon.def;
 
+    if (this.mission && this.doMission(dt)) { c.wx = c.wz = 0; c.sprint = false; return; }
     // movement toward the goal, around props
     let wx = 0, wz = 0;
     const goal = this.goal || u.pos;
@@ -483,10 +532,10 @@ export class Brain {
       wx = (dx / dl) * k; wz = (dz / dl) * k;
     }
     // spacing from squadmates
-    for (const m of w.nearUnits(u.pos.x, u.pos.z, 2.2)) {
+    for (const m of w.nearUnits(u.pos.x, u.pos.z, 2.8)) {
       if (m === u || !m.alive || m.team !== u.team) continue;
       const dx = u.pos.x - m.pos.x, dz = u.pos.z - m.pos.z, d = Math.hypot(dx, dz);
-      if (d > 0.01 && d < 2) { wx += (dx / d) * (2 - d) * 0.35; wz += (dz / d) * (2 - d) * 0.35; }
+      if (d > 0.01 && d < 2.6) { wx += (dx / d) * (2.6 - d) * 0.5; wz += (dz / d) * (2.6 - d) * 0.5; }
     }
     // a little lateral shuffle in a firefight when not in cover
     if (this.seen && !this.cover && def.id !== 'mg' && gd < 1.5) {
@@ -497,6 +546,13 @@ export class Brain {
     }
     let wl = Math.hypot(wx, wz);
     if (wl > 1) { wx /= wl; wz /= wl; }
+    // an enemy grenade about to go off nearby: get away from it
+    let evading = false;
+    for (const g of w.projectiles) {
+      if (g.type !== 'grenade' || (g.owner && g.owner.team === u.team)) continue;
+      const gx0 = u.pos.x - g.pos.x, gz0 = u.pos.z - g.pos.z, gd0 = Math.hypot(gx0, gz0);
+      if (gd0 < 5.5 && g.fuse < 1.8) { wx = (gx0 / (gd0 || 1)); wz = (gz0 / (gd0 || 1)); evading = true; break; }
+    }
     // smooth the steering so pushes from squadmates and detours don't twitch the legs
     const sm = 1 - Math.exp(-7 * dt);
     c.wx += (wx - c.wx) * sm; c.wz += (wz - c.wz) * sm;
@@ -506,7 +562,7 @@ export class Brain {
     // run when there's ground to cover: advancing, flanking, falling back, or caught in the open
     // (the unit itself stops sprinting the moment it needs to shoot or runs out of stamina)
     const open = !this.cover || gd > 3;
-    c.sprint = open && ((gd > 7 && (!this.seen || sq.retreating || u.suppression > 0.25)) || gd > 16 || (sq.retreating && gd > 3));
+    c.sprint = evading || open && ((gd > 7 && (!this.seen || sq.retreating || u.suppression > 0.25)) || gd > 16 || (sq.retreating && gd > 3));
     c.speed = 1;
 
     // stuck on something: step sideways, away from the way we were pushing
@@ -584,6 +640,17 @@ export class Brain {
     } else {
       this.react = Math.max(this.react, 0.15);
       c.fire = false;
+      // suppressive fire: gunners keep the enemy's heads down where they were last seen
+      const ct = sq.contact;
+      if (def.id === 'mg' && ct && w.time - ct.t < 4 && u.weapon.mag > 8 && !u.busy) {
+        const dd = Math.hypot(ct.pos.x - u.pos.x, ct.pos.z - u.pos.z);
+        if (dd > 6 && dd < def.range * 0.9) {
+          c.aimAt = ct.pos.clone().setY(U.BODY_Y + ct.pos.y);
+          c.fire = Math.floor(w.time * 2.4 + u.id) % 3 !== 2 && !w.friendlyInLine(u, u.muzzle(V()), c.aimAt);
+          c.kneel = !this.cover?.high;
+          return;
+        }
+      }
       c.prone = w.time < (this.proneUntil || 0) && gd < 1;
       // look where trouble was, or where we're going
       const look = sq.contact && w.time - sq.contact.t < 8 ? sq.contact.pos : sq.holding && gd < 1 ? sq.watch : null;

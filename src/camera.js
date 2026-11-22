@@ -26,6 +26,7 @@ export class PlayerCam {
     this.pos = V();
     this.focus = V();
     // overview
+    this.fr = V(); // free-fly camera position
     this.over = { x: 0, z: 0, yaw: Math.PI, pitch: 0.95, height: 40 };
     this.collide = null; // (from, dir, maxT) => t
   }
@@ -69,9 +70,29 @@ export class PlayerCam {
 
   zoom(f) { this.over.height = THREE.MathUtils.clamp(this.over.height * f, 8, 140); }
 
+  // free camera: fly where you look (forward/back follow the pitch), strafe, rise and sink
+  fly(dt, mv, up, fast) {
+    const f = this.forward(V());
+    const right = V().set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    const v = f.multiplyScalar(mv.y).addScaledVector(right, mv.x);
+    v.y += up;
+    const sp = (fast ? 38 : 13) * dt;
+    this.fr.addScaledVector(v, sp);
+    this.fr.x = THREE.MathUtils.clamp(this.fr.x, -HALF - 10, HALF + 10);
+    this.fr.z = THREE.MathUtils.clamp(this.fr.z, -HALF - 10, HALF + 10);
+    this.fr.y = THREE.MathUtils.clamp(this.fr.y, 0.6, 120);
+  }
+
   update(dt, unit, snap = false) {
     if (this.frozen) return;
     const cam = this.camera;
+    if (this.mode === 'free') {
+      cam.position.copy(this.fr);
+      cam.rotation.order = 'YXZ';
+      cam.rotation.set(this.pitch, this.yaw, 0);
+      this.setFov(68, dt);
+      return;
+    }
     if (this.mode === 'over') {
       const o = this.over;
       const back = o.height / Math.tan(o.pitch);

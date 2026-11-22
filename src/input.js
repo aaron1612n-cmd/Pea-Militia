@@ -146,7 +146,7 @@ export class Input {
     });
 
     const GAME = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
-    const KEYS = { KeyR: 'reload', KeyG: 'grenade', KeyB: 'menu', KeyV: 'view' };
+    const KEYS = { KeyR: 'reload', KeyG: 'grenade', KeyB: 'menu', KeyV: 'view', KeyF: 'free' };
     addEventListener('keydown', (e) => {
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
       if (GAME.has(e.code)) e.preventDefault();
@@ -167,8 +167,8 @@ export class Input {
       if (Math.abs(this.wheel) > 40) { this.actions.push({ type: this.wheel > 0 ? 'next' : 'prev' }); this.wheel = 0; }
     }, { passive: false });
 
-    const jump = (e) => { e.preventDefault(); e.stopPropagation(); this.jumpQueued = true; jumpBtn.classList.add('down'); };
-    const up = () => jumpBtn.classList.remove('down');
+    const jump = (e) => { e.preventDefault(); e.stopPropagation(); this.jumpQueued = true; this.jumpTouch = true; jumpBtn.classList.add('down'); };
+    const up = () => { this.jumpTouch = false; jumpBtn.classList.remove('down'); };
     jumpBtn.addEventListener('pointerdown', jump);
     jumpBtn.addEventListener('pointerup', up);
     jumpBtn.addEventListener('pointercancel', up);
@@ -230,7 +230,7 @@ export class Input {
     if (l > 1) { x /= l; y /= l; }
     const play = this.mode === 'play';
     const out = {
-      move: { x, y }, look: { ...this.look }, jump: this.jumpQueued,
+      move: { x, y }, look: { ...this.look }, jump: this.jumpQueued, jumpHeld: k.has('Space') || this.jumpTouch,
       fire: play && ((this.fire && this.locked) || this.fireTouch || this.firePulse), aim: play && this.aim && this.locked,
       // phones: drag the stick well past its rim, forward, to run
       sprint: k.has('ShiftLeft') || k.has('ShiftRight') || !!(this.stick && this.stick.over > 1.35 && this.stick.y < -0.5),
