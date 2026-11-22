@@ -1,7 +1,7 @@
 {
   "name": "pea-militia",
   "version": "1.0.0",
-  "description": "Pea Militia browser game",
+  "description": "Steel Meridian browser game",
   "scripts": {
     "dev": "vite",
     "build": "vite build && node scripts/embed.mjs",
