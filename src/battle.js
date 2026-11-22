@@ -437,6 +437,7 @@ export class Battle {
     const c = u.center();
     this.fx.impact(c.clone().addScaledVector(dir || UP, -0.25), dir ? dir.clone().negate() : UP, 'metal');
     if (Math.random() < 0.5) this.fx.debris(c, TEAMS[u.team].body, 2);
+    this.fx.gore.hit(c, dir, dmg, kind, u);
     u.lastHit = { dir: dir ? dir.clone() : null, dmg, kind, t: u.t };
     u.hurt(dmg, from, this, kind);
     if (from && from === this.player) this.onHitMarker?.(!u.alive);
@@ -623,6 +624,7 @@ export class Battle {
   // a medic gets a fallen soldier back on their feet
   revive(u) {
     u.alive = true; u.rag = null; u.hp = 45; u.deadT = 0; u.vel.set(0, 0, 0); u.suppression = 0; u.burn = 0; u.flinch = 0;
+    u.wound = 0; u.lost = 0;
     u.onRevive?.();
     this.events.push({ type: 'revive', unit: u });
   }
@@ -633,6 +635,7 @@ export class Battle {
     this.fx.impact(c, UP, 'metal');
     const k = u.lastHit?.kind;
     if (k === 'blast' || k === 'fire' || k === 'plasma' || u.burn > 0) this.fx.smoulder(() => (u.rag ? u.rag.body.pos.clone() : u.center()), k === 'fire' || u.burn > 0 ? 5 : 3);
+    this.fx.gore.death(u, k);
     this.events.push({ type: 'death', unit: u, from });
     this.stats.kills++;
     u.brain?.releaseCover();

@@ -16,6 +16,7 @@ export const PART_GEO = {
 };
 // the foot's sole sits at its local origin's -half height; nothing to shift
 
+const WOUND = new THREE.Color('#5a1212');
 const BODY_COL = TEAMS.map((t) => new THREE.Color(t.body));
 const TRIM_COL = TEAMS.map((t) => new THREE.Color(t.trim));
 const PACK_COL = TEAMS.map((t) => new THREE.Color(t.body).multiplyScalar(0.62));
@@ -71,18 +72,25 @@ export class Crowd {
     if (opts.body !== false && this.n < this.cap) {
       const i = this.n++;
       this.body.setMatrixAt(i, t.multiplyMatrices(world, p.body));
-      this.body.instanceColor.setXYZ(i, BODY_COL[team].r, BODY_COL[team].g, BODY_COL[team].b);
+      const w = opts.wound || 0, bc = BODY_COL[team];
+      if (w > 0) this.body.instanceColor.setXYZ(i, bc.r + (WOUND.r - bc.r) * w * 0.5, bc.g + (WOUND.g - bc.g) * w * 0.5, bc.b + (WOUND.b - bc.b) * w * 0.5);
+      else this.body.instanceColor.setXYZ(i, bc.r, bc.g, bc.b);
       this.visor.setMatrixAt(i, t.multiplyMatrices(world, p.visor));
       this.pack.setMatrixAt(i, t.multiplyMatrices(world, p.pack));
       this.pack.instanceColor.setXYZ(i, PACK_COL[team].r, PACK_COL[team].g, PACK_COL[team].b);
-      for (const f of p.feet) {
+      const lost = opts.lost || 0;
+      for (let k = 0; k < p.feet.length; k++) {
+        const f = p.feet[k];
+        if (lost & (4 << k)) continue;
         if (this.nf >= this.cap * 2) break;
         const j = this.nf++;
         this.foot.setMatrixAt(j, t.multiplyMatrices(world, f));
         this.foot.instanceColor.setXYZ(j, DARK.r, DARK.g, DARK.b);
       }
     }
-    for (const h of p.hands) {
+    for (let k = 0; k < p.hands.length; k++) {
+      const h = p.hands[k];
+      if (opts.lost & (1 << k)) continue;
       if (this.nh >= this.cap * 2) break;
       const j = this.nh++;
       this.hand.setMatrixAt(j, t.multiplyMatrices(world, h));

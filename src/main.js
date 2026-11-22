@@ -112,6 +112,7 @@ form.addEventListener('change', (e) => { if (e.target.name === 'teams') fillSide
 form.size.addEventListener('input', syncForm);
 fillSides();
 syncForm();
+form.gore.value = String(fx.gore.level);
 // phones: the setup folds down to a slim bar (title, Options, Deploy) so the field stays visible
 $('optBtn').addEventListener('click', () => {
   const open = menu.dataset.open !== '1';
@@ -124,6 +125,7 @@ form.addEventListener('submit', (e) => {
     mode: form.mode.value === 'free' ? 'battle' : form.mode.value, startFree: form.mode.value === 'free', teams: +form.teams.value, size: +form.size.value,
     tickets: +form.tickets.value, view: form.view.value, playerTeam: +(form.querySelector('[name=side]:checked')?.value ?? 0),
   };
+  fx.gore.setLevel(+form.gore.value);
   audio.init();
   if (!input.touch) input.requestLock();
   if (!reduced) {
@@ -164,6 +166,7 @@ function openMenu() {
 // ---------------- battle ----------------
 function startBattle(s) {
   settings = { ...settings, ...s };
+  fx.gore.clear();
   battle.dispose();
   battle = new Battle(scene, fx, audio);
   const tickets = Math.round(settings.size * settings.tickets);
@@ -472,7 +475,7 @@ function drawUnits() {
       crowd.add(vm.identity, vm.pose, u.team, { body: false, weapon: u.weapon.id });
       continue;
     }
-    crowd.add(u.world, u.poseOut, u.team, { weapon: u.weapon.id });
+    crowd.add(u.world, u.poseOut, u.team, { weapon: u.weapon.id, wound: u.wound, lost: u.lost });
   }
   crowd.end();
 }

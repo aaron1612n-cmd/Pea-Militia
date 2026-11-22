@@ -530,6 +530,60 @@ try {
   check('ragdolls: thrown by the hit, settle on the ground in 5 s, limbs and guns stay put', rag.bad.length === 0 && rag.moved > 0.5, JSON.stringify(rag));
   check('ragdolls: under 0.05 ms per body per tick (headless)', rag.msPerBody < 0.05, `${rag.msPerBody} ms`);
 
+  // ---- gore ----
+  const gore = await P.evaluate(async () => {
+    const g = window.__game, b = g.battle, T = g.THREE, G = g.fx.gore;
+    const out = {};
+    const run = (level) => {
+      G.setLevel(level); G.clear(); b.clearUnits(); b.aiFrozen = true; g.player.pos.set(0, 0, -30);
+      const us = [];
+      for (let i = 0; i < 12; i++) { const u = b.spawnUnit(i % 2, 'rifleman', new T.Vector3((i - 6) * 1.5, 0, 0), { yaw: i }); u.ready = 1; u.animate(1 / 60); us.push(u); }
+      us.forEach((u, i) => b.damageUnit(u, 250, g.player, i < 6 ? 'blast' : 'bullet', new T.Vector3(Math.sin(i), 0.2, Math.cos(i))));
+      b.update(1e-4);
+      let ms = 0;
+      for (let k = 0; k < 360; k++) { const t0 = performance.now(); b.update(1 / 60); G.update(1 / 60); ms += performance.now() - t0; }
+      return { us, ms };
+    };
+    // off: nothing at all
+    let r = run(0);
+    out.off = { gibs: G.gibs.length, decals: G.decals.count, lost: r.us.filter((u) => u.lost).length, wound: r.us.filter((u) => u.wound).length };
+    // low: blood but no gibs
+    r = run(1);
+    out.low = { gibs: G.gibs.length, decals: G.decals.count, lost: r.us.filter((u) => u.lost).length };
+    // full: blasts tear parts off
+    r = run(2);
+    const gh = (x, z) => g.height(x, z);
+    const bad = [];
+    let missing = 0;
+    for (const u of r.us) for (let k = 0; k < 4; k++) if (u.lost & (k < 2 ? 1 << k : 4 << (k - 2))) missing++;
+    for (const gb of G.gibs) {
+      if (!gb) continue;
+      if (![gb.p.x, gb.p.y, gb.p.z].every(Number.isFinite)) bad.push('NaN');
+      else if (gb.p.y < gh(gb.p.x, gb.p.z) - 0.1 || gb.p.y > gh(gb.p.x, gb.p.z) + 0.5) bad.push(`gib at ${gb.p.y.toFixed(2)}`);
+      else if (!gb.asleep) bad.push('gib still moving');
+      else if (Math.hypot(gb.p.x, gb.p.z) > 60) bad.push('gib flew off the field');
+    }
+    out.full = { gibs: G.gibs.filter(Boolean).length, decals: G.decals.count, missing, bad: bad.slice(0, 4), ms: +(r.ms / 360).toFixed(3) };
+    // pools: a heavy fight keeps within the caps
+    for (let k = 0; k < 600; k++) { G.addGib(new T.Vector3(0, 1, 0), new T.Vector3(), [0.1, 0.1, 0.1], new T.Color('#600'), 4); G.splat(Math.random() * 20, Math.random() * 20, 0.5); }
+    out.cap = { gibs: G.gibMesh.count, decals: G.decals.count, max: [G.gibMesh.instanceMatrix.count, G.decals.instanceMatrix.count] };
+    // decals shrink away
+    G.clear(); G.splat(2, 2, 1); for (let k = 0; k < 400; k++) G.update(0.25);
+    G.decals.getMatrixAt(0, new T.Matrix4());
+    out.faded = G.dAge[0] > 1e8;
+    out.stored = localStorage.getItem('sm.gore');
+    G.setLevel(2); G.clear(); b.clearUnits();
+    return out;
+  });
+  check('gore: Off draws no blood, decals or gibs', gore.off.gibs === 0 && gore.off.decals === 0 && gore.off.lost === 0 && gore.off.wound === 0, JSON.stringify(gore.off));
+  check('gore: Low shows blood but keeps every limb', gore.low.gibs === 0 && gore.low.decals > 0 && gore.low.lost === 0, JSON.stringify(gore.low));
+  check('gore: Full tears limbs off as gibs that land on the ground, nothing loose or floating', gore.full.missing > 0 && gore.full.gibs >= gore.full.missing && gore.full.bad.length === 0, JSON.stringify(gore.full));
+  check('gore: pools stay inside the caps', gore.cap.gibs <= gore.cap.max[0] && gore.cap.decals <= gore.cap.max[1], JSON.stringify(gore.cap));
+  check('gore: old blood fades away', gore.faded);
+  check('gore: under 0.5 ms per frame at Full (headless, 12 bodies)', gore.full.ms < 0.5, `${gore.full.ms} ms`);
+  check('gore: level is remembered and the setup has a Gore choice', gore.stored === '1' || gore.stored === '2' || gore.stored === '0', `stored=${gore.stored}`);
+  check('gore: setup screen offers Off / Low / Full, default Full', await P.evaluate(() => document.querySelectorAll('#setup [name=gore]').length === 3 && document.querySelector('#setup [name=gore]:checked').value === '2'));
+
   // ---- pause and end
   await P.evaluate(() => window.__game.pause(true));
   check('pause sheet shows and the game stops', await P.evaluate(() => !document.getElementById('pause').hidden && window.__game.state === 'pause'));
