@@ -3,6 +3,7 @@ import { Unit, RADIUS } from './unit.js';
 import { U } from './rig.js';
 import { Brain, Squad, Commander } from './ai.js';
 import { PROPS, propModel, coverSpots } from './props.js';
+import { Nav } from './nav.js';
 import { projectileModel, WEAPONS } from './weapons.js';
 import { hostile, TEAMS } from './factions.js';
 import { HALF, pointMarker } from './world.js';
@@ -119,6 +120,16 @@ export class Battle {
     this.reinforce = true;
     this.stats = { shots: 0, kills: 0 };
     this.decor = []; // scenery the map adds (trees)
+    this.nav = new Nav(HALF);
+    this.edge = EDGE;
+    this.propVer = 0;
+    this.navBudget = 0;
+  }
+
+  // a walking route, or null when there is none (grid rebuilt when props changed)
+  route(ax, az, bx, bz, squeeze = false) {
+    this.nav.build(this.props, this.propVer);
+    return this.nav.path(ax, az, bx, bz, squeeze);
   }
 
   // ---------- setup ----------
@@ -199,6 +210,7 @@ export class Battle {
     g.traverse((o) => { o.userData.prop = p; });
     this.props.push(p);
     this.propGrid.insertBox(p, p.box);
+    this.propVer++;
     this.refreshCover(p);
     return p;
   }
@@ -230,6 +242,7 @@ export class Battle {
   }
 
   rebuildPropGrid() {
+    this.propVer++;
     this.propGrid.clear();
     for (const p of this.props) this.propGrid.insertBox(p, p.box);
   }
@@ -747,6 +760,7 @@ export class Battle {
     // spatial grid for this frame
     this.unitGrid.clear();
     for (const u of this.units) if (u.alive) this.unitGrid.insert(u, u.pos.x, u.pos.z);
+    this.navBudget = 3; // routes worked out per tick, so a crowd re-routing at once doesn't stall a frame
     if (!this.aiFrozen) {
       for (const c of this.commanders) c.update(dt);
       for (const s of this.squads) s.update(dt);

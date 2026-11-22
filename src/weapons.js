@@ -101,7 +101,7 @@ function mg(k) {
   // ammo box hanging on the left, belt into the feed
   k.add(block(0.07, 0.11, 0.12, 0.008, 0.004), MAT.iron, { pos: [-0.06, -0.06, 0.12] });
   k.add(pipe([[-0.03, -0.01, 0.12], [-0.025, 0.02, 0.12], [-0.03, 0.04, 0.12]], 0.012, 8, 6), MAT.brass);
-  k.add(pipe([[0, 0.085, 0.2], [0, 0.14, 0.24], [0, 0.14, 0.33], [0, 0.07, 0.37]], 0.008, 16, 6), MAT.darkSteel); // carry handle
+  k.add(pipe([[0, -0.03, 0.34], [0, -0.075, 0.38], [0, -0.075, 0.5], [0, -0.03, 0.54]], 0.009, 16, 6), MAT.darkSteel); // carry handle, slung low so it never crosses the sights
   for (const s of [-1, 1]) k.add(rod(0.006, 0.37, 0.6, 6), MAT.darkSteel, { pos: [s * 0.022, -0.008, 0] }); // folded bipod
   const y = sights(k, 0.118, 0.02, 0.56, 0.08);
   return { muzzle: [0, 0.035, 0.69], sight: y };

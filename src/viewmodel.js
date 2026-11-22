@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HOLD, makePose } from './rig.js';
+import { HOLD, makePose, armsFor } from './rig.js';
 
 // First-person gun, bodycam style: the gun and hands hang in front of the camera, bob with the
 // stride, lag behind quick turns, kick on each shot, and come up to the centre line when aiming
@@ -8,7 +8,11 @@ const E = new THREE.Euler(0, 0, 0, 'YXZ');
 const Q = new THREE.Quaternion();
 const P = new THREE.Vector3();
 const S1 = new THREE.Vector3(1, 1, 1);
-const HAND_S = new THREE.Matrix4().makeScale(0.75, 0.75, 0.75);
+const S = new THREE.Vector3(1, 1, 1);
+const HAND_S = new THREE.Matrix4().makeScale(0.9, 0.9, 0.9);
+const SL = new THREE.Vector3(), SR = new THREE.Vector3();
+// the gun is drawn a bit smaller up close so it frames the view instead of filling it
+const VM_SCALE = 0.8;
 const L = new THREE.Matrix4();
 const M = new THREE.Matrix4();
 const lerp = THREE.MathUtils.lerp;
@@ -21,6 +25,15 @@ export class ViewModel {
     this.swayV = new THREE.Vector2();
     this.sprintK = 0;
     this.identity = new THREE.Matrix4();
+  }
+
+  // forearms run from below the screen edge up to each hand
+  arms(camera) {
+    SL.set(-0.3, -0.5, 0.15).applyMatrix4(camera.matrixWorld);
+    SR.set(0.3, -0.5, 0.15).applyMatrix4(camera.matrixWorld);
+    // armsFor works in the soldier's frame (faces +z, left is +x), so turn the camera frame about
+    L.copy(camera.matrixWorld).multiply(M.makeRotationY(Math.PI));
+    armsFor(this.pose, SL, SR, L);
   }
 
   // look: this frame's look input (radians), dt: frame time
@@ -62,25 +75,29 @@ export class ViewModel {
       p.hands[0].multiplyMatrices(camera.matrixWorld, L);
       p.showWeapon = !(u.thrown && u.throwT > 0);
       p.muzzle.setFromMatrixPosition(p.hands[1]);
+      this.arms(camera);
       return p;
     }
-    // hip: low and right, angled a touch inward; sights: bore centred just under the crosshair
-    const sightDrop = h.sight;
-    const x = lerp(0.17, 0, a) + bobX + sw - this.sprintK * 0.02;
-    const y = lerp(-0.2, -sightDrop, a) + bobY + breathe + sh - rl * 0.06 - this.sprintK * 0.05 - air * 0.02;
-    const z = lerp(-0.4, -0.17, a) + rec * 0.05;
+    // hip: low and right, angled a touch inward; sights: the bore sits just under the crosshair.
+    // Aiming pushes the gun out to arm's length so the rear sight is a small notch, not a wall,
+    // and the receiver stays below the line of sight.
+    const sightDrop = h.sight * VM_SCALE;
+    const x = lerp(0.19, 0, a) + bobX + sw - this.sprintK * 0.02;
+    const y = lerp(-0.25, -sightDrop, a) + bobY + breathe + sh - rl * 0.06 - this.sprintK * 0.05 - air * 0.02;
+    const z = lerp(-0.42, -0.3, a) + rec * 0.05;
     const yaw = lerp(0.05, 0, a) + this.sprintK * 0.7 + sw * 2;
     // (positive x rotation tips the barrel down)
     const pitch = -rec * 0.1 * (1 - 0.5 * a) + rl * 0.45 + this.sprintK * 0.35 + sh * 2;
     E.set(pitch, Math.PI + yaw, -rl * 0.4 + bobX * 2, 'YXZ');
     Q.setFromEuler(E);
-    L.compose(P.set(x, y, z), Q, S1);
+    L.compose(P.set(x, y, z), Q, S.setScalar(VM_SCALE));
     p.weapon.multiplyMatrices(camera.matrixWorld, L);
     p.hands[1].multiplyMatrices(p.weapon, M.makeTranslation(0, -0.045, -0.01));
     p.hands[0].multiplyMatrices(p.weapon, M.makeTranslation(0, lerp(h.foreY, -0.1, rl), lerp(h.fore, 0.1, rl)));
     p.hands[0].multiply(HAND_S); p.hands[1].multiply(HAND_S);
     p.showWeapon = true;
     p.muzzle.copy(h.muzzle).applyMatrix4(p.weapon);
+    this.arms(camera);
     return p;
   }
 }

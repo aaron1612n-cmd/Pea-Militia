@@ -3,10 +3,11 @@
 // weapons, AI battle, sandbox palette, menus, UI overlap (mouse + touch), console errors,
 // and renders.
 // Usage: npm run build && npm run check            (serves dist/ via vite preview)
-//        BASE_URL=https://pea-militia.avadlabs.workers.dev npm run check   (live build)
+//        BASE_URL=https://steel-meridian.avadlabs.workers.dev npm run check   (live build)
 import { chromium, devices } from 'playwright';
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
+import { idleSim } from './idle-sim.mjs';
 
 const OUT = process.env.OUT_DIR || 'test-output';
 mkdirSync(OUT, { recursive: true });
@@ -216,7 +217,7 @@ try {
   // part geometry, through the instanced crowd
   await P.evaluate(() => {
     const c = window.__game.crowd;
-    window.__parts = { PART_GEO: { body: c.body.geometry, visor: c.visor.geometry, pack: c.pack.geometry, foot: c.foot.geometry, hand: c.hand.geometry } };
+    window.__parts = { PART_GEO: { body: c.body.geometry, visor: c.visor.geometry, pack: c.pack.geometry, foot: c.foot.geometry, hand: c.hand.geometry, arm: c.arm.geometry } };
   });
   await P.waitForTimeout(600);
   await P.screenshot({ path: `${OUT}/menu.png` });
@@ -450,6 +451,13 @@ try {
   check('AI: nobody under the ground or off the map', battle.under === 0 && battle.outside === 0, JSON.stringify(battle));
   check('speed: nobody (AI or player) moves faster than the sprint pace', battle.fastest <= battle.cap * 1.25, `${battle.fastest} m/s (${battle.fastKind}) vs cap ${battle.cap}`);
   check('AI: 80 soldiers simulate in under 8 ms per tick (headless)', battle.ms < 8, `${battle.ms} ms`);
+  // ---- AI doesn't linger: per-soldier idle time over a longer fight (seeded, so runs compare)
+  const idle = await P.evaluate(idleSim);
+  check('AI: nobody idles outside a fight (worst stretch under 8 s)', idle.worstFree <= 8, JSON.stringify(idle));
+  check('AI: nobody stands about in the open for long, even in a fight (under 15 s)', idle.worstFight <= 15, JSON.stringify(idle));
+  check('AI: idle time is a small share of all soldier time (under 6%)', idle.idleShare < 0.06, `idle=${idle.idleShare}`);
+  check('AI: soldiers spread out in a fight (not in a tight clump more than half the time)', idle.clumpShare < 0.5, `clump=${idle.clumpShare}`);
+  check('AI: bounding overwatch in use (a good share of fighters hold while others move)', idle.overwatchShare > 0.15, `overwatch=${idle.overwatchShare}`);
   // battle overview render
   await P.evaluate(() => {
     const g = window.__game, b = g.battle;
@@ -637,6 +645,22 @@ try {
     }, [code]);
     await P.screenshot({ path: `${OUT}/anim-${name}.png` });
   }
+  await P.evaluate(() => { window.__game.freeze(false); window.__game.unfreezeCam(); });
+  // ---- ground: detail shading, grass clutter, draw-call and frame budget
+  await P.evaluate(() => { const g = window.__game; g.freeze(true); const y = g.height(0, 62); g.view([0, y + 1.7, 62], [0, y + 1.2, 40]); g.render(); });
+  await P.waitForTimeout(300);
+  await P.screenshot({ path: `${OUT}/ground-eye.png` });
+  await P.evaluate(() => { const g = window.__game; g.view([40, g.height(40, 40) + 7, 40], [10, g.height(10, 10), 10]); g.render(); });
+  await P.screenshot({ path: `${OUT}/ground-high.png` });
+  const gr = await P.evaluate(() => {
+    const g = window.__game; const y = g.height(0, 62); g.view([0, y + 1.7, 62], [0, y + 1.2, 40]); g.render();
+    const grass = g.scene.getObjectByName('grass');
+    const calls = g.renderer.info.render.calls;
+    const t0 = performance.now(); for (let i = 0; i < 4; i++) g.render(); const ms = (performance.now() - t0) / 4;
+    return { n: grass ? grass.count : -1, max: grass ? grass.instanceMatrix.count : 0, calls, ms: Math.round(ms) };
+  });
+  check('ground: grass tufts instanced near the camera, within the cap', gr.n > 200 && gr.n <= gr.max, JSON.stringify(gr));
+  check('ground: draw calls stay under 100', gr.calls < 100, `${gr.calls}`);
   await P.evaluate(() => { window.__game.freeze(false); window.__game.unfreezeCam(); });
   check('renders saved (menu, views, battle, sandbox, turntable, poses)', true, `${OUT}/`);
   check('desktop: no console errors', d.errors.length === 0, d.errors.slice(0, 3).join(' | '));

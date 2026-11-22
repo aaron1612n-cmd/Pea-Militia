@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import './style.css';
 import { createSky, HALF } from './world.js';
-import { height } from './terrain.js';
+import { height, updateGround } from './terrain.js';
 import { Input } from './input.js';
 import { PlayerCam } from './camera.js';
 import { Unit } from './unit.js';
@@ -560,6 +560,7 @@ function frame(_t, fixedDt) {
   if (state !== 'menu' && player) { hud.update(dt, player, battle, cam); if (cam.mode !== 'over' && cam.mode !== 'free') hud.drawMarks(player, battle, camera); }
   if (skipDraw) return;
   drawUnits();
+  updateGround(camera);
   renderer.render(scene, camera);
 }
 renderer.setAnimationLoop(frame);
@@ -584,7 +585,7 @@ window.__game = { maxSpeed: MAX_SPEED,
   sandbox, start: startBattle, openMenu, pause,
   freeze(on = true) { frozen = on; },
   // render one frame now (for screenshots while frozen)
-  render() { drawUnits(); renderer.render(scene, camera); },
+  render() { drawUnits(); updateGround(camera); renderer.render(scene, camera); },
   view(pos, target) { cam.frozen = true; camera.position.set(...pos); camera.lookAt(...target); sun.position.set(target[0], 0, target[2]).add(SUN); sun.target.position.set(...target); },
   unfreezeCam() { cam.frozen = false; },
   // Deterministic fast-forward for the check suite: run n frames of fixed dt, independent of how
