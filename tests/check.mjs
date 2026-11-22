@@ -44,6 +44,18 @@ async function open(ctxOpts) {
   return { ctx, page, errors };
 }
 
+// Condition-based waits that don't depend on how fast the headless renderer runs: fast-forward the
+// game in fixed steps (window.__game.until) until the condition holds, instead of sleeping.
+const until = (page, fn, arg, max = 900) => page.evaluate(([src, a, m]) => window.__game.until(() => (new Function('a', `return (${src})(a)`))(a), m), [fn.toString(), arg ?? null, max]);
+const settle = (page, frames = 20) => page.evaluate((n) => window.__game.step(n), frames);
+// One automatic retry for a flaky control check; a flake is logged, never hidden.
+async function flaky(name, run) {
+  let r = await run();
+  if (!r.ok) { console.log(`FLAKE  ${name}  (retrying once: ${r.detail || ''})`); r = await run(); if (r.ok) flakes.push(name); }
+  check(name, r.ok, r.detail);
+}
+const flakes = [];
+
 // ---------------- soldier model checks (run in page) ----------------
 const modelChecks = () => {
   const { THREE, U, pose, makePose, HOLD, crowd } = window.__game;
@@ -241,7 +253,7 @@ try {
     g.player.pos.set(0, 0, 60); g.player.vel.set(0, 0, 0); g.cam.yaw = 0; g.cam.pitch = 0;
     window.__frames = 0; const tick = () => { window.__frames++; requestAnimationFrame(tick); }; tick();
   });
-  await P.waitForFunction(() => window.__frames > 8, null, { timeout: 60000 });
+  await settle(P, 12);
   const frame3 = await P.evaluate(() => {
     const { THREE, camera, player } = window.__game;
     const pts = [];
@@ -259,49 +271,47 @@ try {
   const z0 = await P.evaluate(() => window.__game.player.pos.z);
   // headless rendering is slow, so wait on game state rather than wall time
   await P.keyboard.down('KeyW');
-  await P.waitForFunction((z0) => window.__game.player.pos.z < z0 - 1.2, z0, { timeout: 60000 }).catch(() => {});
+  await until(P, (z0) => window.__game.player.pos.z < z0 - 1.2, z0);
   await P.keyboard.up('KeyW');
   const mv = await P.evaluate(() => ({ z: window.__game.player.pos.z, x: window.__game.player.pos.x, facing: window.__game.player.facing }));
   check('W walks away from the camera', mv.z - z0 < -0.8 && Math.abs(mv.x) < 0.15, `dz=${(mv.z - z0).toFixed(2)}`);
-  const j0 = await P.evaluate(() => window.__game.player.jumps);
-  let jumped = false;
-  for (let tries = 0; tries < 3 && !jumped; tries++) {
+  await flaky('Space jumps and lands', async () => {
+    await until(P, () => window.__game.player.grounded, null);
+    const j0 = await P.evaluate(() => window.__game.player.jumps);
     await P.keyboard.press('Space');
-    jumped = await P.waitForFunction((j) => window.__game.player.jumps > j, j0, { timeout: 15000 }).then(() => true, () => false);
-  }
-  const landed = await P.waitForFunction(() => window.__game.player.grounded && window.__game.player.vel.y === 0, null, { timeout: 90000 }).then(() => true, () => false);
-  check('Space jumps and lands', jumped && landed);
+    const jumped = await until(P, (j) => window.__game.player.jumps > j, j0, 60);
+    const landed = await until(P, () => window.__game.player.grounded && window.__game.player.vel.y === 0, null);
+    return { ok: jumped && landed, detail: `jumped=${jumped} landed=${landed}` };
+  });
   // sprint: Shift+W is faster than W and drains stamina
   const sp0 = await P.evaluate(() => ({ z: window.__game.player.pos.z, s: window.__game.player.stamina }));
   await P.keyboard.down('ShiftLeft'); await P.keyboard.down('KeyW');
-  const sprinted = await P.waitForFunction(() => window.__game.player.sprinting && window.__game.player.stamina < 0.97, null, { timeout: 30000 }).then(() => true, () => false);
+  const sprinted = await until(P, () => window.__game.player.sprinting && window.__game.player.stamina < 0.97, null);
   const sv = await P.evaluate(() => Math.hypot(window.__game.player.vel.x, window.__game.player.vel.z));
   await P.keyboard.up('KeyW'); await P.keyboard.up('ShiftLeft');
   check('Shift sprints faster than walking and uses stamina', sprinted && sv > 2.8, `speed ${sv.toFixed(2)}`);
   // prone (Z) and lean (E)
   await P.keyboard.press('KeyZ');
-  const proned = await P.waitForFunction(() => window.__game.player.proneK > 0.9, null, { timeout: 30000 }).then(() => true, () => false);
+  const proned = await until(P, () => window.__game.player.proneK > 0.9, null);
   await P.keyboard.press('KeyZ');
-  await P.waitForFunction(() => window.__game.player.proneK < 0.1, null, { timeout: 30000 }).catch(() => {});
+  await until(P, () => window.__game.player.proneK < 0.1, null);
   await P.keyboard.down('KeyE');
-  const leaned = await P.waitForFunction(() => window.__game.player.leanK > 0.8, null, { timeout: 30000 }).then(() => true, () => false);
+  const leaned = await until(P, () => window.__game.player.leanK > 0.8, null);
   await P.keyboard.up('KeyE');
   check('Z goes prone, E leans, both come back', proned && leaned);
   const compass = await P.evaluate(() => { const r = document.querySelector('.compass').getBoundingClientRect(); return r.width > 50 && r.top >= 0 && document.querySelectorAll('#compass .card').length >= 8; });
   check('compass strip shows', compass);
   const y0 = await P.evaluate(() => window.__game.cam.yaw);
   await P.evaluate(() => { window.__game.input.look.dx += 0.5; });
-  await P.waitForFunction((y0) => Math.abs(window.__game.cam.yaw - y0) > 0.3, y0, { timeout: 30000 }).catch(() => {});
+  await until(P, (y0) => Math.abs(window.__game.cam.yaw - y0) > 0.3, y0);
   const y1 = await P.evaluate(() => window.__game.cam.yaw);
   check('mouse look turns the camera', Math.abs(y1 - y0) > 0.3, `${(y1 - y0).toFixed(2)} rad`);
   await P.keyboard.press('KeyV');
-  await P.waitForFunction(() => window.__game.cam.blend > 0.99, null, { timeout: 20000 }).catch(() => {});
-  await P.waitForTimeout(300);
+  await until(P, () => window.__game.cam.blend > 0.99, null);
   const fp = await P.evaluate(() => ({ mode: window.__game.cam.mode, d: window.__game.camera.position.distanceTo(window.__game.player.eye()) }));
   await P.screenshot({ path: `${OUT}/desktop-1p.png` });
   await P.keyboard.press('KeyV');
-  await P.waitForFunction(() => window.__game.cam.blend < 0.01, null, { timeout: 20000 }).catch(() => {});
-  await P.waitForTimeout(300);
+  await until(P, () => window.__game.cam.blend < 0.01, null);
   const tp = await P.evaluate(() => ({ mode: window.__game.cam.mode, d: window.__game.camera.position.distanceTo(window.__game.player.eye()) }));
   check('V switches first person and back to third person', fp.mode === '1p' && fp.d < 0.3 && tp.mode === '3p' && tp.d > 2.5, JSON.stringify({ fp, tp }));
 
@@ -590,7 +600,7 @@ try {
   await P.click('#resume');
   check('resume returns to play', await P.evaluate(() => window.__game.state === 'play'));
   await P.evaluate(() => { const b = window.__game.battle; b.teams[1].tickets = 0; for (const u of b.units) if (u.team === 1) u.alive = false; });
-  const ended = await P.waitForFunction(() => window.__game.state === 'end' && !document.getElementById('end').hidden, null, { timeout: 60000 }).then(() => true, () => false);
+  const ended = await until(P, () => window.__game.state === 'end' && !document.getElementById('end').hidden, null, 1800);
   check('wiping out the enemy ends the battle with a result screen', ended && /Victory/.test(await P.textContent('#endTitle')));
   await P.click('#endMenu');
   check('Setup returns to the setup screen', await P.evaluate(() => window.__game.state === 'menu'));
@@ -654,32 +664,32 @@ try {
   const W = await M.evaluate(() => innerWidth), H = await M.evaluate(() => innerHeight);
   const pz0 = await M.evaluate(() => window.__game.player.pos.z);
   await touch('touchStart', [{ x: W * 0.2, y: H * 0.7, id: 1 }]);
-  for (let i = 1; i <= 6; i++) { await touch('touchMove', [{ x: W * 0.2, y: H * 0.7 - i * 10, id: 1 }]); await M.waitForTimeout(60); }
-  await M.waitForTimeout(600);
+  for (let i = 1; i <= 6; i++) { await touch('touchMove', [{ x: W * 0.2, y: H * 0.7 - i * 10, id: 1 }]); await settle(M, 2); }
+  await until(M, (z) => window.__game.player.pos.z < z - 0.6, pz0);
   await touch('touchEnd', []);
   const pz1 = await M.evaluate(() => window.__game.player.pos.z);
   check('phone: left-thumb stick walks', pz1 - pz0 < -0.5, `dz=${(pz1 - pz0).toFixed(2)}`);
   const yy0 = await M.evaluate(() => window.__game.cam.yaw);
   await touch('touchStart', [{ x: W * 0.6, y: H * 0.45, id: 2 }]);
-  for (let i = 1; i <= 6; i++) { await touch('touchMove', [{ x: W * 0.6 + i * 15, y: H * 0.45, id: 2 }]); await M.waitForTimeout(30); }
+  for (let i = 1; i <= 6; i++) { await touch('touchMove', [{ x: W * 0.6 + i * 15, y: H * 0.45, id: 2 }]); await settle(M, 2); }
   await touch('touchEnd', []);
-  await M.waitForTimeout(100);
+  await settle(M, 6);
   const yy1 = await M.evaluate(() => window.__game.cam.yaw);
   check('phone: right-thumb drag aims', Math.abs(yy1 - yy0) > 0.2, `${(yy1 - yy0).toFixed(2)} rad`);
   const f0 = await M.evaluate(() => window.__game.player.shots);
   await M.tap('#fire');
-  check('phone: fire button shoots', await M.waitForFunction((f0) => window.__game.player.shots > f0, f0, { timeout: 8000 }).then(() => true, () => false));
+  check('phone: fire button shoots', await until(M, (f0) => window.__game.player.shots > f0, f0, 300));
   await M.tap('#viewBtn');
-  await M.waitForTimeout(300);
+  await until(M, () => window.__game.cam.mode === '1p', null, 120);
   check('phone: view button switches to first person', await M.evaluate(() => window.__game.cam.mode === '1p'));
   await M.tap('#sbxBtn');
-  await M.waitForTimeout(400);
+  await until(M, () => window.__game.sandbox.open, null, 120);
   const pal = await M.evaluate(() => { const r = document.getElementById('palette').getBoundingClientRect(); return { open: window.__game.sandbox.open, fits: r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight }; });
   check('phone: sandbox palette opens and fits the screen', pal.open && pal.fits, JSON.stringify(pal));
   await M.tap('.pal-item[data-id="rifleman"]');
   const n0 = await M.evaluate(() => window.__game.battle.units.length);
   await M.tap('#scene', { position: { x: W * 0.5, y: H * 0.25 } });
-  await M.waitForTimeout(200);
+  await until(M, (n) => window.__game.battle.units.length > n, n0, 60);
   const n1 = await M.evaluate(() => window.__game.battle.units.length);
   check('phone: tap an item then tap the field to place it', n1 === n0 + 1, `${n0} -> ${n1}`);
   await M.screenshot({ path: `${OUT}/phone-sandbox.png` });
@@ -705,5 +715,6 @@ await browser.close();
 if (server) server.kill();
 writeFileSync(`${OUT}/report.json`, JSON.stringify(results, null, 2));
 const failed = results.filter((r) => !r.ok);
+if (flakes.length) console.log(`\nflaked then passed on retry: ${flakes.join('; ')}`);
 console.log(`\n${results.length - failed.length}/${results.length} checks passed`);
 process.exit(failed.length ? 1 : 0);
