@@ -132,9 +132,9 @@ export class Gore {
     let lv = 2;
     try { const v = localStorage.getItem(KEY); if (v !== null && +v >= 0 && +v <= 2) lv = +v; } catch {}
     this.level = lv;
-    this.splats = [0, 1, 2].map(() => new DecalSet(scene, 130, splatTexture('splat'), 0.3));
-    this.streaks = new DecalSet(scene, 70, splatTexture('streak'), 0.3);
-    this.pools = new DecalSet(scene, 90, splatTexture('pool'), 0.12);
+    this.splats = [0, 1, 2].map(() => new DecalSet(scene, 130, splatTexture('splat'), 0.65));
+    this.streaks = new DecalSet(scene, 70, splatTexture('streak'), 0.7);
+    this.pools = new DecalSet(scene, 90, splatTexture('pool'), 0.3);
     this.sets = [...this.splats, this.streaks, this.pools];
     this.si = 0;
     // droplets: thin streaks stretched along their flight
