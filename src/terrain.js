@@ -51,7 +51,7 @@ function macro(x, z) {
   return h;
 }
 // The creek: a meandering bed along the valley floor.
-function creekDist(x, z) {
+export function creekDist(x, z) {
   const s = (x + z) / Math.SQRT2, along = (x - z) / Math.SQRT2;
   return Math.abs(s - Math.sin(along / 13) * 3.2 - Math.sin(along / 5.3) * 0.8);
 }
@@ -304,42 +304,175 @@ function paintField() {
   return c;
 }
 
-// Grainy grey detail tiled at a few metres, multiplied over the colour so close ground has texture.
+// Tileable detail noise, one channel per scale: R grit, G lumps, B broad mottling, A blade streaks.
 function detailTexture() {
   const S = 256;
   const c = document.createElement('canvas');
   c.width = c.height = S;
   const g = c.getContext('2d');
-  g.fillStyle = 'rgb(128,128,128)';
-  g.fillRect(0, 0, S, S);
-  let s = 77;
-  const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
-  for (let i = 0; i < 9000; i++) {
-    const l = Math.round(128 + (rnd() - 0.5) * 70);
-    g.fillStyle = `rgba(${l},${l},${l},0.5)`;
-    // short blades and grit
-    const x = rnd() * S, y = rnd() * S;
-    if (rnd() < 0.6) g.fillRect(x, y, 1, 2 + rnd() * 4); else g.fillRect(x, y, 1.5, 1.5);
+  const img = g.createImageData(S, S);
+  const tile = (x, y, f, seed) => { // value noise that wraps at the texture edge
+    const P = S / f, xi = Math.floor(x / f), yi = Math.floor(y / f);
+    const fx = x / f - xi, fy = y / f - yi, u = fx * fx * (3 - 2 * fx), v = fy * fy * (3 - 2 * fy);
+    const h = (i, j) => hash(((i % P) + P) % P + seed * 131, ((j % P) + P) % P + seed * 71);
+    const a0 = h(xi, yi), b0 = h(xi + 1, yi), c0 = h(xi, yi + 1), d0 = h(xi + 1, yi + 1);
+    return a0 + (b0 - a0) * u + (c0 - a0) * v + (a0 - b0 - c0 + d0) * u * v;
+  };
+  for (let y = 0; y < S; y++) for (let x = 0; x < S; x++) {
+    const k = (y * S + x) * 4;
+    img.data[k] = (tile(x, y, 2, 1) * 0.6 + tile(x, y, 4, 2) * 0.4) * 255;
+    img.data[k + 1] = (tile(x, y, 8, 3) * 0.55 + tile(x, y, 16, 4) * 0.45) * 255;
+    img.data[k + 2] = (tile(x, y, 64, 5) * 0.65 + tile(x, y, 32, 6) * 0.35) * 255;
+    img.data[k + 3] = Math.min(255, tile(x * 0.25, y * 2.5, 1, 7) * 255 * 1.2); // stretched: grain of blades
   }
+  g.putImageData(img, 0, 0);
   const t = new THREE.CanvasTexture(c);
   t.wrapS = t.wrapT = THREE.RepeatWrapping;
-  t.anisotropy = 8;
+  t.generateMipmaps = true;
+  t.anisotropy = 4;
   return t;
 }
 
+// Ground shading: the painted colour map is broken up by detail sampled at three scales (two
+// of them turned against each other so the pattern never visibly repeats), cliff faces turn to
+// banded rock by slope, and lumps become real normal variation that fades out with distance.
+// Decals (blood, scorch) can simply sit above this as meshes with polygonOffset.
 function groundMaterial(opts, detail) {
   const m = new THREE.MeshStandardMaterial({ roughness: 0.97, metalness: 0, ...opts });
   m.onBeforeCompile = (sh) => {
     sh.uniforms.detailMap = { value: detail };
     sh.vertexShader = sh.vertexShader
-      .replace('#include <common>', '#include <common>\nvarying vec2 vWXZ;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWXZ = (modelMatrix * vec4(transformed, 1.0)).xz;');
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWP;\nvarying vec3 vWN;')
+      .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nvWN = objectNormal;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec2 vWXZ;\nuniform sampler2D detailMap;')
-      .replace('#include <map_fragment>', '#include <map_fragment>\n{ float d1 = texture2D(detailMap, vWXZ * 0.31).r; float d2 = texture2D(detailMap, vWXZ * 0.047 + 0.37).r; diffuseColor.rgb *= (0.55 + d1 * 0.9) * (0.8 + d2 * 0.4); }');
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWP;\nvarying vec3 vWN;\nuniform sampler2D detailMap;')
+      .replace('#include <map_fragment>', `#include <map_fragment>
+      float gDist = length(vViewPosition);
+      float gNear = 1.0 - smoothstep(18.0, 70.0, gDist);
+      vec2 gw = vWP.xz;
+      vec4 gA = texture2D(detailMap, gw * 0.21);
+      vec4 gB = texture2D(detailMap, mat2(0.8, 0.6, -0.6, 0.8) * gw * 0.067 + 3.1);
+      vec4 gC = texture2D(detailMap, mat2(0.6, -0.8, 0.8, 0.6) * gw * 1.7 + 7.3);
+      float gMottle = gB.b * 0.6 + gA.b * 0.4;
+      diffuseColor.rgb *= 0.78 + gMottle * 0.5;
+      diffuseColor.rgb *= 1.0 + (gA.g - 0.5) * 0.5 + (gC.r - 0.5) * 0.7 * gNear + (gC.a - 0.5) * 0.35 * gNear;
+      // tint toward warm dry earth in the low-frequency lumps, so grass is never one flat green
+      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(1.12, 1.0, 0.8), smoothstep(0.55, 0.85, gB.g) * 0.6);
+      float gRock = 1.0 - smoothstep(0.7, 0.88, normalize(vWN).y);
+      float gStrata = sin(vWP.y * 7.0 + gB.b * 6.0) * 0.5 + 0.5;
+      vec3 gRockCol = vec3(0.46, 0.44, 0.4) * (0.7 + gA.r * 0.5 + gStrata * 0.18);
+      diffuseColor.rgb = mix(diffuseColor.rgb, gRockCol, gRock * 0.85);`)
+      .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
+      {
+        float gK = (0.55 * gNear + 0.12) * (1.0 + gRock * 1.5);
+        float e = 0.012;
+        vec2 q = mat2(0.6, -0.8, 0.8, 0.6) * gw * 1.7 + 7.3;
+        float gh = gC.g + gA.g * 0.6;
+        float gx = texture2D(detailMap, q + vec2(e, 0.0)).g + texture2D(detailMap, gw * 0.21 + vec2(e * 0.12, 0.0)).g * 0.6 - gh;
+        float gz = texture2D(detailMap, q + vec2(0.0, e)).g + texture2D(detailMap, gw * 0.21 + vec2(0.0, e * 0.12)).g * 0.6 - gh;
+        normal = normalize(normal + mat3(viewMatrix) * vec3(-gx, 0.0, -gz) * (gK / e) * 0.08);
+      }`);
   };
   return m;
 }
+
+// ---- grass and ground clutter: instanced tufts in a ring round the camera ----
+const coarse = typeof matchMedia === 'function' && matchMedia('(pointer: coarse)').matches;
+const GR = { cell: 1.5, radius: coarse ? 20 : 30, max: coarse ? 2200 : 4800 };
+let grass = null;
+let grassCenter = { x: 1e9, z: 1e9 };
+let grassOK = null; // per 1.5 m cell: 0 unknown, 1 grass, 2 no
+const GN = Math.ceil((HALF * 2) / GR.cell);
+
+function tuftGeometry() {
+  const pos = [], col = [];
+  const base = new THREE.Color('#3f4a2c'), tip = new THREE.Color('#9aa464');
+  const blades = 7;
+  for (let i = 0; i < blades; i++) {
+    const a = (i / blades) * Math.PI * 2 + hash(i, 3) * 0.8;
+    const r = 0.05 + hash(i, 9) * 0.1, hh = 0.22 + hash(i, 5) * 0.2, w = 0.028;
+    const lean = 0.07 + hash(i, 7) * 0.14;
+    const cx = Math.cos(a) * r, cz = Math.sin(a) * r, dx = Math.cos(a), dz = Math.sin(a);
+    const px = -dz * w, pz = dx * w;
+    pos.push(cx - px, 0, cz - pz, cx + px, 0, cz + pz, cx + dx * lean, hh, cz + dz * lean);
+    pos.push(cx + px, 0, cz + pz, cx - px, 0, cz - pz, cx + dx * lean, hh, cz + dz * lean); // back face
+    for (let k = 0; k < 2; k++) for (const c of [base, base, tip]) col.push(c.r, c.g, c.b);
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+  g.setAttribute('color', new THREE.Float32BufferAttribute(col, 3));
+  g.computeVertexNormals();
+  g.setAttribute('normal', new THREE.Float32BufferAttribute(new Float32Array(pos.length).map((_, i) => (i % 3 === 1 ? 1 : 0)), 3)); // light like the ground
+  return g;
+}
+
+function makeGrass() {
+  const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 });
+  const cam = { value: new THREE.Vector3(1e9, 0, 1e9) };
+  mat.onBeforeCompile = (sh) => {
+    sh.uniforms.camPos = cam;
+    sh.vertexShader = sh.vertexShader
+      .replace('#include <common>', '#include <common>\nuniform vec3 camPos;')
+      .replace('#include <begin_vertex>', `#include <begin_vertex>
+      vec3 gWorld = (modelMatrix * instanceMatrix * vec4(0.0, 0.0, 0.0, 1.0)).xyz;
+      float gFade = 1.0 - smoothstep(${(GR.radius * 0.6).toFixed(1)}, ${GR.radius.toFixed(1)}, distance(gWorld, camPos));
+      transformed.y *= gFade;
+      transformed.xz *= 0.4 + 0.6 * gFade;`);
+  };
+  const im = new THREE.InstancedMesh(tuftGeometry(), mat, GR.max);
+  im.count = 0;
+  im.frustumCulled = false;
+  im.name = 'grass';
+  im.userData.cam = cam;
+  return im;
+}
+
+function grassCell(i, j) {
+  const k = j * GN + i;
+  if (grassOK[k]) return grassOK[k] === 1;
+  const x = -HALF + (i + 0.5) * GR.cell, z = -HALF + (j + 0.5) * GR.cell;
+  let ok = Math.abs(x) < HALF - 2 && Math.abs(z) < HALF - 2 && slopeAt(x, z) < 0.55 && creekDist(x, z) > 2.4 && nearRoad(x, z) > 0.9;
+  if (ok) for (const c of layout.craters) if (Math.hypot(x - c.x, z - c.z) < c.r * 1.3) { ok = false; break; }
+  grassOK[k] = ok ? 1 : 2;
+  return ok;
+}
+
+// Call every frame with the camera; rebuilds the tuft ring when the camera has moved a few metres.
+export function updateGround(camera) {
+  if (!grass || !grassOK) return;
+  grass.userData.cam.value.copy(camera.position);
+  if (Math.hypot(camera.position.x - grassCenter.x, camera.position.z - grassCenter.z) < 4) return;
+  grassCenter = { x: camera.position.x, z: camera.position.z };
+  const R = GR.radius, c = GR.cell;
+  const i0 = Math.max(0, Math.floor((camera.position.x - R + HALF) / c)), i1 = Math.min(GN - 1, Math.ceil((camera.position.x + R + HALF) / c));
+  const j0 = Math.max(0, Math.floor((camera.position.z - R + HALF) / c)), j1 = Math.min(GN - 1, Math.ceil((camera.position.z + R + HALF) / c));
+  const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), p = new THREE.Vector3(), sc = new THREE.Vector3(), col = new THREE.Color();
+  let n = 0;
+  for (let j = j0; j <= j1 && n < GR.max; j++) for (let i = i0; i <= i1 && n < GR.max; i++) {
+    if (!grassCell(i, j)) continue;
+    const count = 1 + Math.floor(hash(i * 3, j * 5) * 3);
+    for (let t = 0; t < count && n < GR.max; t++) {
+      const x = -HALF + (i + hash(i + t * 17, j)) * c, z = -HALF + (j + hash(i, j + t * 29)) * c;
+      if (Math.hypot(x - camera.position.x, z - camera.position.z) > R) continue;
+      // fewer tufts on the dry, dirty patches
+      if (noise(x / 23, z / 23) > 0.62 && hash(i + t, j) < 0.6) continue;
+      const s = 0.8 + hash(i * 7 + t, j * 11) * 0.9;
+      e.set((hash(i, j + t) - 0.5) * 0.3, hash(i + t, j * 2) * 6.28, 0);
+      q.setFromEuler(e);
+      m.compose(p.set(x, height(x, z) - 0.02, z), q, sc.set(s, s * (0.8 + hash(j, i + t) * 0.6), s));
+      grass.setMatrixAt(n, m);
+      col.setHSL(0.2 + (noise(x / 15, z / 15) - 0.5) * 0.06, 0.28, 0.5 + (hash(i * t, j) - 0.5) * 0.25);
+      grass.setColorAt(n, col);
+      n++;
+    }
+  }
+  grass.count = n;
+  grass.instanceMatrix.needsUpdate = true;
+  if (grass.instanceColor) grass.instanceColor.needsUpdate = true;
+}
+
+export const groundMeshes = () => (group ? group.children.filter((o) => o.name === 'terrain' || o.name === 'hills') : []);
 
 let group = null;
 let fieldTex = null;
@@ -419,14 +552,17 @@ export function mountTerrain(scene) {
   if (group && group.userData.key === layoutKey) { if (!group.parent) scene.add(group); return group; }
   if (group) {
     scene.remove(group);
-    group.traverse((o) => { o.geometry?.dispose(); });
+    group.traverse((o) => { o.geometry?.dispose(); o.material?.dispose?.(); });
     fieldTex?.dispose();
   }
   const detail = detailTexture();
   group = new THREE.Group();
   group.name = 'ground';
   group.userData.key = layoutKey;
-  group.add(fieldMesh(detail), farMesh(detail), fence());
+  grass = makeGrass();
+  grassOK = new Uint8Array(GN * GN);
+  grassCenter = { x: 1e9, z: 1e9 };
+  group.add(fieldMesh(detail), farMesh(detail), fence(), grass);
   scene.add(group);
   minimap = null;
   return group;
