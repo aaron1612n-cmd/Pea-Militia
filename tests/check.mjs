@@ -410,17 +410,15 @@ try {
     const b = g.battle;
     b.god = true;
     let covered = 0, under = 0, outside = 0, ticks = 0, fastest = 0, fastKind = '';
-    const last = new Map();
     const t0 = performance.now();
     for (let i = 0; i < 30 * 100; i++) {
       b.update(1 / 30);
       ticks++;
       // nobody outruns the sprint pace (thrown by a blast doesn't count)
       for (const u of b.units) {
-        if (!u.alive || u.knockT > 0) { last.delete(u); continue; }
-        const p0 = last.get(u);
-        if (p0) { const v = Math.hypot(u.pos.x - p0.x, u.pos.z - p0.z) * 30; if (v > fastest) { fastest = v; fastKind = u.kind; } }
-        last.set(u, { x: u.pos.x, z: u.pos.z });
+        if (!u.alive || u.knockT > 0) continue;
+        const v = Math.hypot(u.vel.x, u.vel.z);
+        if (v > fastest) { fastest = v; fastKind = u.kind; }
       }
       if (i % 30 === 0) for (const u of b.units) {
         if (!u.alive) continue;
