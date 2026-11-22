@@ -18,13 +18,40 @@ export const VEHICLES = {
     hx: 1.3, hz: 2.55, h: 1.75, // hull box half-widths and height
     hp: 560, armor: { bullet: 0.035, blast: 0.5, plasma: 0.6, flame: 0.1 },
     maxSpeed: 7.2, maxRev: 3.2, accel: 3.4, brake: 9, turn: 1.15, maxSlope: 0.62,
-    mass: 30, camDist: 9.5, camHeight: 2.6, steamAt: [0.5, 2.1, -1.9],
+    hint: 'WASD drive · click fires the cannon · right-click MG · X leaves',
+  mass: 30, camDist: 9.5, camHeight: 2.6, steamAt: [0.5, 2.1, -1.9], step: 0.28, crush: true, runover: 400,
     turret: { rate: 1.25, pitchRate: 0.8, pitchMin: -0.14, pitchMax: 0.42, pivot: [0, 1.08, -0.15] },
     weapons: [
-      { id: 'cannon', name: 'Tank gun', kind: 'projectile', proj: 'shell', damage: 230, radius: 3.8, speed: 78, gravity: 3, interval: 2.3, spread: 0.004, sound: 'cannon', mag: 1, reserve: Infinity, range: 220, burst: [1, 1], vehicleGun: true },
-      { id: 'coax', name: 'Coaxial MG', kind: 'hitscan', damage: 17, interval: 0.09, spread: 0.018, sound: 'mg', mag: Infinity, reserve: Infinity, range: 90, tracer: '#ffc070', burst: [6, 12], vehicleGun: true },
+      { id: 'cannon', name: 'Tank gun', ai: 'heavy', kind: 'projectile', proj: 'shell', damage: 230, radius: 3.8, speed: 78, gravity: 3, interval: 2.3, spread: 0.004, sound: 'cannon', mag: 1, reserve: Infinity, range: 220, burst: [1, 1], vehicleGun: true },
+      { id: 'coax', name: 'Coaxial MG', ai: 'light', kind: 'hitscan', damage: 17, interval: 0.09, spread: 0.018, sound: 'mg', mag: Infinity, reserve: Infinity, range: 90, tracer: '#ffc070', burst: [6, 12], vehicleGun: true },
     ],
   },
+};
+
+VEHICLES.jeep = {
+  name: 'Scout Car', drive: 'wheeled', seats: 2,
+  hx: 1.0, hz: 1.95, h: 1.45,
+  hp: 240, armor: { bullet: 0.45, blast: 1.0, plasma: 1.0, flame: 0.3 },
+  maxSpeed: 16, maxRev: 5.5, accel: 7, brake: 12, turn: 1.7, maxSlope: 0.85,
+  mass: 4, camDist: 7.2, camHeight: 2.1, steamAt: [0.55, 1.45, -1.75], step: 0.25, crush: false, runover: 160,
+  hint: 'WASD drive · click fires the MG · X leaves',
+  turret: { rate: 3.4, pitchRate: 2.4, pitchMin: -0.3, pitchMax: 0.6, pivot: [0, 1.25, -0.75] },
+  weapons: [
+    { id: 'pintle', name: 'Pintle MG', ai: 'light', kind: 'hitscan', damage: 15, interval: 0.075, spread: 0.028, sound: 'mg', mag: Infinity, reserve: Infinity, range: 75, tracer: '#ffc070', burst: [6, 12], vehicleGun: true },
+  ],
+};
+
+VEHICLES.hover = {
+  name: 'Steam Skiff', drive: 'hover', seats: 1,
+  hx: 0.95, hz: 1.9, h: 1.15, hoverH: 1.0,
+  hp: 150, armor: { bullet: 0.55, blast: 1.2, plasma: 0.8, flame: 0.4 },
+  maxSpeed: 21, maxRev: 6, accel: 9, brake: 8, turn: 2.1, maxSlope: 1.5,
+  mass: 1, camDist: 7.4, camHeight: 1.9, steamAt: [0, 1.15, -1.55], step: 1.1, crush: false, runover: 0,
+  hint: 'WASD fly low · click fires the coil guns · Space brakes · X leaves',
+  turret: { rate: 3.2, pitchRate: 2.2, pitchMin: -0.3, pitchMax: 0.45, yawLimit: 0.55, pivot: [0, 0.42, 1.2] },
+  weapons: [
+    { id: 'coil', name: 'Coil guns', ai: 'light', kind: 'projectile', proj: 'plasma', alt: true, damage: 26, splash: 10, radius: 1.2, speed: 58, gravity: 0, interval: 0.2, spread: 0.012, sound: 'plasma', mag: Infinity, reserve: Infinity, range: 85, pierce: 0.7, burst: [3, 6], vehicleGun: true },
+  ],
 };
 
 const C = {
@@ -203,7 +230,9 @@ export function buildTankModel(team) {
   wheels.castShadow = cleats.castShadow = true;
   wheels.frustumCulled = cleats.frustumCulled = false;
   root.add(hull, hullGlow, turretPivot, wheels, cleats);
-  return { root, hull, turretPivot, turret, gun, barrel, muzzle, coax, wheels, cleats, meshes: [hull, turret, barrel] };
+  const parts = { root, turretPivot, gun, gunZ: 1.28, recoilK: 0.4, muzzles: [muzzle, coax], meshes: [hull, turret, barrel, wheels, cleats] };
+  parts.animate = (v) => animateTracks({ wheels, cleats }, v.trackL, v.trackR);
+  return parts;
 }
 
 const _up = new THREE.Vector3(0, 1, 0), _q2 = new THREE.Quaternion(), _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _s = new THREE.Vector3(), _p = new THREE.Vector3(), _b = [0, 0, 0];
@@ -228,6 +257,196 @@ function animateTracks(parts, phaseL, phaseR) {
   wheels.instanceMatrix.needsUpdate = true;
   cleats.instanceMatrix.needsUpdate = true;
 }
+
+// ---------------- the scout car ----------------
+const JW = { x: 0.93, z: 1.22, y: 0.46, r: 0.46 };
+let jeepWheelGeo = null;
+function jeepWheel() {
+  if (jeepWheelGeo) return jeepWheelGeo;
+  const w = new CKit();
+  w.add(cyl(1, 0.34, 20), C.rubber, { rot: [0, 0, Math.PI / 2] });
+  for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2; w.add(block(0.4, 0.14, 0.16, 0.02, 0.01), C.rubber, { pos: [0, Math.sin(a) * 1.0, Math.cos(a) * 1.0], rot: [-a + Math.PI / 2, 0, 0] }); }
+  w.add(cyl(0.62, 0.37, 16), C.steel, { rot: [0, 0, Math.PI / 2] });
+  w.add(cyl(0.26, 0.42, 12), C.brass, { rot: [0, 0, Math.PI / 2] });
+  for (let i = 0; i < 6; i++) { const a = (i / 6) * Math.PI * 2; w.add(bolt(0.07), C.dark, { pos: [0.2, Math.sin(a) * 0.45, Math.cos(a) * 0.45], rot: [0, 0, -Math.PI / 2] }); }
+  jeepWheelGeo = w.bake();
+  return jeepWheelGeo;
+}
+
+function jeepParts(team) {
+  const T = TEAMS[team] || TEAMS[0];
+  const paint = T.body, trim = T.trim;
+  const body = new CKit(), mount = new CKit(), gunK = new CKit(), glow = [];
+  // chassis, tub and sloped bonnet
+  body.add(block(1.3, 0.18, 3.9, 0.04, 0.02), C.dark, { pos: [0, 0.42, 0] }); // frame
+  body.add(profile([[0.35, 0.5], [2.0, 0.5], [2.06, 0.74], [1.78, 1.02], [0.35, 1.06]], 1.5, 0.05, 2), paint); // bonnet
+  body.add(block(1.1, 0.06, 0.5, 0.02, 0.01), C.dark, { pos: [0, 1.1, 1.2] }); // bonnet vent plate
+  for (let i = 0; i < 4; i++) body.add(block(0.9, 0.025, 0.05, 0.005, 0.003), C.iron, { pos: [0, 1.14, 1.05 + i * 0.12] });
+  for (const s of [-1, 1]) {
+    body.add(block(0.1, 0.62, 1.95, 0.03, 0.015), paint, { pos: [s * 0.82, 0.8, -0.65] }); // cabin sides
+    body.add(block(0.08, 0.5, 1.7, 0.03, 0.015), trim, { pos: [s * 0.88, 0.8, -0.65] }); // armour skin
+  }
+  body.add(block(1.7, 0.08, 2.0, 0.03, 0.015), C.dark, { pos: [0, 0.52, -0.65] }); // floor
+  body.add(block(1.7, 0.62, 0.1, 0.03, 0.015), paint, { pos: [0, 0.82, -1.72] }); // tail panel
+  body.add(block(1.62, 0.5, 0.12, 0.03, 0.015), paint, { pos: [0, 0.82, 0.34] }); // dash bulkhead
+  body.add(block(1.2, 0.1, 0.34, 0.03, 0.015), C.dark, { pos: [0, 1.1, 0.22], rot: [-0.2, 0, 0] }); // dashboard
+  // seats and the steering wheel
+  for (const x of [-0.4, 0.4]) {
+    body.add(block(0.56, 0.14, 0.56, 0.05, 0.02), C.leather ?? '#3a2c22', { pos: [x, 0.68, -0.3] });
+    body.add(block(0.56, 0.5, 0.1, 0.05, 0.02), '#3a2c22', { pos: [x, 0.96, -0.58], rot: [-0.12, 0, 0] });
+  }
+  body.add(ring(0.17, 0.02, 14), C.dark, { pos: [-0.4, 1.12, 0.05], rot: [1.1, 0, 0] });
+  body.add(cyl(0.015, 0.34, 6), C.dark, { pos: [-0.4, 1.02, 0.14], rot: [1.1, 0, 0] });
+  // windscreen frame and the roll bar behind the seats
+  for (const s of [-1, 1]) body.add(block(0.05, 0.5, 0.05, 0.01, 0.005), C.steel, { pos: [s * 0.8, 1.32, 0.34], rot: [-0.3, 0, 0] });
+  body.add(block(1.65, 0.05, 0.05, 0.01, 0.005), C.steel, { pos: [0, 1.56, 0.22] });
+  body.add(pipe([[-0.8, 1.1, -1.0], [-0.8, 1.7, -1.0], [0.8, 1.7, -1.0], [0.8, 1.1, -1.0]], 0.04, 16, 6), C.steel);
+  // grille, bumper, lamps, winch
+  body.add(block(1.2, 0.5, 0.08, 0.03, 0.015), C.brass, { pos: [0, 0.72, 2.05] });
+  for (let i = -4; i <= 4; i++) body.add(block(0.03, 0.44, 0.04, 0.005, 0.003), C.dark, { pos: [i * 0.13, 0.72, 2.1] });
+  body.add(block(1.9, 0.18, 0.2, 0.05, 0.02), C.steel, { pos: [0, 0.46, 2.08] });
+  body.add(cyl(0.09, 0.8, 10), C.dark, { pos: [0, 0.4, 2.2], rot: [0, 0, Math.PI / 2] });
+  for (const s of [-1, 1]) glow.push([cyl(0.1, 0.1, 10), [s * 0.62, 0.92, 2.05], [Math.PI / 2, 0, 0]]);
+  // fenders over the wheels
+  for (const sx of [-1, 1]) for (const z of [-JW.z, JW.z]) {
+    body.add(block(0.44, 0.07, 1.15, 0.03, 0.015), paint, { pos: [sx * JW.x, 0.98, z] });
+    body.add(block(0.06, 0.2, 1.15, 0.02, 0.01), paint, { pos: [sx * (JW.x + 0.2), 0.88, z] });
+  }
+  // rear: boiler drum, stack, spare wheel, jerrycans
+  body.add(cyl(0.3, 1.15, 16), C.brass, { pos: [0, 1.07, -1.35], rot: [0, 0, Math.PI / 2] });
+  for (const x of [-0.35, 0, 0.35]) body.add(ring(0.31, 0.022, 16), C.copper, { pos: [x, 1.07, -1.35], rot: [0, Math.PI / 2, 0] });
+  body.add(pipe([[0.55, 1.3, -1.45], [0.55, 1.6, -1.55], [0.55, 1.75, -1.55]], 0.06, 8, 8), C.iron);
+  body.add(cyl(0.38, 0.14, 14), C.rubber, { pos: [0, 1.05, -1.95], rot: [Math.PI / 2, 0, 0] });
+  for (const x of [-0.6, 0.6]) body.add(block(0.34, 0.42, 0.18, 0.03, 0.015), C.canvas, { pos: [x, 0.95, -1.88] });
+  // exhaust, aerial, mudflaps
+  body.add(pipe([[-0.9, 0.55, -1.2], [-1.0, 0.5, -0.2], [-1.0, 0.5, 0.5]], 0.045, 10, 6), C.copper);
+  body.add(pipe([[0.85, 1.1, -1.7], [0.85, 2.1, -1.74], [0.8, 2.9, -1.7]], 0.012, 6, 5), C.dark);
+  // pintle ring and mount (rotates with the gun)
+  mount.add(cyl(0.38, 0.1, 18), C.dark, { pos: [0, 0, 0] });
+  mount.add(block(0.5, 0.36, 0.14, 0.03, 0.015), C.steel, { pos: [0, 0.3, 0] });
+  mount.add(cyl(0.05, 0.5, 8), C.dark, { pos: [0, 0.22, 0.0] });
+  mount.add(block(0.8, 0.6, 0.06, 0.03, 0.015), paint, { pos: [0, 0.65, 0.42] }); // gun shield
+  mount.add(block(0.5, 0.1, 0.04, 0.01, 0.006), C.dark, { pos: [0, 0.78, 0.46] });
+  mount.add(block(0.45, 0.04, 0.4, 0.01, 0.006), trim, { pos: [0, 0.97, 0.4] });
+  // the gun itself: pitches at the shield
+  gunK.add(block(0.14, 0.18, 0.5, 0.03, 0.015), C.steel, { pos: [0, 0, -0.1] });
+  gunK.add(rod(0.032, 0.1, 1.25, 10), C.dark);
+  gunK.add(turned([[0.06, 0.2], [0.065, 0.25], [0.065, 0.75], [0.06, 0.8]], 12), C.steel); // cooling jacket
+  gunK.add(turned([[0.0001, 1.18], [0.055, 1.18], [0.055, 1.3], [0.03, 1.3]], 10), C.dark);
+  gunK.add(block(0.2, 0.22, 0.3, 0.03, 0.012), C.iron, { pos: [-0.2, -0.1, -0.1] }); // ammo box
+  gunK.add(block(0.05, 0.05, 0.18, 0.01, 0.005), C.dark, { pos: [0, 0.13, 0.35] });
+  gunK.add(block(0.22, 0.04, 0.04, 0.01, 0.005), C.dark, { pos: [0, -0.02, -0.38] }); // spade grips
+  return { body, mount, gunK, glow };
+}
+
+function buildJeepModel(team) {
+  const key = `jeep${team}`;
+  if (!modelCache.has(key)) {
+    const p = jeepParts(team);
+    const gk = new CKit(); for (const [g, pos, rot] of p.glow) gk.add(g, '#ffe9a8', { pos, rot });
+    modelCache.set(key, { body: p.body.bake(), mount: p.mount.bake(), gun: p.gunK.bake(), glow: gk.bake() });
+  }
+  const m = modelCache.get(key), def = VEHICLES.jeep;
+  const root = new THREE.Group();
+  root.name = 'vehicle-jeep';
+  const mesh = (g, mat = BODY, shadow = true) => { const o = new THREE.Mesh(g, mat); o.castShadow = shadow; o.receiveShadow = true; return o; };
+  const body = mesh(m.body);
+  const lamps = mesh(m.glow, new THREE.MeshStandardMaterial({ color: '#ffe9a8', emissive: '#ffd27a', emissiveIntensity: 1.3, vertexColors: false }), false);
+  const turretPivot = new THREE.Group(); turretPivot.position.set(...def.turret.pivot);
+  const mount = mesh(m.mount);
+  const gun = new THREE.Group(); gun.position.set(0, 0.45, 0.2);
+  const gunMesh = mesh(m.gun);
+  const muzzle = new THREE.Object3D(); muzzle.position.set(0, 0, 1.32);
+  gun.add(gunMesh, muzzle);
+  turretPivot.add(mount, gun);
+  const wheels = new THREE.InstancedMesh(jeepWheel(), BODY, 4);
+  wheels.castShadow = true; wheels.frustumCulled = false;
+  root.add(body, lamps, turretPivot, wheels);
+  const parts = { root, turretPivot, gun, gunZ: 0.2, recoilK: 0.08, muzzles: [muzzle], meshes: [body, mount, gunMesh, wheels], steerA: 0 };
+  parts.animate = (v) => {
+    const target = THREE.MathUtils.clamp(-v.ctrl.steer, -1, 1) * 0.5 * (v.alive ? 1 : 0);
+    parts.steerA += (target - parts.steerA) * 0.2;
+    let i = 0;
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      _q.setFromEuler(_e.set(((sx < 0 ? -1 : 1) * v.wheelPhase) / JW.r, 0, 0));
+      if (sx < 0) _q.premultiply(_q2.setFromAxisAngle(_up, Math.PI));
+      if (sz > 0) _q.premultiply(_q2.setFromAxisAngle(_up, parts.steerA + (sx < 0 ? 0 : 0)));
+      _m.compose(_p.set(sx * JW.x, JW.y, sz * JW.z), _q, _s.set(1, JW.r, JW.r));
+      wheels.setMatrixAt(i++, _m);
+    }
+    wheels.instanceMatrix.needsUpdate = true;
+  };
+  return parts;
+}
+VEHICLES.jeep.build = buildJeepModel;
+
+// ---------------- the steam skiff ----------------
+function skiffParts(team) {
+  const T = TEAMS[team] || TEAMS[0];
+  const paint = T.body, trim = T.trim;
+  const body = new CKit(), pod = new CKit(), glow = [], fan = new CKit();
+  // central hull: a long lens, flat underneath
+  body.add(profile([[-1.85, 0.3], [-1.4, 0.12], [1.3, 0.12], [2.05, 0.32], [1.75, 0.62], [0.4, 0.78], [-1.3, 0.72], [-1.95, 0.56]], 1.0, 0.06, 2), paint);
+  body.add(profile([[-1.7, 0.32], [1.2, 0.3], [1.9, 0.38], [1.6, 0.5], [-1.5, 0.52]], 1.04, 0.03, 2), trim); // belt line
+  // side nacelles with brass coil rings
+  for (const s of [-1, 1]) {
+    body.add(ellipsoid(0.34, 0.3, 1.7, 14, 10), C.steel, { pos: [s * 0.88, 0.4, -0.1] });
+    body.add(block(0.5, 0.06, 1.2, 0.02, 0.01), paint, { pos: [s * 0.62, 0.62, -0.1] }); // strut
+    for (let i = 0; i < 4; i++) body.add(ring(0.33, 0.025, 14), C.brass, { pos: [s * 0.88, 0.4, -0.7 + i * 0.5], rot: [0, Math.PI / 2, 0] });
+    glow.push([ellipsoid(0.12, 0.12, 0.18, 8, 6), [s * 0.88, 0.4, -1.78]]);
+    body.add(block(0.05, 0.62, 0.8, 0.01, 0.006), paint, { pos: [s * 0.95, 0.88, -1.55], rot: [0.0, 0, s * 0.18] }); // tail fins
+  }
+  // canopy: a dark glass bubble and the pilot's seat, with a rim
+  body.add(ellipsoid(0.5, 0.36, 0.85, 14, 10, (v) => { if (v.y < 0) v.y *= 0.1; }), '#2c4947', { pos: [0, 0.72, 0.2] });
+  body.add(profile([[-0.7, 0], [0.7, 0], [0.5, 0.08], [-0.5, 0.08]], 0.96, 0.02), C.dark, { pos: [0, 0.7, 0.2] });
+  body.add(block(0.4, 0.4, 0.14, 0.04, 0.02), C.leather ?? '#3a2c22', { pos: [0, 0.95, -0.2] });
+  // rear boiler and stack
+  body.add(cyl(0.26, 0.9, 16), C.brass, { pos: [0, 0.92, -1.35], rot: [Math.PI / 2, 0, 0] });
+  for (const z of [-1.0, -1.35, -1.7]) body.add(ring(0.265, 0.02, 14), C.copper, { pos: [0, 0.92, z] });
+  body.add(pipe([[0, 1.1, -1.5], [0, 1.4, -1.55], [0, 1.55, -1.55]], 0.06, 8, 8), C.iron);
+  // prow, bumper and the stripe
+  body.add(block(0.8, 0.1, 0.5, 0.03, 0.015), C.steel, { pos: [0, 0.2, 1.95] });
+  body.add(block(0.2, 0.04, 1.3, 0.01, 0.005), trim, { pos: [0, 0.8, 0.9], rot: [-0.18, 0, 0] });
+  // lift fan housings under the hull (the fans spin as their own meshes)
+  for (const z of [1.0, -1.0]) { body.add(cyl(0.5, 0.1, 18), C.dark, { pos: [0, 0.1, z] }); glow.push([cyl(0.38, 0.02, 14), [0, 0.04, z]]); }
+  for (let b = 0; b < 3; b++) fan.add(block(0.78, 0.015, 0.14, 0.005, 0.003), C.iron, { rot: [0, (b / 3) * Math.PI, 0] });
+  // gun pod: twin barrels with coils, on the gimbal
+  pod.add(block(0.5, 0.26, 0.7, 0.05, 0.02), C.steel, { pos: [0, 0, 0.2] });
+  for (const s of [-1, 1]) {
+    pod.add(rod(0.05, 0.3, 1.7, 10), C.dark, { pos: [s * 0.22, 0, 0] });
+    for (const z of [0.7, 1.0, 1.3]) pod.add(ring(0.075, 0.014, 12), C.brass, { pos: [s * 0.22, 0, z], rot: [0, 0, 0] });
+    pod.add(turned([[0.0001, 1.6], [0.075, 1.6], [0.075, 1.78], [0.04, 1.78]], 10), C.steel, { pos: [s * 0.22, 0, 0] });
+  }
+  return { body, pod, glow, fan };
+}
+
+function buildSkiffModel(team) {
+  const key = `hover${team}`;
+  if (!modelCache.has(key)) {
+    const p = skiffParts(team);
+    const gk = new CKit(); for (const [g, pos, rot] of p.glow) gk.add(g, '#6ff2e2', { pos, rot });
+    modelCache.set(key, { body: p.body.bake(), pod: p.pod.bake(), glow: gk.bake(), fan: p.fan.bake() });
+  }
+  const m = modelCache.get(key), def = VEHICLES.hover;
+  const root = new THREE.Group();
+  root.name = 'vehicle-hover';
+  const mesh = (g, mat = BODY, shadow = true) => { const o = new THREE.Mesh(g, mat); o.castShadow = shadow; o.receiveShadow = true; return o; };
+  const body = mesh(m.body), glow = mesh(m.glow, MAT.glow, false);
+  const fans = [1.0, -1.0].map((z) => { const f = mesh(m.fan, BODY, false); f.position.set(0, 0.06, z); return f; });
+  const turretPivot = new THREE.Group(); turretPivot.position.set(...def.turret.pivot);
+  const gun = new THREE.Group();
+  const podMesh = mesh(m.pod);
+  const muzzle = new THREE.Object3D(); muzzle.position.set(0.22, 0, 1.8);
+  gun.add(podMesh, muzzle);
+  turretPivot.add(gun);
+  root.add(body, glow, turretPivot, ...fans);
+  const parts = { root, turretPivot, gun, gunZ: 0, recoilK: 0.0, muzzles: [muzzle], meshes: [body, podMesh, ...fans], noTurretYawRoot: true };
+  parts.animate = (v) => {
+    for (const f of fans) f.rotation.y += 0.5 + Math.abs(v.speed) * 0.05;
+  };
+  return parts;
+}
+VEHICLES.hover.build = buildSkiffModel;
 
 let vehicleId = 1;
 const wrapA = (a) => Math.atan2(Math.sin(a), Math.cos(a));
@@ -263,7 +482,7 @@ export class Vehicle {
     this.recoil = 0;
     this.trackL = 0; this.trackR = 0;
     this.box = { x, z, yaw, hx: def.hx, hz: def.hz, h: def.h, y0: pos0(this.pos) };
-    this.parts = buildTankModel(team);
+    this.parts = def.build(team);
     this.group = this.parts.root;
     this.brain = null;
     this.stuck = 0;
@@ -279,6 +498,7 @@ export class Vehicle {
   get occupied() { return this.seats.some(Boolean) || this.crew.length > 0; }
   get hp01() { return this.hp / this.maxHp; }
   get isPlayerDriven() { return !!this.seats[0]?.isPlayer; }
+  get hasPlayer() { return this.seats.some((u) => u?.isPlayer); }
   get speedKmh() { return Math.abs(this.speed) * 3.6; }
   center(out = new THREE.Vector3()) { return out.set(this.pos.x, this.pos.y + this.def.h * 0.5, this.pos.z); }
   eye(out = new THREE.Vector3()) { return out.set(this.pos.x, this.pos.y + 1.8, this.pos.z); }
@@ -288,16 +508,17 @@ export class Vehicle {
     return b;
   }
   // gun muzzle and aim for the player's HUD
-  muzzlePos(w = 0, out = new THREE.Vector3()) { this.group.updateMatrixWorld(true); return (w === 0 ? this.parts.muzzle : this.parts.coax).getWorldPosition(out); }
+  muzzlePos(w = 0, out = new THREE.Vector3()) { this.group.updateMatrixWorld(true); return this.parts.muzzles[w].getWorldPosition(out); }
   muzzleDir(w = 0, out = new THREE.Vector3()) {
     this.group.updateMatrixWorld(true);
-    const o = w === 0 ? this.parts.muzzle : this.parts.coax;
+    const o = this.parts.muzzles[w];
     return out.set(0, 0, 1).transformDirection(o.matrixWorld);
   }
   weapon(i) { return this.def.weapons[i]; }
   hudWeapon() {
     const d = this.def.weapons[0], c = this.cool[0];
-    return { id: 'cannon', def: { name: c > 0 ? 'Reloading' : d.name }, mag: c > 0 ? 0 : 1, reserve: Infinity, heat: 0 };
+    const slow = d.interval > 1;
+    return { id: d.id, def: { name: slow && c > 0 ? 'Reloading' : d.name }, mag: slow ? (c > 0 ? 0 : 1) : '', reserve: Infinity, heat: 0 };
   }
 
   // ---------- crew ----------
@@ -364,7 +585,6 @@ export class Vehicle {
     battle.onVehicleDestroyed?.(this, from);
     this.engine?.stop(); this.engine = null;
     for (const m of this.parts.meshes) m.material = WRECK;
-    this.parts.cleats.material = WRECK; this.parts.wheels.material = WRECK;
     // the turret is blown askew
     this.wreckTurret = { yaw: (Math.random() - 0.5) * 0.9, lift: 0.25 };
     this.cool = [0, 0];
@@ -398,11 +618,19 @@ export class Vehicle {
     this.speed -= grade * 9.8 * dt * 0.25 * (Math.abs(this.speed) > 0.05 || c.brake ? 1 : 0.4); // roll with the hill
     if (c.brake && Math.abs(this.speed) < 0.1) this.speed = 0;
     // steering: tracks pivot on the spot, slower when hurtling
-    const yawGoal = -str * d.turn * (1 - Math.min(0.55, Math.abs(this.speed) / d.maxSpeed * 0.5)) * (this.speed < -0.3 ? -1 : 1);
+    let yawGoal;
+    if (d.drive === 'tracked') yawGoal = -str * d.turn * (1 - Math.min(0.55, Math.abs(this.speed) / d.maxSpeed * 0.5)) * (this.speed < -0.3 ? -1 : 1);
+    else yawGoal = -str * d.turn * Math.min(1, Math.abs(this.speed) / 3) * (1 - 0.45 * Math.abs(this.speed) / d.maxSpeed) * (this.speed < -0.3 ? -1 : 1);
     this.yawRate += (yawGoal - this.yawRate) * (1 - Math.exp(-6 * dt));
     this.yaw += this.yawRate * dt;
     this.pos.x += Math.sin(this.yaw) * this.speed * dt;
     this.pos.z += Math.cos(this.yaw) * this.speed * dt;
+    if (d.drive === 'hover') {
+      // no grip: momentum slides sideways through a turn
+      this.slip = (this.slip || 0) + (this.yawRate * this.speed * 0.55 - (this.slip || 0) * 1.5) * dt;
+      this.pos.x += Math.cos(this.yaw) * this.slip * dt;
+      this.pos.z -= Math.sin(this.yaw) * this.slip * dt;
+    }
     // ---- collisions
     const hitSpeed = this.collide(dt, battle);
     void hitSpeed;
@@ -411,9 +639,10 @@ export class Vehicle {
     // ---- turret and guns
     this.aimTurret(dt, battle);
     this.fireControl(dt, battle);
-    // ---- tracks, sound, smoke
+    // ---- tracks and wheels, sound, smoke
     const spin = this.speed - this.yawRate * d.hx * 0.9, spinR = this.speed + this.yawRate * d.hx * 0.9;
     this.trackL = (this.trackL + spin * dt) % LOOP.len; this.trackR = (this.trackR + spinR * dt) % LOOP.len;
+    this.wheelPhase = (this.wheelPhase || 0) + this.speed * dt;
     this.effects(dt, battle);
     this.syncModel(dt);
     this.updateEngine(battle);
@@ -430,9 +659,9 @@ export class Vehicle {
       for (const p of battle.propGrid.near(circle.x, circle.z, r + 3, battle.tmpB)) {
         if (!p.alive) continue;
         const top = p.box.y0 + p.box.h;
-        if (top < this.pos.y + 0.28) continue; // a kerb: roll over it
+        if (top < this.pos.y - (d.hoverH || 0) + d.step) continue; // a kerb: roll over it
         // low, breakable cover is crushed under the tracks
-        if (p.hp !== Infinity && p.box.h < 1.25 && Math.abs(this.speed) > 1.2) {
+        if (d.crush && p.hp !== Infinity && p.box.h < 1.25 && Math.abs(this.speed) > 1.2) {
           const probe = { x: circle.x, z: circle.z };
           if (pushCircle(probe, r * 0.8, p.box)) { battle.damageProp(p, 5000, this.driver || this.crew[0] || null); this.speed *= 0.9; }
           continue;
@@ -472,8 +701,8 @@ export class Vehicle {
         const lx = dx * Math.cos(this.yaw) - dz * Math.sin(this.yaw), lz = dx * Math.sin(this.yaw) + dz * Math.cos(this.yaw);
         if (Math.abs(lx) > d.hx + 0.25 || Math.abs(lz) > d.hz + 0.25) continue;
         if (u.pos.y > this.pos.y + 1.0) continue;
-        if (u.team !== this.team && Math.abs(this.speed) > 1.4) {
-          battle.damageUnit(u, 400, this.driver || this.crew[0], 'blast', _s.set(Math.sin(this.yaw), 0.3, Math.cos(this.yaw)));
+        if (u.team !== this.team && d.runover && Math.abs(this.speed) > 1.4) {
+          battle.damageUnit(u, d.runover, this.driver || this.crew[0], 'blast', _s.set(Math.sin(this.yaw), 0.3, Math.cos(this.yaw)));
         } else {
           // out sideways
           const side = Math.sign(lx) || 1;
@@ -493,6 +722,15 @@ export class Vehicle {
     const tp = Math.atan2((fl + fr) / 2 - (bl + br) / 2, hz * 2); // nose up when positive
     const tr = Math.atan2((fl + bl) / 2 - (fr + br) / 2, hx * 2);
     const k = 1 - Math.exp(-9 * dt);
+    if (d.drive === 'hover') {
+      // ride a metre up, bobbing, nose dipping with speed and leaning into turns
+      const goalY = Math.max(fl, fr, bl, br) + d.hoverH + Math.sin(this.t * 2.2) * 0.07;
+      this.pos.y += (goalY - this.pos.y) * (1 - Math.exp(-6 * dt));
+      const lean = -THREE.MathUtils.clamp(this.yawRate * this.speed * 0.012, -0.35, 0.35);
+      this.pitch += (tp * 0.5 - THREE.MathUtils.clamp((this.ctrl.throttle || 0) * 0.08, -0.1, 0.1) - this.pitch) * k;
+      this.roll += (tr * 0.5 + lean - this.roll) * k;
+      return;
+    }
     this.pos.y += (gy - this.pos.y) * Math.min(1, k * 1.4);
     this.pitch += (tp - this.pitch) * k;
     this.roll += (tr - this.roll) * k;
@@ -503,7 +741,7 @@ export class Vehicle {
   // turn the turret and gun toward ctrl.aimAt (a world point)
   aimTurret(dt, battle) {
     const t = this.def.turret, c = this.ctrl;
-    if (!c.aimAt) return;
+    if (!t || !c.aimAt) return;
     this.group.updateMatrixWorld(true);
     // direction from the turret pivot in hull space
     const pivot = _p.set(...t.pivot).applyMatrix4(this.group.matrixWorld);
@@ -512,47 +750,41 @@ export class Vehicle {
     dir.applyQuaternion(inv).normalize();
     const wantYaw = Math.atan2(dir.x, dir.z);
     const wantPitch = clamp(Math.asin(clamp(dir.y, -1, 1)), t.pitchMin, t.pitchMax);
-    this.tYaw = wrapA(this.tYaw + clamp(wrapA(wantYaw - this.tYaw), -t.rate * dt, t.rate * dt));
+    const wy = t.yawLimit ? clamp(wantYaw, -t.yawLimit, t.yawLimit) : wantYaw;
+    this.tYaw = wrapA(this.tYaw + clamp(wrapA(wy - this.tYaw), -t.rate * dt, t.rate * dt));
     this.tPitch += clamp(wantPitch - this.tPitch, -t.pitchRate * dt, t.pitchRate * dt);
     this.aimErr = Math.abs(wrapA(wantYaw - this.tYaw)) + Math.abs(wantPitch - this.tPitch);
+    if (this.def.turret.yawLimit && Math.abs(wantYaw) > this.def.turret.yawLimit + 0.1) this.aimErr = 1; // cannot bear
   }
 
-  shooter() { return this.driver || this.crew[0] || this; }
+  shooter() { return this.seats[1] || this.seats[0] || this.crew[0] || this; }
 
   fireControl(dt, battle) {
-    const c = this.ctrl;
-    const who = this.shooter();
-    if (c.fire && this.cool[0] <= 0) this.fireCannon(battle, who);
-    if (c.fire2 && this.cool[1] <= 0) this.fireCoax(battle, who);
+    const c = this.ctrl, who = this.shooter();
+    if (c.fire && this.cool[0] <= 0) this.fireWeapon(0, battle, who);
+    if (c.fire2 && this.def.weapons[1] && this.cool[1] <= 0) this.fireWeapon(1, battle, who);
   }
 
-  fireCannon(battle, who) {
-    const w = this.def.weapons[0];
-    this.cool[0] = w.interval;
-    const m = this.muzzlePos(0), dir = this.muzzleDir(0);
-    const sp = battle.spread(dir, w.spread);
+  fireWeapon(i, battle, who) {
+    const w = this.def.weapons[i];
+    this.cool[i] = w.interval;
+    if (w.alt) { this.alt = -(this.alt || 1); this.parts.muzzles[i].position.x = 0.22 * this.alt; }
+    const m = this.muzzlePos(i), dir = this.muzzleDir(i);
+    const sp = battle.spread(dir, w.spread + (w.kind === 'hitscan' ? Math.min(0.03, Math.abs(this.speed) * 0.002) : 0));
     battle.stats.shots++;
-    const proj = battle.launch('shell', m, sp.multiplyScalar(w.speed), who, w);
-    proj.model.scale.setScalar(1.8);
-    battle.fx.muzzle(m, dir, 2.6);
-    battle.fx.steam(m, dir.clone().multiplyScalar(3), 5, 0.9);
-    battle.fx.smoke(m, dir.clone().multiplyScalar(4), 1.1, 0.4);
-    battle.fx.dust(this.pos.clone().setY(this.pos.y + 0.2), 3, 0.6);
-    battle.audio.play('cannon', m, who?.isPlayer ? 0.9 : 1);
-    battle.heard(who, m);
-    this.recoil = 1;
-    this.rock = 1;
-    this.lastShot = this.t;
-    if (who?.isPlayer) battle.onPlayerShot?.(this);
-  }
-  fireCoax(battle, who) {
-    const w = this.def.weapons[1];
-    this.cool[1] = w.interval;
-    const m = this.muzzlePos(1), dir = battle.spread(this.muzzleDir(1), w.spread);
-    battle.stats.shots++;
-    battle.hitscan(who, m, dir, w);
-    battle.fx.muzzle(m, dir, 1);
-    battle.audio.play('mg', m, 0.7);
+    if (w.kind === 'projectile') {
+      const proj = battle.launch(w.proj, m, sp.multiplyScalar(w.speed), who, w);
+      if (w.proj === 'shell') proj.model.scale.setScalar(1.8);
+    } else battle.hitscan(who, m, sp, w);
+    const big = w.vehicleGun && w.proj === 'shell';
+    battle.fx.muzzle(m, dir, big ? 2.6 : 1);
+    if (big) {
+      battle.fx.steam(m, dir.clone().multiplyScalar(3), 5, 0.9);
+      battle.fx.smoke(m, dir.clone().multiplyScalar(4), 1.1, 0.4);
+      battle.fx.dust(this.pos.clone().setY(this.pos.y + 0.2), 3, 0.6);
+      this.recoil = 1; this.rock = 1;
+    } else this.recoil = Math.min(1, this.recoil + 0.25);
+    battle.audio.play(w.sound, m, who?.isPlayer ? 0.8 : 1);
     battle.heard(who, m);
     this.lastShot = this.t;
   }
@@ -596,18 +828,21 @@ export class Vehicle {
     g.rotation.y = this.yaw;
     g.rotation.x = -this.pitch + (this.rock || 0) * 0.015 * Math.sin(this.t * 18);
     g.rotation.z = this.roll;
-    if (this.alive) {
-      P.turretPivot.rotation.y = this.tYaw;
-      P.gun.rotation.x = -this.tPitch;
-      P.gun.position.z = 1.28 - this.recoil * 0.4;
-      P.turretPivot.position.y = this.def.turret.pivot[1];
-    } else if (this.wreckTurret) {
-      P.turretPivot.rotation.y = this.tYaw + this.wreckTurret.yaw;
-      P.turretPivot.rotation.z = 0.25;
-      P.gun.rotation.x = 0.3;
-      P.turretPivot.position.y = this.def.turret.pivot[1] + this.wreckTurret.lift * Math.min(1, this.deadT * 2);
+    if (P.turretPivot) {
+      const piv = this.def.turret.pivot;
+      if (this.alive) {
+        P.turretPivot.rotation.y = this.tYaw;
+        P.gun.rotation.x = -this.tPitch;
+        P.gun.position.z = P.gunZ - this.recoil * P.recoilK;
+        P.turretPivot.position.y = piv[1];
+      } else if (this.wreckTurret) {
+        P.turretPivot.rotation.y = this.tYaw + this.wreckTurret.yaw;
+        P.turretPivot.rotation.z = 0.25;
+        P.gun.rotation.x = 0.3;
+        P.turretPivot.position.y = piv[1] + this.wreckTurret.lift * Math.min(1, this.deadT * 2);
+      }
     }
-    animateTracks(P, this.trackL, this.trackR);
+    P.animate?.(this);
   }
 
   dispose(scene) {
@@ -618,3 +853,5 @@ export class Vehicle {
 }
 
 function pos0(p) { return p.y; }
+
+VEHICLES.tank.build = buildTankModel;

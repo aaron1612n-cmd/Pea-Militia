@@ -708,25 +708,27 @@ export class Battle {
       for (const u of v.seats) if (u) { u.pos.copy(v.pos); u.vel.set(0, 0, 0); }
     }
     for (const t of this.teams) {
-      if (t.vehicleT > 0) {
-        t.vehicleT -= dt;
-        if (t.vehicleT <= 0 && this.settings.mode === 'battle' && this.reinforce) this.spawnTeamVehicle(t);
-      }
+      if (!t.vehicleQ?.length) continue;
+      for (const q of t.vehicleQ) q.t -= dt;
+      const due = t.vehicleQ.find((q) => q.t <= 0);
+      if (due && this.settings.mode === 'battle' && this.reinforce) { t.vehicleQ = t.vehicleQ.filter((q) => q !== due); this.spawnTeamVehicle(t, true, due.slot, due.kind); }
     }
   }
-  spawnTeamVehicle(t, crew = true, slot = 0) {
+  spawnTeamVehicle(t, crew = true, slot = 0, kind = 'tank') {
     const f = Math.atan2(-t.base.x, -t.base.z);
+    // pads in a row either side of the base: tanks nearest, cars further out
+    const k = { tank: 12, jeep: 20, hover: 27, walker: 34 }[kind] ?? 12;
     const side = Math.cos(f) * (slot ? -1 : 1), sz = -Math.sin(f) * (slot ? -1 : 1);
-    const at = { x: t.base.x + side * 12 + Math.sin(f) * 6, z: t.base.z + sz * 12 + Math.cos(f) * 6 };
-    const v = this.addVehicle('tank', t.id, at.x, at.z, f, { crew });
-    v.fromBase = true;
+    const at = { x: t.base.x + side * k + Math.sin(f) * 6, z: t.base.z + sz * k + Math.cos(f) * 6 };
+    const v = this.addVehicle(kind, t.id, at.x, at.z, f, { crew });
+    v.fromBase = true; v.slot = slot;
     return v;
   }
   onVehicleDestroyed(v) {
     const t = this.teams[v.team];
     if (!t) return;
     if (this.settings.mode === 'battle') t.tickets = Math.max(0, t.tickets - 4);
-    if (v.fromBase) t.vehicleT = 50;
+    if (v.fromBase) (t.vehicleQ ||= []).push({ kind: v.kind, slot: v.slot, t: 50 });
     this.events.push({ type: 'vehicle', vehicle: v });
   }
 

@@ -20,13 +20,19 @@ const ICON = {
   move: '<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>',
   delete: '<path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/>',
   tank: '<path d="M3 16h18l-1.5 3h-15zM6 16v-3h9l2 3M9 13v-3h4M13 11h7"/>',
+  jeep: '<path d="M3 16h18v-3l-3-3h-5l-2 3H3zM7 18.5a1.8 1.8 0 100 .1M17 18.5a1.8 1.8 0 100 .1"/>',
+  hover: '<path d="M3 14h18l-2 3H5zM6 14l3-5h6l3 5M4 20h16"/>',
   command: '<path d="M6 21V4M6 4h11l-3 4 3 4H6"/>',
 };
 const UNIT_ITEMS = [...Object.entries(KINDS).map(([k, v]) => ({ id: k, name: v.name, icon: 'unit', kind: 'unit' })),
   { id: 'squad', name: 'Squad ×6', icon: 'squad', kind: 'group', n: 6 }, { id: 'platoon', name: 'Platoon ×24', icon: 'platoon', kind: 'group', n: 24 }];
 const VEHICLE_ITEMS = [
-  { id: 'tank', name: 'Iron Wagon', icon: 'tank', kind: 'vehicle', crew: true },
-  { id: 'tankEmpty', name: 'Tank (empty)', icon: 'tank', kind: 'vehicle', crew: false },
+  { id: 'tank', name: 'Iron Wagon', icon: 'tank', kind: 'vehicle', vkind: 'tank', crew: true },
+  { id: 'jeep', name: 'Scout Car', icon: 'jeep', kind: 'vehicle', vkind: 'jeep', crew: true },
+  { id: 'hover', name: 'Steam Skiff', icon: 'hover', kind: 'vehicle', vkind: 'hover', crew: true },
+  { id: 'tankEmpty', name: 'Tank (empty)', icon: 'tank', kind: 'vehicle', vkind: 'tank', crew: false },
+  { id: 'jeepEmpty', name: 'Car (empty)', icon: 'jeep', kind: 'vehicle', vkind: 'jeep', crew: false },
+  { id: 'hoverEmpty', name: 'Skiff (empty)', icon: 'hover', kind: 'vehicle', vkind: 'hover', crew: false },
 ];
 const COVER_ITEMS = Object.entries(PROPS).map(([k, v]) => ({ id: k, name: v.name, icon: k, kind: 'prop' }));
 const TOOL_ITEMS = [
@@ -204,7 +210,7 @@ export class Sandbox {
         b.spawnSquad(this.team, at, Array.from({ length: Math.min(6, it.n - r * 6) }, (_, i) => mix[(i + r) % mix.length]), face);
       }
     } else if (it.kind === 'vehicle') {
-      b.addVehicle('tank', this.team, p.x, p.z, face, { crew: it.crew });
+      b.addVehicle(it.vkind, this.team, p.x, p.z, face, { crew: it.crew });
     } else if (it.kind === 'prop') {
       b.spawnProp(it.id, p.x, p.z, this.yaw);
     } else if (it.id === 'delete') {
