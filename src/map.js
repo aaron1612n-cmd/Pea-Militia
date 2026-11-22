@@ -42,8 +42,8 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
   P('crate', C.x + 1.6, C.z + 1.1, 0.3); P('crate', C.x - 1.9, C.z - 0.9, 1.1); P('drum', C.x + 2.2, C.z - 2.1);
   P('ruinLow', C.x - 3.3, C.z + 3.6, 0.6);
   let houses = 0;
-  for (let k = 0; k < 24 && houses < 6; k++) {
-    const a = fixed() * Math.PI * 2, r = 13 + fixed() * 9;
+  for (let k = 0; k < 50 && houses < 9; k++) {
+    const a = fixed() * Math.PI * 2, r = 13 + fixed() * 16;
     const x = C.x + Math.cos(a) * r, z = C.z + Math.sin(a) * r;
     if (nearRoad(x, z) < 4.5 || !clear(x, z, 4.5) || !level(x, z, 3.5, 0.9)) continue;
     house(x, z, Math.round((a + Math.PI / 2) / (Math.PI / 2)) * (Math.PI / 2) + (fixed() - 0.5) * 0.2);
@@ -51,7 +51,15 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
   }
 
   for (const p of POINTS.slice(1)) {
-    if (p.theme === 'hill') {
+    if (p.theme === 'depot') {
+      // supply depot: concrete walls, barrier lines, stacked crates and fuel drums, open ground for vehicles
+      const a = Math.atan2(-p.z, -p.x);
+      for (const k of [-1, 1]) P('slab', p.x + Math.sin(a) * k * 7, p.z - Math.cos(a) * k * 7, a);
+      for (let i = 0; i < 4; i++) P('barrier', p.x + Math.cos(a + 2.2 + i * 0.4) * 11, p.z + Math.sin(a + 2.2 + i * 0.4) * 11, -(a + 2.2 + i * 0.4) + Math.PI / 2);
+      for (let i = 0; i < 5; i++) P('crate', p.x + 2.5 + (i % 3) * 0.9, p.z + 1.5 + Math.floor(i / 3) * 0.7, i * 0.4);
+      for (let i = 0; i < 4; i++) P('drum', p.x - 3 + i * 0.7, p.z - 2.4 + (i % 2) * 0.6);
+      P('bunker', p.x - Math.cos(a) * 6, p.z - Math.sin(a) * 6, a);
+    } else if (p.theme === 'hill') {
       // hilltop: a bunker, sandbag arcs looking down both slopes, boulders round the crown
       const off = Math.atan2(p.z, p.x);
       P('bunker', p.x + Math.cos(off) * 2.5, p.z + Math.sin(off) * 2.5, off);
@@ -60,7 +68,7 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
         P('sandbags', p.x + Math.cos(a) * 6.3, p.z + Math.sin(a) * 6.3, -a + Math.PI / 2);
       }
       P('crate', p.x - 1.5, p.z + 1.2, 0.4); P('drum', p.x - 2.4, p.z - 0.4);
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 8; i++) {
         const a = fixed() * Math.PI * 2, r = POINT_R + 3 + fixed() * 6;
         const x = p.x + Math.cos(a) * r, z = p.z + Math.sin(a) * r;
         if (nearRoad(x, z) > 2 && clear(x, z, 1.5)) { P('rock', x, z, fixed() * Math.PI); keep.push([x, z, 1.5]); }
@@ -83,7 +91,7 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
 
   // ---- home bases: a line of barriers facing the field, crates either side
   for (const b of bases) {
-    keep.push([b.x, b.z, 11]);
+    keep.push([b.x, b.z, 16]);
     const f = Math.atan2(-b.x, -b.z);
     const fx = Math.sin(f), fz = Math.cos(f);
     const rx = Math.cos(f), rz = -Math.sin(f);
@@ -98,7 +106,7 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
     && POINTS.every((p) => Math.hypot(x - p.x, z - p.z) > POINT_R + 3) && layout.bases.every((b) => Math.hypot(x - b.x, z - b.z) > 16);
   const tree = (x, z, kind, s) => { trees.push({ x, z, kind, s, yaw: fixed() * Math.PI * 2 }); };
   let woods = 0;
-  for (let k = 0; k < 80 && woods < 8; k++) {
+  for (let k = 0; k < 240 && woods < 18; k++) {
     const x = (fixed() * 2 - 1) * (EDGE - 6), z = (fixed() * 2 - 1) * (EDGE - 6);
     if (nearRoad(x, z) < 7 || POINTS.some((p) => Math.hypot(x - p.x, z - p.z) < 20) || layout.bases.some((b) => Math.hypot(x - b.x, z - b.z) < 26)) continue;
     if (trees.some((t) => Math.hypot(t.x - x, t.z - z) < 18)) continue;
@@ -131,13 +139,13 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
       if (treeOK(x, z, 2.5)) tree(x + (fixed() - 0.5) * 0.4, z + (fixed() - 0.5) * 0.4, 'leaf', 0.55 + fixed() * 0.15);
     }
   }
-  for (let i = 0, tries = 0; i < 30 && tries < 300; tries++) {
+  for (let i = 0, tries = 0; i < 60 && tries < 600; tries++) {
     const x = (fixed() * 2 - 1) * EDGE, z = (fixed() * 2 - 1) * EDGE;
     if (treeOK(x, z, 6)) { tree(x, z, fixed() < 0.5 ? 'fir' : 'leaf', 0.7 + fixed() * 0.4); i++; }
   }
   // hills beyond the fence get trees too (no colliders)
   const far = [];
-  for (let i = 0; i < 160; i++) {
+  for (let i = 0; i < 220; i++) {
     const a = fixed() * Math.PI * 2, r = HALF + 6 + fixed() * 90;
     const x = Math.cos(a) * r * 1.1, z = Math.sin(a) * r * 1.1;
     if (Math.max(Math.abs(x), Math.abs(z)) < HALF + 4) continue;
@@ -149,7 +157,7 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
   for (const t of trees) { P('tree', t.x, t.z, t.yaw); keep.push([t.x, t.z, 1]); }
 
   // ---- field walls: short dry-stone runs with gaps, along level ground
-  for (let k = 0, runs = 0; k < 120 && runs < 16; k++) {
+  for (let k = 0, runs = 0; k < 240 && runs < 28; k++) {
     const x0 = (fixed() * 2 - 1) * (EDGE - 8), z0 = (fixed() * 2 - 1) * (EDGE - 8);
     if (nearRoad(x0, z0) < 3 || !clear(x0, z0, 3) || POINTS.some((p) => Math.hypot(x0 - p.x, z0 - p.z) < POINT_R + 2)) continue;
     runs++;
@@ -165,7 +173,7 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
   }
 
   // ---- boulders where the ground breaks
-  for (let i = 0, tries = 0; i < 26 && tries < 500; tries++) {
+  for (let i = 0, tries = 0; i < 46 && tries < 900; tries++) {
     const x = (fixed() * 2 - 1) * EDGE, z = (fixed() * 2 - 1) * EDGE;
     if (slopeAt(x, z) < 0.18 && fixed() < 0.85) continue;
     if (nearRoad(x, z) < 1.5 || !clear(x, z, 1.6)) continue;
@@ -174,7 +182,7 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
 
   // ---- loose cover, shuffled each battle
   let placed = 0, tries = 0;
-  while (placed < 46 && tries++ < 900) {
+  while (placed < 80 && tries++ < 1600) {
     const x = (loose() * 2 - 1) * (EDGE - 4), z = (loose() * 2 - 1) * (EDGE - 4);
     if (!clear(x, z, 4) || !level(x, z, 2, 0.4) || nearRoad(x, z) < 0.5) continue;
     keep.push([x, z, 4]);

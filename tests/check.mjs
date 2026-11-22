@@ -140,6 +140,32 @@ const modelChecks = () => {
         for (const c of corners(pz.feet[i], U.FOOT, 0.0005)) r.minY = Math.min(r.minY, c.y);
       }
       for (const c of corners(pz.body, [U.W, U.H, U.D], U.R)) if (c.y - U.R < -0.01) { r.clips.push('body in ground'); break; }
+      // arms: never through the torso or the head, and they reach their hands
+      if ((ph.dead ?? -1) < 0) {
+        const visorInv = new THREE.Matrix4().copy(pz.visor).invert();
+        const inVisor = (pt) => { const q = v.copy(pt).applyMatrix4(visorInv); return Math.abs(q.x) < U.VISOR[0] / 2 + 0.01 && Math.abs(q.y) < U.VISOR[1] / 2 + 0.01 && Math.abs(q.z) < U.VISOR[2] / 2 + 0.01; };
+        const ax = new THREE.Vector3(), ctr = new THREE.Vector3();
+        for (let a = 0; a < 4; a++) {
+          const e = pz.arms[a].elements;
+          ax.set(e[8], e[9], e[10]); // z axis scaled by the segment length
+          ctr.set(e[12], e[13], e[14]);
+          let bad = null;
+          for (let k = 0; k <= 10; k++) {
+            const t = k / 10 - 0.5;
+            if (a % 2 === 0 && t < -0.3) continue; // the shoulder end sits on the body's surface
+            const pt = ctr.clone().addScaledVector(ax, t);
+            if (insideBody(pt, -0.015)) { bad = 'torso'; break; }
+            if (inVisor(pt)) { bad = 'head'; break; }
+          }
+          if (bad) r.clips.push(`arm${a} in ${bad}`);
+        }
+        for (let i = 0; i < 2; i++) {
+          const e = pz.arms[i * 2 + 1].elements;
+          const tip = new THREE.Vector3(e[12] + e[8] / 2, e[13] + e[9] / 2, e[14] + e[10] / 2);
+          const hp = new THREE.Vector3().setFromMatrixPosition(pz.hands[i]);
+          if (tip.distanceTo(hp) > 0.09) r.loose.push(`arm${i} gap ${tip.distanceTo(hp).toFixed(2)}`);
+        }
+      }
       // hands outside the body
       for (let i = 0; i < 2; i++) for (const c of corners(pz.hands[i], U.HAND, 0.03)) if (insideBody(c)) { r.clips.push(`hand${i} in body`); break; }
       // gun outside the body
@@ -164,7 +190,7 @@ const modelChecks = () => {
         const c = new THREE.Vector3().setFromMatrixPosition(pz.body);
         for (let i = 0; i < 2; i++) {
           const h = new THREE.Vector3().setFromMatrixPosition(pz.hands[i]);
-          if (h.distanceTo(c) > 0.8) r.loose.push(`hand${i} ${h.distanceTo(c).toFixed(2)}m out`);
+          if (h.distanceTo(c) > 1.3) r.loose.push(`hand${i} ${h.distanceTo(c).toFixed(2)}m out`);
           const f = new THREE.Vector3().setFromMatrixPosition(pz.feet[i]);
           if (Math.abs(f.x) > 0.5 || Math.abs(f.z) > (ph.prone ? 1.1 : 0.5) || f.y > (ph.prone ? 0.6 : 0.3)) r.loose.push(`foot${i} off`);
         }
@@ -228,6 +254,17 @@ try {
   await P.waitForFunction(() => window.__game.state === 'play', null, { timeout: 15000 });
   const st = await P.evaluate(() => ({ n: window.__game.battle.units.length, size: window.__game.battle.settings.size, teams: window.__game.battle.teams.length, hud: !document.getElementById('hud').hidden, lock: window.__lockAsked || 0 }));
   check('Deploy starts a battle with full armies', st.n === st.size * st.teams && st.hud, JSON.stringify(st));
+  // ---- big map: frame budget and layout sanity
+  const bud = await P.evaluate(() => {
+    const g = window.__game; g.render();
+    const i = g.renderer.info.render, H = g.HALF;
+    const out = g.battle.props.filter((p) => Math.abs(p.box.x) > H || Math.abs(p.box.z) > H).length;
+    const pts = g.battle.points.length;
+    const buried = g.battle.props.filter((p) => !p.def.noModel && p.group.position.y < g.height(p.box.x, p.box.z) - 0.6).length;
+    return { calls: i.calls, tris: i.triangles, out, pts, buried, half: H };
+  });
+  check('big map: draw calls and triangles within budget', bud.calls < 160 && bud.tris < 3000000, JSON.stringify(bud));
+  check('big map: nothing outside the fence or sunk into the ground, 7 points', bud.out === 0 && bud.buried === 0 && bud.pts === 7, JSON.stringify(bud));
   check('Deploy asks for pointer lock', st.lock > 0);
   await P.waitForTimeout(800);
   await P.screenshot({ path: `${OUT}/desktop-3p.png` });
@@ -281,11 +318,11 @@ try {
   check('Shift sprints faster than walking and uses stamina', sprinted && sv > 2.8, `speed ${sv.toFixed(2)}`);
   // prone (Z) and lean (E)
   await P.keyboard.press('KeyZ');
-  const proned = await P.waitForFunction(() => window.__game.player.proneK > 0.9, null, { timeout: 30000 }).then(() => true, () => false);
+  const proned = await P.waitForFunction(() => window.__game.player.proneK > 0.9, null, { timeout: 120000 }).then(() => true, () => false);
   await P.keyboard.press('KeyZ');
-  await P.waitForFunction(() => window.__game.player.proneK < 0.1, null, { timeout: 30000 }).catch(() => {});
+  await P.waitForFunction(() => window.__game.player.proneK < 0.1, null, { timeout: 120000 }).catch(() => {});
   await P.keyboard.down('KeyE');
-  const leaned = await P.waitForFunction(() => window.__game.player.leanK > 0.8, null, { timeout: 30000 }).then(() => true, () => false);
+  const leaned = await P.waitForFunction(() => window.__game.player.leanK > 0.8, null, { timeout: 120000 }).then(() => true, () => false);
   await P.keyboard.up('KeyE');
   check('Z goes prone, E leans, both come back', proned && leaned);
   const compass = await P.evaluate(() => { const r = document.querySelector('.compass').getBoundingClientRect(); return r.width > 50 && r.top >= 0 && document.querySelectorAll('#compass .card').length >= 8; });

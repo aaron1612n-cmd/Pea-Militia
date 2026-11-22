@@ -208,8 +208,8 @@ html[data-input='touch'] .prompt { bottom: auto; top: 30%; }
   html[data-input='touch'] .gun { top: calc(max(12px, env(safe-area-inset-top)) + 98px); }
   .hp { width: 80px; }
   .topbar { gap: 4px; }
-  .pt { width: 24px; height: 24px; font-size: 12px; }
-  .points { gap: 4px; }
+  .pt { width: 21px; height: 24px; font-size: 12px; }
+  .points { gap: 3px; }
   .compass { width: 170px; height: 18px; }
   .tickets { gap: 4px; font-size: 11px; }
   .tk { padding: 2px 5px; gap: 4px; }
@@ -221,6 +221,8 @@ html[data-input='touch'] .prompt { bottom: auto; top: 30%; }
 }
 @media (max-height: 500px) {
   .radar { width: 88px; height: 88px; }
+  .pt { width: 22px; height: 24px; font-size: 12px; }
+  .points { gap: 2px; }
   html[data-input='touch'] .vitals { top: auto; bottom: max(12px, env(safe-area-inset-bottom)); left: 40%; }
   html[data-input='touch'] .gun { top: max(12px, env(safe-area-inset-top)); right: calc(var(--pad) + 104px); }
   html[data-input='touch'] .prompt { top: 22%; }

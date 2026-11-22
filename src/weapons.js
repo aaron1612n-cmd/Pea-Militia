@@ -49,123 +49,195 @@ function sights(k, y, zr, zf, base = 0) {
 }
 function swivel(k, z, y) { k.add(ring(0.011, 0.0025, 10), MAT.darkSteel, { pos: [0, y, z], rot: [0, Math.PI / 2, 0] }); }
 
+// small helpers: a turned collar and a slotted muzzle device
+function collar(k, r, z0, z1, y, mat = MAT.brass, x = 0) {
+  k.add(turned([[r * 0.8, z0], [r, z0 + 0.004], [r, z1 - 0.004], [r * 0.8, z1]], 14), mat, { pos: [x, y, 0] });
+}
+function slotted(k, r, z0, z1, y, mat = MAT.darkSteel) {
+  k.add(turned([[0, z0], [r, z0], [r, z1], [r * 0.7, z1], [0, z1]], 12), mat, { pos: [0, y, 0] });
+  for (let i = 0; i < 3; i++) k.add(profile(roundRect(z0 + 0.012 + i * 0.012, -r * 1.1, z0 + 0.018 + i * 0.012, r * 1.1, 0.001), r * 2.1, 0.0005), MAT.rubber, { pos: [0, y, 0] });
+}
+// a curved box magazine (profile in z,y; thin across x)
+function curvedMag(k, z, y, len, w, curve, mat = MAT.darkSteel) {
+  k.add(profile([[z, y], [z + w, y], [z + w + curve * 0.6, y - len * 0.5], [z + w + curve, y - len], [z + curve, y - len - 0.004], [z + curve * 0.3, y - len * 0.5]], 0.032, 0.004), mat);
+  k.add(profile(roundRect(z + curve - 0.004, y - len - 0.012, z + w + curve + 0.004, y - len + 0.004, 0.003), 0.036, 0.003), MAT.brass); // floor plate
+}
+
 function rifle(k) {
-  // walnut stock with a pistol-grip wrist and a cheek rise
-  k.add(profile([[-0.4, -0.07], [-0.4, 0.04], [-0.37, 0.05], [-0.22, 0.05], [-0.1, 0.036], [-0.035, 0.03], [0.0, 0.012], [0.012, -0.02],
-    [0.0, -0.055], [-0.03, -0.058], [-0.045, -0.02], [-0.12, -0.028], [-0.37, -0.08]], 0.044, 0.009), MAT.wood);
-  k.add(profile([[-0.404, -0.072], [-0.404, 0.042], [-0.393, 0.042], [-0.393, -0.074]], 0.05, 0.004), MAT.rubber); // butt pad
-  k.add(profile(roundRect(-0.03, -0.004, 0.19, 0.058, 0.012), 0.042, 0.006), MAT.steel); // receiver
-  k.add(profile(roundRect(0.0, 0.052, 0.15, 0.062, 0.004), 0.03, 0.003), MAT.darkSteel); // top cover
-  k.add(profile(roundRect(0.06, -0.075, 0.13, -0.004, 0.01), 0.036, 0.005), MAT.darkSteel); // box magazine
-  k.add(profile(roundRect(0.18, -0.008, 0.44, 0.036, 0.014), 0.044, 0.008), MAT.wood); // handguard
-  k.add(rod(0.012, 0.16, 0.6), MAT.darkSteel, { pos: [0, 0.03, 0] });
-  k.add(turned([[0, 0.58], [0.017, 0.58], [0.019, 0.6], [0.019, 0.625], [0.012, 0.63], [0, 0.63]], 12), MAT.darkSteel, { pos: [0, 0.03, 0] }); // muzzle brake
-  for (const z of [0.24, 0.42]) k.add(ring(0.026, 0.0055, 16), MAT.darkSteel, { pos: [0, 0.015, z] });
-  k.add(ellipsoidGeo(0.013, 0.013, 0.013, 8, 6), MAT.steel, { pos: [0.04, 0.045, 0.05] }); // charging handle
-  k.add(rod(0.004, 0, 0.035, 6), MAT.steel, { pos: [0.005, 0.045, 0.05], rot: [0, Math.PI / 2, 0] });
-  k.add(profile([[0.02, -0.004], [0.05, -0.004], [0.04, -0.035], [0.03, -0.04]], 0.006, 0.001), MAT.steel); // trigger
-  k.add(pipe([[0, -0.004, 0.0], [0, -0.045, 0.01], [0, -0.045, 0.05], [0, -0.004, 0.06]], 0.003, 10, 5), MAT.darkSteel); // guard
-  swivel(k, -0.3, -0.075); swivel(k, 0.4, -0.012);
-  const y = sights(k, 0.095, 0.03, 0.56, 0.05);
-  return { muzzle: [0, 0.03, 0.63], sight: y };
+  // walnut stock: long cheek rise, pistol-grip wrist, brass butt plate
+  k.add(profile([[-0.42, -0.075], [-0.42, 0.045], [-0.385, 0.058], [-0.24, 0.056], [-0.12, 0.04], [-0.04, 0.032], [0.0, 0.012], [0.014, -0.022],
+    [0.002, -0.058], [-0.032, -0.062], [-0.048, -0.022], [-0.13, -0.03], [-0.25, -0.036], [-0.38, -0.086]], 0.046, 0.01), MAT.wood);
+  k.add(profile([[-0.426, -0.082], [-0.426, 0.046], [-0.412, 0.05], [-0.412, -0.086]], 0.05, 0.004), MAT.brass);
+  for (const z of [-0.3, -0.2]) k.add(ring(0.004, 0.0015, 6), MAT.darkSteel, { pos: [0.024, 0.02, z] }); // stock screws
+  // receiver: steel with a brass band at the breech and a stepped top cover
+  k.add(profile(roundRect(-0.04, -0.006, 0.2, 0.06, 0.014), 0.044, 0.006), MAT.steel);
+  k.add(profile(roundRect(-0.01, 0.056, 0.16, 0.068, 0.005), 0.032, 0.003), MAT.darkSteel);
+  k.add(turned([[0.026, 0.18], [0.03, 0.185], [0.03, 0.205], [0.026, 0.21]], 12), MAT.brass, { pos: [0, 0.03, 0] });
+  // five-round clip magazine, curved, with a brass floor plate
+  curvedMag(k, 0.05, -0.004, 0.085, 0.06, 0.012);
+  // handguard in two wooden halves with a brass nose cap; gas tube riding on top
+  k.add(profile(roundRect(0.2, -0.014, 0.42, 0.04, 0.016), 0.046, 0.008), MAT.wood);
+  k.add(profile(roundRect(0.2, 0.034, 0.42, 0.05, 0.006), 0.03, 0.003), MAT.darkWood);
+  k.add(turned([[0.019, 0.415], [0.024, 0.42], [0.024, 0.45], [0.012, 0.455]], 12), MAT.brass, { pos: [0, 0.027, 0] }); // nose cap
+  k.add(turned([[0, 0.2], [0.014, 0.2], [0.011, 0.58], [0, 0.58]], 12), MAT.darkSteel, { pos: [0, 0.03, 0] }); // barrel, tapered
+  k.add(rod(0.0095, 0.22, 0.46, 8), MAT.steel, { pos: [0, 0.056, 0] }); // gas cylinder
+  collar(k, 0.014, 0.4, 0.43, 0.056);
+  slotted(k, 0.02, 0.58, 0.64, 0.03); // flash hider
+  k.add(rod(0.004, 0.2, 0.52, 6), MAT.steel, { pos: [0, -0.014, 0] }); // cleaning rod
+  k.add(profile([[0.55, 0.0], [0.575, 0.0], [0.58, -0.02], [0.552, -0.02]], 0.01, 0.002), MAT.darkSteel, { pos: [0, 0.015, 0] }); // bayonet lug
+  // bolt handle (right side) with a brass knob, and a safety lever
+  k.add(rod(0.004, 0.0, 0.05, 6), MAT.steel, { pos: [-0.028, 0.045, 0.07], rot: [0, -Math.PI / 2, 0] });
+  k.add(ellipsoidGeo(0.014, 0.014, 0.014, 8, 6), MAT.brass, { pos: [-0.082, 0.045, 0.07] });
+  k.add(profile([[0.02, -0.004], [0.052, -0.004], [0.042, -0.036], [0.032, -0.04]], 0.006, 0.001), MAT.brass); // trigger
+  k.add(pipe([[0, -0.004, -0.01], [0, -0.048, 0.0], [0, -0.048, 0.055], [0, -0.004, 0.066]], 0.0032, 10, 5), MAT.brass); // guard
+  swivel(k, -0.32, -0.082); swivel(k, 0.42, -0.014);
+  const y = sights(k, 0.098, 0.03, 0.58, 0.056);
+  return { muzzle: [0, 0.03, 0.64], sight: y };
 }
 
 function smg(k) {
-  k.add(profile([[-0.27, -0.06], [-0.27, 0.035], [-0.24, 0.045], [-0.04, 0.038], [0.0, 0.01], [0.01, -0.03], [-0.02, -0.058], [-0.05, -0.02], [-0.24, -0.072]], 0.04, 0.009), MAT.wood);
-  k.add(profile([[-0.274, -0.062], [-0.274, 0.037], [-0.265, 0.037], [-0.265, -0.064]], 0.044, 0.003), MAT.rubber);
-  k.add(profile(roundRect(-0.04, -0.002, 0.21, 0.064, 0.016), 0.046, 0.007), MAT.steel);
-  k.add(rod(0.006, 0.0, 0.03, 6), MAT.steel, { pos: [0.028, 0.04, 0.1], rot: [0, Math.PI / 2, 0] }); // cocking knob
-  // ventilated barrel jacket
-  k.add(turned([[0, 0.19], [0.025, 0.19], [0.025, 0.4], [0.02, 0.41], [0, 0.41]], 14), MAT.darkSteel, { pos: [0, 0.032, 0] });
-  for (let z = 0.22; z < 0.39; z += 0.035) k.add(ring(0.026, 0.004, 14), MAT.steel, { pos: [0, 0.032, z] });
-  k.add(rod(0.01, 0.4, 0.45, 8), MAT.darkSteel, { pos: [0, 0.032, 0] });
-  // stick magazine and a wooden fore grip
-  k.add(profile([[0.08, -0.002], [0.13, -0.002], [0.14, -0.16], [0.095, -0.165]], 0.03, 0.005), MAT.darkSteel);
-  k.add(profile([[0.25, 0.0], [0.28, 0.0], [0.295, -0.075], [0.262, -0.08]], 0.032, 0.007), MAT.wood);
-  k.add(pipe([[0, -0.002, 0.0], [0, -0.04, 0.01], [0, -0.04, 0.05], [0, -0.002, 0.06]], 0.003, 10, 5), MAT.darkSteel);
+  // short wooden stock, tubular receiver with a perforated shroud, brass drum magazine
+  k.add(profile([[-0.27, -0.065], [-0.27, 0.036], [-0.24, 0.048], [-0.04, 0.04], [0.0, 0.012], [0.012, -0.03], [-0.02, -0.058], [-0.05, -0.02], [-0.24, -0.075]], 0.04, 0.009), MAT.wood);
+  k.add(profile([[-0.276, -0.067], [-0.276, 0.038], [-0.264, 0.038], [-0.264, -0.069]], 0.044, 0.003), MAT.brass);
+  k.add(profile(roundRect(-0.04, -0.004, 0.19, 0.066, 0.016), 0.046, 0.007), MAT.steel);
+  k.add(profile(roundRect(0.0, 0.062, 0.17, 0.072, 0.004), 0.034, 0.003), MAT.darkSteel); // dust cover
+  k.add(rod(0.006, 0.0, 0.034, 6), MAT.brass, { pos: [0.03, 0.045, 0.12], rot: [0, Math.PI / 2, 0] }); // cocking knob
+  // perforated barrel shroud: a tube with a row of dark vent slots and brass end rings
+  k.add(turned([[0, 0.19], [0.027, 0.19], [0.027, 0.42], [0.021, 0.43], [0, 0.43]], 14), MAT.steel, { pos: [0, 0.034, 0] });
+  for (let z = 0.21; z < 0.4; z += 0.03) for (const a of [-0.9, -0.3, 0.3, 0.9]) k.add(ellipsoidGeo(0.008, 0.004, 0.006, 6, 4), MAT.rubber, { pos: [Math.sin(a) * 0.027, 0.034 + Math.cos(a) * 0.027, z] });
+  collar(k, 0.03, 0.185, 0.2, 0.034); collar(k, 0.03, 0.41, 0.425, 0.034);
+  slotted(k, 0.014, 0.43, 0.49, 0.034);
+  // 50-round drum under the receiver
+  k.add(turned([[0, -0.03], [0.07, -0.03], [0.075, -0.024], [0.075, 0.024], [0.07, 0.03], [0, 0.03]], 20), MAT.brass, { pos: [0, -0.095, 0.1], rot: [0, 0, Math.PI / 2] });
+  k.add(turned([[0, 0.03], [0.045, 0.03], [0.045, 0.034], [0, 0.034]], 16), MAT.darkSteel, { pos: [0, -0.095, 0.1], rot: [0, 0, Math.PI / 2] });
+  k.add(profile(roundRect(0.075, -0.026, 0.125, -0.004, 0.004), 0.034, 0.003), MAT.darkSteel); // drum neck
+  // wooden fore grip and a trigger
+  k.add(profile([[0.255, 0.0], [0.292, 0.0], [0.306, -0.082], [0.265, -0.088]], 0.034, 0.008), MAT.wood);
+  k.add(profile([[0.02, -0.004], [0.05, -0.004], [0.04, -0.03], [0.03, -0.034]], 0.006, 0.001), MAT.brass);
+  k.add(pipe([[0, -0.004, -0.01], [0, -0.042, 0.0], [0, -0.042, 0.05], [0, -0.004, 0.06]], 0.003, 10, 5), MAT.darkSteel);
   swivel(k, -0.2, -0.07);
-  const y = sights(k, 0.088, 0.0, 0.39, 0.06);
-  return { muzzle: [0, 0.032, 0.45], sight: y };
+  const y = sights(k, 0.094, 0.0, 0.4, 0.07);
+  return { muzzle: [0, 0.034, 0.49], sight: y };
 }
 
 function mg(k) {
-  k.add(profile([[-0.36, -0.06], [-0.36, 0.04], [-0.33, 0.05], [-0.04, 0.045], [0.0, 0.015], [0.012, -0.025], [-0.02, -0.058], [-0.05, -0.02], [-0.32, -0.078]], 0.048, 0.009), MAT.darkWood);
-  k.add(profile([[-0.364, -0.062], [-0.364, 0.042], [-0.354, 0.042], [-0.354, -0.064]], 0.052, 0.003), MAT.rubber);
-  k.add(profile(roundRect(-0.045, -0.014, 0.26, 0.085, 0.016), 0.062, 0.008), MAT.steel);
-  for (let z = -0.02; z < 0.25; z += 0.045) for (const y of [-0.002, 0.072]) k.add(bolt(0.006), MAT.darkSteel, { pos: [0.032, y, z], rot: [0, 0, -Math.PI / 2] });
-  // finned cooling jacket
-  k.add(turned([[0, 0.24], [0.038, 0.24], [0.038, 0.57], [0.03, 0.59], [0, 0.59]], 16), MAT.darkSteel, { pos: [0, 0.035, 0] });
-  for (let z = 0.27; z < 0.56; z += 0.035) k.add(ring(0.04, 0.006, 16), MAT.steel, { pos: [0, 0.035, z] });
-  k.add(rod(0.013, 0.57, 0.66, 8), MAT.darkSteel, { pos: [0, 0.035, 0] });
-  k.add(turned([[0.013, 0.64], [0.024, 0.68], [0.022, 0.69], [0.011, 0.69]], 10), MAT.darkSteel, { pos: [0, 0.035, 0] });
-  // ammo box hanging on the left, belt into the feed
-  k.add(block(0.07, 0.11, 0.12, 0.008, 0.004), MAT.iron, { pos: [-0.06, -0.06, 0.12] });
-  k.add(pipe([[-0.03, -0.01, 0.12], [-0.025, 0.02, 0.12], [-0.03, 0.04, 0.12]], 0.012, 8, 6), MAT.brass);
-  k.add(pipe([[0, -0.03, 0.34], [0, -0.075, 0.38], [0, -0.075, 0.5], [0, -0.03, 0.54]], 0.009, 16, 6), MAT.darkSteel); // carry handle, slung low so it never crosses the sights
-  for (const s of [-1, 1]) k.add(rod(0.006, 0.37, 0.6, 6), MAT.darkSteel, { pos: [s * 0.022, -0.008, 0] }); // folded bipod
-  const y = sights(k, 0.118, 0.02, 0.56, 0.08);
-  return { muzzle: [0, 0.035, 0.69], sight: y };
+  // heavy walnut stock, boxy receiver with a belt feed tray, fat finned jacket, deployed bipod
+  k.add(profile([[-0.38, -0.062], [-0.38, 0.044], [-0.35, 0.054], [-0.04, 0.048], [0.0, 0.015], [0.012, -0.025], [-0.02, -0.058], [-0.05, -0.02], [-0.34, -0.082]], 0.05, 0.01), MAT.darkWood);
+  k.add(profile([[-0.386, -0.064], [-0.386, 0.046], [-0.374, 0.046], [-0.374, -0.066]], 0.054, 0.003), MAT.brass);
+  k.add(profile(roundRect(-0.05, -0.016, 0.27, 0.088, 0.018), 0.064, 0.008), MAT.steel);
+  k.add(profile(roundRect(-0.02, 0.082, 0.22, 0.096, 0.006), 0.05, 0.004), MAT.darkSteel); // hinged feed cover
+  for (const z of [0.0, 0.1, 0.2]) k.add(ring(0.006, 0.0025, 8), MAT.brass, { pos: [0, 0.098, z], rot: [Math.PI / 2, 0, 0] });
+  for (let z = -0.02; z < 0.26; z += 0.045) for (const y of [-0.002, 0.07]) k.add(bolt(0.006), MAT.brass, { pos: [0.033, y, z], rot: [0, 0, -Math.PI / 2] });
+  // feed tray on the left, ammo box and a visible brass belt
+  k.add(profile(roundRect(0.02, 0.05, 0.2, 0.06, 0.004), 0.05, 0.003), MAT.darkSteel, { pos: [0.05, 0, 0] });
+  k.add(block(0.075, 0.12, 0.13, 0.008, 0.004), MAT.iron, { pos: [0.085, -0.07, 0.12] });
+  k.add(pipe([[0.085, -0.01, 0.12], [0.075, 0.03, 0.12], [0.04, 0.058, 0.12]], 0.013, 10, 6), MAT.brass); // ammo belt into the feed tray
+  // finned cooling jacket with steam vents and a brass front collar
+  k.add(turned([[0, 0.25], [0.04, 0.25], [0.04, 0.58], [0.032, 0.6], [0, 0.6]], 18), MAT.darkSteel, { pos: [0, 0.035, 0] });
+  for (let z = 0.28; z < 0.57; z += 0.032) k.add(ring(0.042, 0.006, 18), MAT.steel, { pos: [0, 0.035, z] });
+  for (let i = 0; i < 5; i++) k.add(ellipsoidGeo(0.01, 0.006, 0.014, 6, 4), MAT.rubber, { pos: [0, 0.035 + 0.039, 0.3 + i * 0.055] });
+  collar(k, 0.044, 0.245, 0.27, 0.035);
+  k.add(rod(0.013, 0.58, 0.68, 8), MAT.darkSteel, { pos: [0, 0.035, 0] });
+  slotted(k, 0.026, 0.66, 0.72, 0.035);
+  // low carry handle under the jacket (never crosses the sights) and the bipod
+  k.add(pipe([[0, -0.03, 0.34], [0, -0.075, 0.38], [0, -0.075, 0.5], [0, -0.03, 0.54]], 0.009, 16, 6), MAT.leather);
+  for (const s of [-1, 1]) {
+    k.add(rod(0.006, 0, 0.2, 6), MAT.steel, { pos: [s * 0.03, -0.01, 0.56], rot: [1.1, -s * 0.2, 0] });
+    k.add(ellipsoidGeo(0.014, 0.006, 0.02, 6, 4), MAT.darkSteel, { pos: [s * 0.05, -0.18, 0.64] });
+  }
+  collar(k, 0.045, 0.55, 0.57, 0.035, MAT.brass);
+  k.add(profile([[0.0, -0.004], [0.032, -0.004], [0.022, -0.036], [0.012, -0.04]], 0.006, 0.001), MAT.brass);
+  const y = sights(k, 0.118, 0.02, 0.62, 0.09);
+  return { muzzle: [0, 0.035, 0.72], sight: y };
 }
 
 function plasma(k) {
-  k.add(profile([[-0.3, -0.055], [-0.3, 0.035], [-0.27, 0.045], [-0.18, 0.022], [-0.06, 0.035], [0, 0.012], [0.012, -0.03], [-0.02, -0.058],
-    [-0.05, -0.02], [-0.15, 0.0], [-0.27, -0.065]], 0.04, 0.009), MAT.darkSteel);
-  k.add(profile(roundRect(-0.04, -0.006, 0.21, 0.066, 0.022), 0.054, 0.008), MAT.steel);
-  k.add(turned([[0, 0.12], [0.018, 0.12], [0.018, 0.48], [0, 0.48]], 14), MAT.copper, { pos: [0, 0.03, 0] });
-  for (const z of [0.23, 0.29, 0.35, 0.41]) {
-    k.add(ring(0.035, 0.009, 18), MAT.glow, { pos: [0, 0.03, z] });
-    k.add(ring(0.042, 0.004, 18), MAT.brass, { pos: [0, 0.03, z - 0.02] });
+  // moulded dark stock, steel receiver with glowing capacitor windows, a long copper coil barrel
+  k.add(profile([[-0.32, -0.058], [-0.32, 0.04], [-0.28, 0.054], [-0.18, 0.026], [-0.06, 0.038], [0, 0.012], [0.012, -0.03], [-0.02, -0.058],
+    [-0.05, -0.02], [-0.15, 0.0], [-0.28, -0.07]], 0.044, 0.01), MAT.darkSteel);
+  k.add(profile(roundRect(-0.3, -0.04, -0.24, 0.0, 0.006), 0.048, 0.004), MAT.glow, { pos: [0, 0, 0.0] }); // stock charge indicator
+  k.add(profile(roundRect(-0.045, -0.008, 0.21, 0.07, 0.024), 0.058, 0.009), MAT.steel);
+  for (const s of [-1, 1]) {
+    k.add(profile(roundRect(-0.0, 0.01, 0.12, 0.05, 0.012), 0.004, 0.001), MAT.glow, { pos: [s * 0.031, 0, 0] }); // capacitor windows
+    k.add(turned([[0.012, 0.0], [0.016, 0.004], [0.016, 0.07], [0.012, 0.074]], 10), MAT.brass, { pos: [s * 0.045, 0.062, 0.02] }); // brass capacitors
   }
-  for (const s of [-1, 1]) k.add(profile(roundRect(0.2, 0.0, 0.45, 0.012, 0.004), 0.006, 0.001), MAT.darkSteel, { pos: [s * 0.045, 0.024, 0] }); // coil rails
-  k.add(turned([[0.018, 0.47], [0.032, 0.5], [0.036, 0.53], [0.024, 0.54], [0, 0.54]], 14), MAT.brass, { pos: [0, 0.03, 0] });
-  // power cell slung under the receiver
-  k.add(turned([[0, -0.02], [0.022, -0.02], [0.022, 0.0], [0, 0.0]], 14), MAT.brass, { pos: [0, -0.04, 0.06] });
-  k.add(turned([[0, 0.0], [0.019, 0.0], [0.019, 0.11], [0, 0.11]], 14), MAT.glow, { pos: [0, -0.04, 0.06] });
-  k.add(turned([[0, 0.11], [0.022, 0.11], [0.022, 0.13], [0, 0.13]], 14), MAT.brass, { pos: [0, -0.04, 0.06] });
-  const y = sights(k, 0.09, 0.03, 0.46, 0.06);
-  return { muzzle: [0, 0.03, 0.55], sight: y };
+  k.add(turned([[0, 0.12], [0.02, 0.12], [0.02, 0.5], [0, 0.5]], 14), MAT.copper, { pos: [0, 0.03, 0] });
+  for (let i = 0; i < 5; i++) {
+    const z = 0.22 + i * 0.065, r = 0.036 - i * 0.002;
+    k.add(ring(r, 0.009, 18), MAT.glow, { pos: [0, 0.03, z] });
+    k.add(ring(r + 0.006, 0.004, 18), MAT.brass, { pos: [0, 0.03, z - 0.022] });
+  }
+  for (const s of [-1, 1]) k.add(profile(roundRect(0.2, 0.0, 0.5, 0.014, 0.005), 0.007, 0.001), MAT.darkSteel, { pos: [s * 0.05, 0.026, 0] }); // coil rails
+  k.add(turned([[0.02, 0.49], [0.034, 0.52], [0.044, 0.56], [0.048, 0.585], [0.03, 0.585], [0, 0.585]], 16), MAT.brass, { pos: [0, 0.03, 0] }); // flared emitter
+  k.add(ring(0.032, 0.004, 14), MAT.glow, { pos: [0, 0.03, 0.57] });
+  // power cell slung under the receiver, with a pressure gauge
+  k.add(turned([[0, -0.02], [0.024, -0.02], [0.024, 0.0], [0, 0.0]], 14), MAT.brass, { pos: [0, -0.045, 0.06] });
+  k.add(turned([[0, 0.0], [0.02, 0.0], [0.02, 0.12], [0, 0.12]], 14), MAT.glow, { pos: [0, -0.045, 0.06] });
+  k.add(turned([[0, 0.12], [0.024, 0.12], [0.024, 0.14], [0, 0.14]], 14), MAT.brass, { pos: [0, -0.045, 0.06] });
+  k.add(turned([[0, 0], [0.016, 0], [0.016, 0.004], [0, 0.004]], 14), MAT.gauge, { pos: [-0.03, 0.03, 0.17], rot: [0, -Math.PI / 2, 0] });
+  const y = sights(k, 0.092, 0.03, 0.5, 0.07);
+  return { muzzle: [0, 0.03, 0.585], sight: y };
 }
 
 function flame(k) {
-  k.add(profile([[-0.05, -0.065], [-0.04, 0.02], [0.03, 0.03], [0.04, 0.0], [0.02, -0.07]], 0.038, 0.009), MAT.wood); // grip
-  k.add(turned([[0, -0.1], [0.022, -0.1], [0.022, 0.45], [0, 0.45]], 12), MAT.darkSteel, { pos: [0, 0.035, 0] });
-  k.add(turned([[0.022, 0.44], [0.032, 0.48], [0.036, 0.54], [0.024, 0.545], [0, 0.545]], 14), MAT.steel, { pos: [0, 0.035, 0] });
-  for (const z of [0.1, 0.3]) k.add(ring(0.026, 0.005, 14), MAT.darkSteel, { pos: [0, 0.035, z] });
-  // fuel tank slung under the tube, domed ends and two straps
-  k.add(turned([[0, -0.2], [0.03, -0.195], [0.05, -0.17], [0.056, -0.13], [0.056, 0.12], [0.05, 0.16], [0.03, 0.185], [0, 0.19]], 18), MAT.brass, { pos: [0, -0.08, 0.08] });
-  for (const z of [-0.05, 0.13]) k.add(ring(0.058, 0.006, 18), MAT.darkSteel, { pos: [0, -0.08, z] });
-  k.add(pipe([[0, -0.03, 0.22], [0, 0.0, 0.27], [0, 0.03, 0.3]], 0.01, 10, 6), MAT.darkSteel);
+  // nozzle on a long wand, fuel tank with strap and pressure gauge, hose to the grip, pilot light
+  k.add(profile([[-0.05, -0.068], [-0.04, 0.02], [0.03, 0.03], [0.04, 0.0], [0.02, -0.072]], 0.038, 0.009), MAT.wood); // grip
+  k.add(profile(roundRect(-0.07, 0.02, 0.1, 0.07, 0.012), 0.04, 0.006), MAT.steel); // valve block
+  k.add(turned([[0, -0.1], [0.022, -0.1], [0.022, 0.46], [0, 0.46]], 12), MAT.darkSteel, { pos: [0, 0.04, 0] });
+  k.add(turned([[0.022, 0.45], [0.03, 0.48], [0.044, 0.54], [0.046, 0.57], [0.03, 0.575], [0, 0.575]], 14), MAT.steel, { pos: [0, 0.04, 0] }); // flared nozzle
+  for (const z of [0.1, 0.22, 0.34]) collar(k, 0.027, z, z + 0.015, 0.04, MAT.brass);
+  for (const a of [0, 1, 2, 3, 4, 5]) k.add(rod(0.004, 0.5, 0.57, 5), MAT.darkSteel, { pos: [Math.sin(a) * 0.036, 0.04 + Math.cos(a) * 0.036, 0], rot: [0, 0, 0] }); // nozzle cage
+  // fuel tank slung under the tube
+  k.add(turned([[0, -0.21], [0.03, -0.205], [0.052, -0.18], [0.058, -0.14], [0.058, 0.12], [0.052, 0.16], [0.03, 0.19], [0, 0.195]], 20), MAT.brass, { pos: [0, -0.085, 0.08] });
+  for (const z of [-0.05, 0.14]) { k.add(ring(0.06, 0.007, 20), MAT.darkSteel, { pos: [0, -0.085, z] }); }
+  k.add(pipe([[0, -0.03, 0.22], [0, -0.0, 0.26], [0, 0.03, 0.3]], 0.011, 10, 6), MAT.leather); // feed hose
+  k.add(pipe([[0, -0.03, 0.0], [0, -0.07, -0.02], [0, -0.09, 0.04]], 0.01, 10, 6), MAT.leather); // hose to the grip
+  k.add(turned([[0, 0], [0.024, 0], [0.024, 0.01], [0, 0.01]], 14), MAT.gauge, { pos: [-0.06, -0.085, 0.03], rot: [0, -Math.PI / 2, 0] }); // gauge
+  k.add(ring(0.026, 0.004, 14), MAT.darkSteel, { pos: [-0.06, -0.085, 0.03], rot: [0, Math.PI / 2, 0] });
+  k.add(ring(0.03, 0.005, 14), MAT.iron, { pos: [-0.045, 0.045, 0.15], rot: [0, Math.PI / 2, 0] }); // valve wheel
   k.add(profile([[0.27, 0.01], [0.3, 0.01], [0.31, -0.065], [0.28, -0.07]], 0.032, 0.006), MAT.wood); // fore grip
-  k.add(ring(0.03, 0.005, 14), MAT.iron, { pos: [-0.04, 0.035, 0.15], rot: [0, Math.PI / 2, 0] }); // valve wheel
-  k.add(ellipsoidGeo(0.012, 0.012, 0.016, 8, 6), MAT.ember, { pos: [0, 0.0, 0.52] }); // pilot light
-  const y = sights(k, 0.08, 0.06, 0.42, 0.055);
-  return { muzzle: [0, 0.035, 0.55], sight: y };
+  k.add(ellipsoidGeo(0.012, 0.012, 0.018, 8, 6), MAT.ember, { pos: [0, 0.0, 0.54] }); // pilot light
+  k.add(pipe([[0, 0.0, 0.54], [0, 0.01, 0.47], [0, 0.03, 0.4]], 0.003, 8, 4), MAT.brass);
+  const y = sights(k, 0.085, 0.06, 0.42, 0.06);
+  return { muzzle: [0, 0.04, 0.575], sight: y };
 }
 
 function launcher(k) {
+  // squat bell-mouth mortar tube, big copper boiler with gauge and relief valve, shoulder pad, folded legs
   k.add(profile([[-0.05, -0.068], [-0.045, 0.02], [0.03, 0.03], [0.045, 0.0], [0.02, -0.072]], 0.04, 0.009), MAT.wood); // grip
-  k.add(turned([[0, -0.22], [0.03, -0.22], [0.05, -0.19], [0.05, 0.38], [0.06, 0.42], [0.064, 0.48], [0.052, 0.485], [0.042, 0.45], [0, 0.45]], 20), MAT.steel, { pos: [0, 0.07, 0] });
-  for (const z of [-0.14, 0.05, 0.25]) k.add(ring(0.052, 0.008, 20), MAT.darkSteel, { pos: [0, 0.07, z] });
-  for (let a = 0; a < 6; a++) k.add(bolt(0.006), MAT.brass, { pos: [Math.cos(a) * 0.052, 0.07 + Math.sin(a) * 0.052, 0.36], rot: [0, 0, 0] });
-  k.add(block(0.05, 0.04, 0.16, 0.012, 0.006), MAT.rubber, { pos: [0, 0.05, -0.27] }); // shoulder pad
-  // boiler with a pressure gauge
-  k.add(turned([[0, -0.16], [0.03, -0.155], [0.042, -0.13], [0.042, 0.1], [0.03, 0.125], [0, 0.13]], 16), MAT.copper, { pos: [0, -0.035, 0.0] });
-  k.add(turned([[0, 0], [0.026, 0], [0.026, 0.012], [0, 0.012]], 16), MAT.brass, { pos: [-0.042, -0.035, 0.02], rot: [0, -Math.PI / 2, 0] });
-  k.add(turned([[0, 0], [0.02, 0], [0.02, 0.004], [0, 0.004]], 16), MAT.gauge, { pos: [-0.054, -0.035, 0.02], rot: [0, -Math.PI / 2, 0] });
-  k.add(pipe([[0.02, -0.01, -0.14], [0.03, 0.03, -0.18], [0.02, 0.06, -0.19]], 0.008, 12, 6), MAT.brass);
+  k.add(turned([[0, -0.22], [0.034, -0.22], [0.054, -0.19], [0.054, 0.34], [0.062, 0.4], [0.078, 0.46], [0.082, 0.5], [0.066, 0.505], [0.052, 0.47], [0, 0.45]], 22), MAT.steel, { pos: [0, 0.075, 0] });
+  for (const z of [-0.14, 0.05, 0.22, 0.34]) collar(k, 0.058, z, z + 0.02, 0.075, MAT.darkSteel);
+  collar(k, 0.084, 0.48, 0.5, 0.075, MAT.brass);
+  for (let a = 0; a < 8; a++) k.add(bolt(0.006), MAT.brass, { pos: [Math.cos(a * 0.785) * 0.056, 0.075 + Math.sin(a * 0.785) * 0.056, 0.3], rot: [0, 0, 0] });
+  k.add(block(0.06, 0.05, 0.16, 0.012, 0.006), MAT.rubber, { pos: [0, 0.055, -0.27] }); // shoulder pad
+  // boiler: copper drum, brass bands, gauge, relief valve and steam pipe up to the breech
+  k.add(turned([[0, -0.17], [0.03, -0.165], [0.046, -0.14], [0.046, 0.12], [0.034, 0.145], [0, 0.15]], 18), MAT.copper, { pos: [0, -0.04, 0.0] });
+  for (const z of [-0.1, 0.0, 0.08]) k.add(ring(0.048, 0.005, 18), MAT.brass, { pos: [0, -0.04, z] });
+  k.add(turned([[0, 0], [0.03, 0], [0.03, 0.012], [0, 0.012]], 18), MAT.brass, { pos: [-0.046, -0.04, 0.02], rot: [0, -Math.PI / 2, 0] });
+  k.add(turned([[0, 0], [0.023, 0], [0.023, 0.004], [0, 0.004]], 18), MAT.gauge, { pos: [-0.059, -0.04, 0.02], rot: [0, -Math.PI / 2, 0] });
+  k.add(rod(0.012, 0, 0.05, 8), MAT.brass, { pos: [0.0, 0.006, 0.06], rot: [-Math.PI / 2, 0, 0] }); // relief valve
+  k.add(pipe([[0.02, -0.01, -0.14], [0.03, 0.03, -0.18], [0.02, 0.07, -0.19], [0.0, 0.085, -0.15]], 0.008, 12, 6), MAT.brass);
+  k.add(pipe([[0.03, 0.0, 0.12], [0.056, 0.03, 0.14], [0.056, 0.07, 0.15]], 0.007, 10, 6), MAT.brass);
+  // folded legs along the sides of the tube
+  for (const s of [-1, 1]) k.add(rod(0.006, 0.12, 0.5, 6), MAT.darkSteel, { pos: [s * 0.062, 0.03, 0] });
   // leaf sight for lobbing
-  const y = 0.155;
-  k.add(profile(roundRect(0.0, 0.118, 0.03, y - 0.004, 0.004), 0.03, 0.003), MAT.darkSteel);
+  const y = 0.162;
+  k.add(profile(roundRect(0.0, 0.126, 0.03, y - 0.004, 0.004), 0.03, 0.003), MAT.darkSteel);
   for (const s of [-1, 1]) k.add(profile(roundRect(0.005, y - 0.012, 0.025, y + 0.006, 0.002), 0.008, 0.001), MAT.darkSteel, { pos: [s * 0.01, 0, 0] });
-  k.add(profile(roundRect(0.4, 0.118, 0.415, y + 0.004, 0.002), 0.005, 0.001), MAT.steel);
-  return { muzzle: [0, 0.07, 0.49], sight: y };
+  k.add(profile(roundRect(0.4, 0.126, 0.415, y + 0.004, 0.002), 0.005, 0.001), MAT.steel);
+  return { muzzle: [0, 0.075, 0.5], sight: y };
 }
 
 function grenade(k) {
+  // segmented iron body, brass cap with a spring lever and a pull ring
   k.add(rod(0.011, -0.07, 0.05, 8), MAT.wood);
-  k.add(turned([[0, 0.04], [0.026, 0.045], [0.031, 0.06], [0.031, 0.11], [0.026, 0.125], [0, 0.13]], 14), MAT.darkSteel);
-  k.add(ring(0.032, 0.005, 14), MAT.brass, { pos: [0, 0, 0.085] });
-  return { muzzle: [0, 0, 0.13], sight: 0 };
+  k.add(turned([[0, 0.035], [0.026, 0.04], [0.033, 0.06], [0.033, 0.115], [0.026, 0.13], [0, 0.135]], 14), MAT.darkSteel);
+  for (let i = 0; i < 3; i++) k.add(ring(0.034, 0.003, 14), MAT.iron, { pos: [0, 0, 0.068 + i * 0.022] });
+  k.add(ring(0.034, 0.003, 14), MAT.iron, { pos: [0, 0, 0.072], rot: [0, Math.PI / 2, 0] });
+  k.add(turned([[0.014, 0.13], [0.02, 0.133], [0.02, 0.15], [0, 0.152]], 10), MAT.brass); // fuze cap
+  k.add(profile(roundRect(0.0, 0.026, 0.13, 0.034, 0.003), 0.012, 0.001), MAT.steel, { pos: [0, 0, 0] }); // spoon lever
+  k.add(ring(0.012, 0.0022, 8), MAT.brass, { pos: [0.02, 0.03, 0.14], rot: [0, Math.PI / 2, 0] }); // pull ring
+  return { muzzle: [0, 0, 0.15], sight: 0 };
 }
 
 const BUILD = { rifle, smg, mg, plasma, flame, launcher, grenade };
