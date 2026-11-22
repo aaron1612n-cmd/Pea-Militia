@@ -3,7 +3,7 @@
 // weapons, AI battle, sandbox palette, menus, UI overlap (mouse + touch), console errors,
 // and renders.
 // Usage: npm run build && npm run check            (serves dist/ via vite preview)
-//        BASE_URL=https://pea-militia.avadlabs.workers.dev npm run check   (live build)
+//        BASE_URL=https://steel-meridian.avadlabs.workers.dev npm run check   (live build)
 import { chromium, devices } from 'playwright';
 import { spawn } from 'node:child_process';
 import { mkdirSync, writeFileSync } from 'node:fs';
