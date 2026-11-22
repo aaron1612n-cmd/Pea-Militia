@@ -149,6 +149,21 @@ function showcase() {
   player = null;
 }
 
+// blood on the lens (full and low gore, first person only)
+const bloodEl = $('bloodscreen');
+function bloodScreen(n, size = 1) {
+  if (!fx.gore.level || cam.mode !== '1p') return;
+  n = Math.min(fx.gore.level === 2 ? 5 : 2, n);
+  for (let i = 0; i < n; i++) {
+    const e = document.createElement('i'), s = (60 + Math.random() * 120) * size * (1 + (fx.gore.level === 2 ? 0.3 : 0));
+    e.style.cssText = `left:${Math.random() * 90}%;top:${Math.random() * 80}%;width:${s}px;height:${s * (0.8 + Math.random() * 0.5)}px;transform:rotate(${Math.random() * 360}deg)`;
+    bloodEl.appendChild(e);
+    requestAnimationFrame(() => requestAnimationFrame(() => e.classList.add('go')));
+    setTimeout(() => e.remove(), 5000);
+  }
+  while (bloodEl.children.length > 14) bloodEl.firstChild.remove();
+}
+
 function openMenu() {
   state = 'menu';
   menu.hidden = false;
@@ -201,8 +216,9 @@ function startBattle(s) {
     }
   }
   battle.onHitMarker = (kill) => { hud.hit(kill); if (kill) audio.play('ping', null, 0.4); };
-  battle.onPlayerHurt = (dmg) => { hud.hurt(dmg); cam.shake = Math.min(1, cam.shake + dmg / 60); };
+  battle.onPlayerHurt = (dmg) => { hud.hurt(dmg); bloodScreen(Math.ceil(dmg / 15), 0.5); cam.shake = Math.min(1, cam.shake + dmg / 60); };
   battle.onKill = (u, from) => {
+    if (from === player && u !== player && player.pos.distanceTo(u.pos) < 4) bloodScreen(3, 1.2);
     if (from === player && u !== player) hud.log(`${KINDS[u.kind]?.name || 'Soldier'} · ${TEAMS[u.team].short}`, true);
     if (u === player) hud.log(from?.kind ? `Killed by ${KINDS[from.kind]?.name || 'enemy'}` : 'Killed', true);
   };
@@ -475,7 +491,7 @@ function drawUnits() {
       crowd.add(vm.identity, vm.pose, u.team, { body: false, weapon: u.weapon.id });
       continue;
     }
-    crowd.add(u.world, u.poseOut, u.team, { weapon: u.weapon.id, wound: u.wound, lost: u.lost });
+    crowd.add(u.world, u.poseOut, u.team, { weapon: u.weapon.id, wound: u.wound, lost: u.lost, wounds: u.wounds });
   }
   crowd.end();
 }

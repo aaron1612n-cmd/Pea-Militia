@@ -591,10 +591,10 @@ try {
     };
     // off: nothing at all
     let r = run(0);
-    out.off = { gibs: G.gibs.length, decals: G.decals.count, lost: r.us.filter((u) => u.lost).length, wound: r.us.filter((u) => u.wound).length };
+    out.off = { gibs: G.gibs.length, decals: G.decalCount, lost: r.us.filter((u) => u.lost).length, wound: r.us.filter((u) => u.wound).length };
     // low: blood but no gibs
     r = run(1);
-    out.low = { gibs: G.gibs.length, decals: G.decals.count, lost: r.us.filter((u) => u.lost).length };
+    out.low = { gibs: G.gibs.length, decals: G.decalCount, lost: r.us.filter((u) => u.lost).length };
     // full: blasts tear parts off
     r = run(2);
     const gh = (x, z) => g.height(x, z);
@@ -608,14 +608,13 @@ try {
       else if (!gb.asleep) bad.push('gib still moving');
       else if (Math.hypot(gb.p.x, gb.p.z) > 60) bad.push('gib flew off the field');
     }
-    out.full = { gibs: G.gibs.filter(Boolean).length, decals: G.decals.count, missing, bad: bad.slice(0, 4), ms: +(r.ms / 360).toFixed(3) };
+    out.full = { gibs: G.gibs.filter(Boolean).length, decals: G.decalCount, missing, bad: bad.slice(0, 4), ms: +(r.ms / 360).toFixed(3) };
     // pools: a heavy fight keeps within the caps
     for (let k = 0; k < 600; k++) { G.addGib(new T.Vector3(0, 1, 0), new T.Vector3(), [0.1, 0.1, 0.1], new T.Color('#600'), 4); G.splat(Math.random() * 20, Math.random() * 20, 0.5); }
-    out.cap = { gibs: G.gibMesh.count, decals: G.decals.count, max: [G.gibMesh.instanceMatrix.count, G.decals.instanceMatrix.count] };
+    out.cap = { gibs: G.gibMesh.count, decals: G.decalCount, max: [G.gibMesh.instanceMatrix.count, G.sets.reduce((a, d) => a + d.n, 0)] };
     // decals shrink away
     G.clear(); G.splat(2, 2, 1); for (let k = 0; k < 400; k++) G.update(0.25);
-    G.decals.getMatrixAt(0, new T.Matrix4());
-    out.faded = G.dAge[0] > 1e8;
+    out.faded = G.splats.every((d) => d.age.every((a) => a > 1e8));
     out.stored = localStorage.getItem('sm.gore');
     G.setLevel(2); G.clear(); b.clearUnits();
     return out;
