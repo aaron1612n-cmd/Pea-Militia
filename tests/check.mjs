@@ -586,7 +586,7 @@ try {
   await M.screenshot({ path: `${OUT}/phone.png` });
   const ml = await M.evaluate(uiLayout, HUD_SEL);
   check('phone: HUD and buttons inside the screen, not overlapping', ml.overlaps.length === 0 && ml.offscreen.length === 0, [...ml.overlaps, ...ml.offscreen].join(', '));
-  const sizes = await M.evaluate(() => [...document.querySelectorAll('.tbtn, #corner .icon-btn')].map((b) => Math.round(Math.min(b.getBoundingClientRect().width, b.getBoundingClientRect().height))));
+  const sizes = await M.evaluate(() => [...document.querySelectorAll('.tbtn, #corner .icon-btn')].filter((b) => b.offsetParent !== null).map((b) => Math.round(Math.min(b.getBoundingClientRect().width, b.getBoundingClientRect().height))));
   check('phone: buttons are at least 44px', sizes.every((x) => x >= 44), sizes.join(', '));
   // stick
   await M.evaluate(() => { const g = window.__game; g.battle.aiFrozen = true; g.battle.reinforce = false; g.battle.clearUnits(); g.player.pos.set(0, 0, 60); g.cam.yaw = 0; for (const p of [...g.battle.props]) if (Math.hypot(p.box.x, p.box.z - 60) < 14) g.battle.removeProp(p); });
