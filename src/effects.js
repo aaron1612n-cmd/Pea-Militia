@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { height } from './terrain.js';
+import { height, normalAt } from './terrain.js';
 
 // Particles as soft round sprites: one additive system (fire, sparks, plasma, flashes) and one
 // normal-blended system (smoke, steam, dust, pea juice). Plus pooled tracer streaks.
@@ -396,6 +396,7 @@ export class Effects {
 
   explosion(pos, r = 3) {
     const k = r / 3;
+    const gy = height(pos.x, pos.z);
     this.pulse(pos.clone().setY(pos.y + 0.6), 40 * k, 0.35, 18 * k, '#ff9a48');
     // blinding core, then a rolling fireball
     for (let i = 0; i < 6; i++) this.add.emit({ pos: pos.clone().add(this.dir(0.3 * k)), vel: this.dir(1.5 * k), life: 0.12, size: [1.8 * k, 2.6 * k], color: [PAL.flash, PAL.fire0], alpha: [1, 0], drag: 6, floor: false });
@@ -405,19 +406,19 @@ export class Effects {
     // ground skirt: dust thrown out low and wide
     for (let i = 0; i < 16; i++) {
       const a = (i / 16) * Math.PI * 2 + Math.random() * 0.3;
-      this.norm.emit({ pos: pos.clone().setY(pos.y * 0.3 + 0.1), vel: new THREE.Vector3(Math.cos(a), 0.12, Math.sin(a)).multiplyScalar(7 * k), life: 1.2 + Math.random() * 0.6, size: [0.4 * k, 1.8 * k], color: [PAL.dust, PAL.dust1], alpha: [0.6, 0], drag: 3.2 });
+      this.norm.emit({ pos: pos.clone().setY(gy + (pos.y - gy) * 0.3 + 0.1), vel: new THREE.Vector3(Math.cos(a), 0.12, Math.sin(a)).multiplyScalar(7 * k), life: 1.2 + Math.random() * 0.6, size: [0.4 * k, 1.8 * k], color: [PAL.dust, PAL.dust1], alpha: [0.6, 0], drag: 3.2 });
     }
     for (let i = 0; i < 22; i++) this.add.emit({ pos, vel: this.dir(12 * k).add(new THREE.Vector3(0, 5, 0)), life: 0.8, size: [0.05, 0.02], color: [PAL.spark, PAL.fire1], grav: 12, drag: 0.6 });
     for (let i = 0; i < 14; i++) this.norm.emit({ pos, vel: this.dir(7 * k).add(new THREE.Vector3(0, 4, 0)), life: 1.3, size: [0.07, 0.06], color: [PAL.chip, PAL.chip], alpha: [1, 0.7], grav: 12, drag: 0.4 });
     const ring = this.rings[this.ri++ % this.rings.length];
-    ring.m.position.set(pos.x, Math.max(0, pos.y - 0.4) + 0.05, pos.z);
+    ring.m.position.set(pos.x, Math.max(gy, pos.y - 0.4) + 0.05, pos.z);
     ring.t = 0; ring.r = r; ring.m.visible = true;
-    if (pos.y < 1.2) stamp(this.scorch, new THREE.Vector3(pos.x, Math.max(0, pos.y - 0.4), pos.z), Y, r * (1.1 + Math.random() * 0.3));
+    if (pos.y < gy + 1.2) stamp(this.scorch, new THREE.Vector3(pos.x, Math.max(gy, pos.y - 0.4), pos.z), normalAt(pos.x, pos.z), r * (1.1 + Math.random() * 0.3));
     // a smoke column that keeps rising for a few seconds
     const at = pos.clone();
     this.emitters.push({ t: 0, life: 4 + k * 2, rate: 7, acc: 0, fn: (e, fx) => {
       fx.norm.emit({ pos: at.clone().add(fx.dir(0.5 * k)), vel: new THREE.Vector3(fx.rnd(0.2) + 0.2, 1.1 + Math.random() * 0.6, fx.rnd(0.2)), life: 3 + Math.random() * 1.5, size: [0.5 * k, 2.4 * k], color: [PAL.smoke0, PAL.smoke1], alpha: [0.4 * (1 - e.t / e.life), 0], drag: 0.6, grav: -0.1, floor: false });
-      if (e.t < 1.2 && Math.random() < 0.6) fx.add.emit({ pos: at.clone().add(fx.dir(0.4 * k)).setY(at.y * 0.4 + 0.1), vel: new THREE.Vector3(0, 0.8, 0), life: 0.4, size: [0.4 * k, 0.1], color: [PAL.fire0, PAL.fire1], alpha: [0.8, 0], floor: false });
+      if (e.t < 1.2 && Math.random() < 0.6) fx.add.emit({ pos: at.clone().add(fx.dir(0.4 * k)).setY(gy + (at.y - gy) * 0.4 + 0.1), vel: new THREE.Vector3(0, 0.8, 0), life: 0.4, size: [0.4 * k, 0.1], color: [PAL.fire0, PAL.fire1], alpha: [0.8, 0], floor: false });
     } });
   }
 
