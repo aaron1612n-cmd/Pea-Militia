@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { height, normalAt } from './terrain.js';
+import { Gore } from './gore.js';
 
 // Particles as soft round sprites: one additive system (fire, sparks, plasma, flashes) and one
 // normal-blended system (smoke, steam, dust, pea juice). Plus pooled tracer streaks.
@@ -99,7 +100,7 @@ const Z = new THREE.Vector3(0, 0, 1);
 const TRACER_SPEED = 240; // m/s, slowed down so the eye can follow it
 const TRACER_LEN = 3.2;
 
-function canvasTex(size, draw) {
+export function canvasTex(size, draw) {
   const c = document.createElement('canvas');
   c.width = c.height = size;
   draw(c.getContext('2d'), size);
@@ -159,7 +160,7 @@ function mergeTwo(a, b) {
   g.setIndex([...a.index.array, ...[...b.index.array].map((i) => i + n)]);
   return g;
 }
-function decalMesh(scene, n, tex, rough) {
+export function decalMesh(scene, n, tex, rough) {
   const geo = new THREE.PlaneGeometry(1, 1).rotateX(-Math.PI / 2);
   const mat = new THREE.MeshStandardMaterial({ map: tex, transparent: true, depthWrite: false, roughness: rough, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   const m = new THREE.InstancedMesh(geo, mat, n);
@@ -172,7 +173,7 @@ function decalMesh(scene, n, tex, rough) {
   return m;
 }
 const _dm = new THREE.Matrix4(), _dq = new THREE.Quaternion(), _ds = new THREE.Vector3(), _dp = new THREE.Vector3(), _dr = new THREE.Quaternion();
-function stamp(mesh, pos, normal, size) {
+export function stamp(mesh, pos, normal, size) {
   const n = mesh.instanceMatrix.count;
   const i = mesh.userData.next++ % n;
   _dq.setFromUnitVectors(Y, normal);
@@ -247,6 +248,7 @@ export class Effects {
     // marks left on the field: bullet scuffs and blast scorches (ring buffers of instances)
     this.holes = decalMesh(scene, 600, holeTexture(), 0.9);
     this.scorch = decalMesh(scene, 60, scorchTexture(), 0.92);
+    this.gore = new Gore(scene, this);
     // things that keep smoking for a while (blast sites, burning bodies)
     this.emitters = [];
     this.q = new THREE.Quaternion();
@@ -263,6 +265,7 @@ export class Effects {
   update(dt) {
     this.add.update(dt);
     this.norm.update(dt);
+    this.gore.update(dt);
     this.updateMotes(dt);
     for (const t of this.tracers) {
       if (!t.m.visible) continue;
