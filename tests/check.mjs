@@ -458,7 +458,7 @@ try {
     for (const p of [...b.props]) if (Math.hypot(p.box.x, p.box.z) < 12) b.removeProp(p);
     const us = [];
     for (let i = 0; i < 8; i++) { const u = b.spawnUnit(i % 2, 'rifleman', new T.Vector3((i - 3.5) * 1.6, 0, 0), { yaw: i }); u.ready = 1; u.animate(1 / 60); us.push(u); }
-    us.forEach((u, i) => { if (i < 5 || i === 7) b.damageUnit(u, 250, g.player, 'bullet', new T.Vector3(Math.sin(i), 0, Math.cos(i))); });
+    us.forEach((u, i) => { if (i !== 6) b.damageUnit(u, 250, g.player, 'bullet', new T.Vector3(Math.sin(i), 0, Math.cos(i))); });
     b.update(1e-4);
     b.explode(new T.Vector3(us[6].pos.x + 0.5, 0.3, 0.6), 3, 250, null);
     let moved = 0, ms = 0;
