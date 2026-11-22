@@ -15,6 +15,8 @@ import { U } from './rig.js';
 
 const V = () => new THREE.Vector3();
 const rand = (a, b) => a + Math.random() * (b - a);
+// distance across the ground, ignoring height (points and waypoints sit on hills and in hollows)
+const flat = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
 const SIGHT = 70;
 
 export class Commander {
@@ -148,7 +150,7 @@ export class Squad {
     if (this.retreating) {
       this.retreatT += dt;
       this.anchor = this.fallback;
-      if (lead.pos.distanceTo(this.fallback) < 6 || this.retreatT > 30) {
+      if (flat(lead.pos, this.fallback) < 6 || this.retreatT > 30) {
         // regroup: merge into a nearby friendly squad or carry on with what's left
         this.retreating = false;
         const other = w.squads.find((q) => q !== this && q.team === this.team && !q.retreating && q.alive.length && q.alive.length + alive.length <= 8 && q.leader.pos.distanceTo(lead.pos) < 25);
@@ -166,7 +168,7 @@ export class Squad {
     let goal = null;
     if (this.waypoint) {
       goal = this.waypoint;
-      if (lead.pos.distanceTo(this.waypoint) < 6) this.waypoint = null;
+      if (flat(lead.pos, this.waypoint) < 6) this.waypoint = null;
     }
     // each squad aims for its own side of a point so they don't all pile onto the flag
     if (!goal && this.objective) { const o = this.objective.pos; goal = V().set(o.x + Math.cos(this.holdA) * 5, 0, o.z + Math.sin(this.holdA) * 5); }
@@ -203,7 +205,7 @@ export class Squad {
         if (d > 0.5) this.anchor.copy(lead.pos).addScaledVector(to.normalize(), ahead).setY(0);
         // on the point: settle on one side of it and watch the way the enemy will come
         this.holding = false;
-        if (this.objective && lead.pos.distanceTo(this.objective.pos) < this.objective.r * 1.2) {
+        if (this.objective && flat(lead.pos, this.objective.pos) < this.objective.r * 1.2) {
           const o = this.objective.pos;
           this.anchor.set(o.x + Math.cos(this.holdA) * 4, 0, o.z + Math.sin(this.holdA) * 4);
           this.holding = true;
@@ -513,7 +515,7 @@ export class Brain {
       const n = this.nade;
       if (u.wi !== n.slot) { u.setWeapon(n.slot); u.cool = 0.2; }
       u.throwAt = n.at;
-      c.aimAt = n.at.clone().setY(1);
+      c.aimAt = n.at.clone().setY(n.at.y + 1);
       c.kneel = false;
       if (u.throwT <= 0 && !u.thrown) c.fire = u.cool <= 0;
       else c.fire = false;
@@ -540,7 +542,7 @@ export class Brain {
       if (def.gravity) {
         // ballistic lob: low-angle solution for the range
         const th = 0.5 * Math.asin(Math.min(1, (def.gravity * d) / (def.speed * def.speed)));
-        aim.y = u.eye(V()).y + Math.tan(th) * d;
+        aim.y = u.eye(V()).y + Math.tan(th) * d + (t.pos.y - u.pos.y);
       }
       c.aimAt = aim;
       const inRange = d < def.range * (def.kind === 'flame' ? 1 : 0.95);

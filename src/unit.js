@@ -260,7 +260,10 @@ export class Unit {
     } else if (this.pos.y < ground) {
       this.pos.y = ground; this.vel.y = 0; this.grounded = true;
     } else if (this.grounded && this.pos.y - ground > 0.05) {
-      this.grounded = false;
+      // walking downhill: keep the feet on the slope instead of skipping into the air;
+      // stepping off something tall still falls
+      if (this.vel.y <= 0 && this.pos.y - ground < 0.32) this.pos.y = ground;
+      else this.grounded = false;
     }
   }
 

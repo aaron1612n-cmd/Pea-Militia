@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { height } from './terrain.js';
 
 // Particles as soft round sprites: one additive system (fire, sparks, plasma, flashes) and one
 // normal-blended system (smoke, steam, dust, pea juice). Plus pooled tracer streaks.
@@ -62,7 +63,7 @@ class Particles {
       const k = Math.exp(-q.drag * dt);
       q.vx *= k; q.vz *= k; q.vy = q.vy * k - q.grav * dt;
       q.x += q.vx * dt; q.y += q.vy * dt; q.z += q.vz * dt;
-      if (q.floor && q.y < 0.02 && Math.abs(q.x) < 24 && Math.abs(q.z) < 24) { q.y = 0.02; q.vy *= -0.3; q.vx *= 0.6; q.vz *= 0.6; }
+      if (q.floor && q.vy < 0 && q.y < (q.gy = height(q.x, q.z)) + 0.02) { q.y = q.gy + 0.02; q.vy *= -0.3; q.vx *= 0.6; q.vz *= 0.6; }
       out.push(q);
       const u = q.t / q.life;
       this.pos[i * 3] = q.x; this.pos[i * 3 + 1] = q.y; this.pos[i * 3 + 2] = q.z;
