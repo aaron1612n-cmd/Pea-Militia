@@ -1,6 +1,6 @@
 # Steel Meridian
 
-A browser game about a combined-arms field battle. Live at https://pea-militia.avadlabs.workers.dev
+A browser game about a combined-arms field battle. Live at https://steel-meridian.avadlabs.workers.dev
 
 ## Develop
 
