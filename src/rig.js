@@ -31,6 +31,9 @@ export function setWeaponBounds(id, box, muzzle) {
     foreY: Math.min(-0.03, box.min.y * s * 0.35),
     muzzle: new THREE.Vector3(...muzzle).multiplyScalar(s),
     oneHand: id === 'grenade',
+    // gun bounds in its own (scaled) frame, for the dropped-gun physics
+    half: new THREE.Vector3().subVectors(box.max, box.min).multiplyScalar(s / 2),
+    mid: new THREE.Vector3().addVectors(box.max, box.min).multiplyScalar(s / 2),
   };
 }
 
@@ -48,6 +51,14 @@ function compose(out, x, y, z, rx = 0, ry = 0, rz = 0) {
   E.set(rx, ry, rz, 'YXZ');
   Q.setFromEuler(E);
   return out.compose(P.set(x, y, z), Q, S1);
+}
+
+// visor and pack ride on the body
+export function attachToBody(out) {
+  M.copy(out.body);
+  out.visor.multiplyMatrices(M, compose(out.visor, 0, U.VISOR_Y - U.BODY_Y, U.D / 2 + 0.006));
+  out.pack.multiplyMatrices(M, compose(out.pack, 0, U.PACK_Y - U.BODY_Y, -U.D / 2 - U.PACK[2] / 2 + 0.02));
+  return out;
 }
 
 export function makePose() {
@@ -109,10 +120,7 @@ export function pose(s, out = makePose()) {
     by = py + T.y;
   }
 
-  // visor and pack ride on the body
-  M.copy(out.body);
-  out.visor.multiplyMatrices(M, compose(out.visor, 0, U.VISOR_Y - U.BODY_Y, U.D / 2 + 0.006));
-  out.pack.multiplyMatrices(M, compose(out.pack, 0, U.PACK_Y - U.BODY_Y, -U.D / 2 - U.PACK[2] / 2 + 0.02));
+  attachToBody(out);
 
   // ---- feet
   for (let i = 0; i < 2; i++) {

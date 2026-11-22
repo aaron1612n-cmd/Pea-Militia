@@ -26,18 +26,23 @@ renderer.setPixelRatio(testing ? 1 : Math.min(devicePixelRatio, 2)); // the chec
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
-renderer.toneMappingExposure = 0.92;
+renderer.toneMappingExposure = 1.0;
 
 const scene = new THREE.Scene();
-scene.fog = new THREE.Fog('#bfc3c2', 70, 260);
-scene.add(createSky());
+// late-afternoon haze: warm, dusty, a little smoke hanging over the field
+scene.fog = new THREE.Fog('#bdb5a6', 45, 230);
+const sky = createSky();
+sky.material.uniforms.top.value.set('#8d99a3');
+sky.material.uniforms.mid.value.set('#d4c8b2');
+sky.material.uniforms.low.value.set('#b6ad9c');
+scene.add(sky);
 const ground = createGround();
 scene.add(ground);
 
 // Overcast light: neutral sky fill, one cool key whose shadow box follows the camera.
-scene.add(new THREE.HemisphereLight('#e2e6e8', '#5f615c', 1.25));
-const SUN = new THREE.Vector3(30, 60, 22);
-const sun = new THREE.DirectionalLight('#f3f3ef', 2.2);
+scene.add(new THREE.HemisphereLight('#d9dde2', '#5e554a', 1.05));
+const SUN = new THREE.Vector3(42, 40, 26); // lower sun: longer shadows, more shape on the blocks
+const sun = new THREE.DirectionalLight('#ffe2bd', 2.7);
 sun.castShadow = true;
 sun.shadow.mapSize.set(testing ? 1024 : 2048, testing ? 1024 : 2048);
 const SH = 26;
@@ -45,7 +50,7 @@ Object.assign(sun.shadow.camera, { left: -SH, right: SH, top: SH, bottom: -SH, n
 sun.shadow.bias = -0.0004;
 sun.shadow.normalBias = 0.04;
 scene.add(sun, sun.target);
-const rim = new THREE.DirectionalLight('#d6dce0', 0.45);
+const rim = new THREE.DirectionalLight('#aebfd0', 0.6);
 rim.position.set(-5, 3, -6);
 scene.add(rim);
 
