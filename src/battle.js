@@ -586,7 +586,7 @@ export class Battle {
 
   // a medic gets a fallen soldier back on their feet
   revive(u) {
-    u.alive = true; u.hp = 45; u.deadT = 0; u.vel.set(0, 0, 0); u.suppression = 0; u.burn = 0; u.flinch = 0;
+    u.alive = true; u.rag = null; u.hp = 45; u.deadT = 0; u.vel.set(0, 0, 0); u.suppression = 0; u.burn = 0; u.flinch = 0;
     u.onRevive?.();
     this.events.push({ type: 'revive', unit: u });
   }
