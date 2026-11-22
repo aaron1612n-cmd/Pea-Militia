@@ -21,6 +21,8 @@ export class VehicleBrain {
     this.stuckT = 0; this.reverseT = 0; this.mark = v.pos.clone(); this.markT = 0; this.turnBias = 1;
     this.burst = 0; this.hold = false;
     this.tmp = V(); this.tc = V(); this.eye = V();
+    this.heavy = v.def.weapons.findIndex((x) => x.ai === 'heavy');
+    this.light = v.def.weapons.findIndex((x) => x.ai === 'light');
   }
 
   update(dt) {
@@ -33,7 +35,7 @@ export class VehicleBrain {
     if (this.thinkT <= 0) { this.thinkT = rand(0.7, 1.2); this.think(); }
     if (this.aimT <= 0) { this.aimT = rand(0.25, 0.45); this.acquire(); }
     this.drive(dt);
-    this.gun(dt);
+    if (!v.seats[1]?.isPlayer) this.gun(dt);
   }
 
   // where to go
@@ -43,6 +45,15 @@ export class VehicleBrain {
     if (v.hp01 < 0.25 && v.fromBase) {
       const b = w.teams[v.team].base;
       this.goal = b.clone(); this.goalPoint = null; return;
+    }
+    // a car with only a machine gun keeps clear of armour
+    if (this.heavy < 0) {
+      for (const o of w.vehicles) {
+        if (!o.alive || !hostile(o.team, v.team) || o.def.armor.bullet > 0.1) continue;
+        const dx = v.pos.x - o.pos.x, dz = v.pos.z - o.pos.z, d = Math.hypot(dx, dz);
+        if (d < 65) { this.goal = new THREE.Vector3(v.pos.x + dx / (d || 1) * 45, 0, v.pos.z + dz / (d || 1) * 45); this.goalPoint = null; this.fleeing = true; return; }
+      }
+      this.fleeing = false;
     }
     if (pts.length) {
       if (this.goalPoint && this.goalPoint.owner === v.team && !this.goalPoint.contested) { this.dwell += 1; if (this.dwell > 6) { this.goalPoint = null; this.dwell = 0; } }
@@ -78,7 +89,7 @@ export class VehicleBrain {
     for (const o of w.vehicles) {
       if (!o.alive || !hostile(o.team, v.team)) continue;
       const d = Math.hypot(o.pos.x - v.pos.x, o.pos.z - v.pos.z);
-      if (d > 110) continue;
+      if (d > 110 || (this.heavy < 0 && o.def.armor.bullet < 0.1)) continue;
       if (!w.los(eye, o.center(this.tc))) continue;
       if (d - 40 < bs) { bs = d - 40; best = o; }
     }
@@ -90,7 +101,7 @@ export class VehicleBrain {
     this.target = best; this.seen = !!best;
     if (best) this.err = V().set(rand(-1, 1), rand(-0.3, 0.6), rand(-1, 1)).multiplyScalar(0.5 + Math.hypot(best.pos.x - v.pos.x, best.pos.z - v.pos.z) * 0.012);
     // stop and fight when it is close and in the open; keep rolling otherwise
-    if (best) { const d = Math.hypot(best.pos.x - v.pos.x, best.pos.z - v.pos.z); this.hold = d < 34 && !!best.isVehicle || d < 16; }
+    if (best && v.def.drive === 'tracked') { const d = Math.hypot(best.pos.x - v.pos.x, best.pos.z - v.pos.z); this.hold = d < 34 && !!best.isVehicle || d < 16; }
     else this.hold = false;
   }
 
@@ -147,7 +158,14 @@ export class VehicleBrain {
     }
     const err = wrap(heading - v.yaw);
     c.steer = clamp(-err * 2.4, -1, 1);
-    c.throttle = Math.abs(err) > 1.3 ? 0 : clamp(1 - Math.abs(err) / 1.5, 0.2, 1) * Math.min(1, dist / 14);
+    if (v.def.drive === 'tracked') c.throttle = Math.abs(err) > 1.3 ? 0 : clamp(1 - Math.abs(err) / 1.5, 0.2, 1) * Math.min(1, dist / 14);
+    else c.throttle = clamp(1 - Math.abs(err) / 2.4, 0.35, 1) * Math.min(1, Math.max(0.35, dist / 14)); // cars and skiffs turn on the move
+    // a fixed-forward gun means pointing the whole machine at the enemy
+    const lim = v.def.turret?.yawLimit;
+    if (lim && this.target?.alive) {
+      const te = wrap(Math.atan2(this.target.pos.x - v.pos.x, this.target.pos.z - v.pos.z) - v.yaw);
+      if (Math.abs(te) > lim * 0.6) c.steer = clamp(-te * 2.4, -1, 1);
+    }
   }
 
   gun(dt) {
@@ -165,19 +183,22 @@ export class VehicleBrain {
     // lead a moving target a little, and shoot a bit off at long range
     aim.add(this.err || V());
     const d = Math.hypot(t.pos.x - v.pos.x, t.pos.z - v.pos.z);
-    aim.y += d * d * 0.00022; // allow for the shell's drop
+    aim.y += this.heavy >= 0 ? d * d * 0.00022 : 0; // allow for the shell's drop
     c.aimAt = aim;
-    if (!this.seen || (v.aimErr ?? 1) > 0.05) return;
-    // cannon: tanks, clumps, and anything at a safe distance; never on top of our own
-    let friends = 0;
-    for (const f of w.nearUnits(t.pos.x, t.pos.z, 6)) if (f.alive && f.team === v.team) friends++;
-    let clump = 0;
-    for (const e of w.nearUnits(t.pos.x, t.pos.z, 4)) if (e.alive && hostile(e.team, v.team)) clump++;
-    if (!friends && d > 11 && (t.isVehicle || clump >= 2 || d > 30)) c.fire = true;
-    // machine gun on soldiers
-    if (!t.isVehicle && d < 70) {
+    if (!this.seen || (v.aimErr ?? 1) > 0.06) return;
+    const key = (i) => (i === 0 ? 'fire' : 'fire2');
+    // heavy gun: armour, clumps, and anything at a safe distance; never on top of our own
+    if (this.heavy >= 0) {
+      let friends = 0;
+      for (const f of w.nearUnits(t.pos.x, t.pos.z, 6)) if (f.alive && f.team === v.team) friends++;
+      let clump = 0;
+      for (const e of w.nearUnits(t.pos.x, t.pos.z, 4)) if (e.alive && hostile(e.team, v.team)) clump++;
+      if (!friends && d > 11 && (t.isVehicle || clump >= 2 || d > 30)) c[key(this.heavy)] = true;
+    }
+    // light gun: soldiers, in bursts
+    if (this.light >= 0 && !t.isVehicle && d < v.def.weapons[this.light].range * 0.9) {
       this.burst -= dt;
-      if (this.burst > -0.5) c.fire2 = this.burst > 0 || (this.burst = rand(0.5, 1.2), true);
+      if (this.burst > -0.5) c[key(this.light)] = this.burst > 0 || (this.burst = rand(0.5, 1.2), true);
       else this.burst = rand(0.5, 1.0);
     }
   }
