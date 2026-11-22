@@ -636,6 +636,22 @@ try {
     await P.screenshot({ path: `${OUT}/anim-${name}.png` });
   }
   await P.evaluate(() => { window.__game.freeze(false); window.__game.unfreezeCam(); });
+  // ---- ground: detail shading, grass clutter, draw-call and frame budget
+  await P.evaluate(() => { const g = window.__game; g.freeze(true); const y = g.height(0, 62); g.view([0, y + 1.7, 62], [0, y + 1.2, 40]); g.render(); });
+  await P.waitForTimeout(300);
+  await P.screenshot({ path: `${OUT}/ground-eye.png` });
+  await P.evaluate(() => { const g = window.__game; g.view([40, g.height(40, 40) + 7, 40], [10, g.height(10, 10), 10]); g.render(); });
+  await P.screenshot({ path: `${OUT}/ground-high.png` });
+  const gr = await P.evaluate(() => {
+    const g = window.__game; const y = g.height(0, 62); g.view([0, y + 1.7, 62], [0, y + 1.2, 40]); g.render();
+    const grass = g.scene.getObjectByName('grass');
+    const calls = g.renderer.info.render.calls;
+    const t0 = performance.now(); for (let i = 0; i < 4; i++) g.render(); const ms = (performance.now() - t0) / 4;
+    return { n: grass ? grass.count : -1, max: grass ? grass.instanceMatrix.count : 0, calls, ms: Math.round(ms) };
+  });
+  check('ground: grass tufts instanced near the camera, within the cap', gr.n > 200 && gr.n <= gr.max, JSON.stringify(gr));
+  check('ground: draw calls stay under 100', gr.calls < 100, `${gr.calls}`);
+  await P.evaluate(() => { window.__game.freeze(false); window.__game.unfreezeCam(); });
   check('renders saved (menu, views, battle, sandbox, turntable, poses)', true, `${OUT}/`);
   check('desktop: no console errors', d.errors.length === 0, d.errors.slice(0, 3).join(' | '));
   await d.ctx.close();
