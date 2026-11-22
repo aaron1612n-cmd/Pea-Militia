@@ -13,7 +13,6 @@ export const PART_GEO = {
   pack: new RoundedBoxGeometry(...U.PACK, 3, 0.04),
   foot: new RoundedBoxGeometry(...U.FOOT, 3, 0.035),
   hand: new RoundedBoxGeometry(...U.HAND, 3, 0.04),
-  arm: new RoundedBoxGeometry(1, 1, 1, 3, 0.22),
 };
 // the foot's sole sits at its local origin's -half height; nothing to shift
 
@@ -43,7 +42,6 @@ export class Crowd {
     this.pack = mk(PART_GEO.pack, std({ color: '#ffffff', roughness: 0.7, metalness: 0.1 }), cap, true);
     this.foot = mk(PART_GEO.foot, std({ color: '#ffffff', roughness: 0.75, metalness: 0.05 }), cap * 2, true);
     this.hand = mk(PART_GEO.hand, std({ color: '#ffffff', roughness: 0.7, metalness: 0.05 }), cap * 2, true);
-    this.arm = mk(PART_GEO.arm, std({ color: '#ffffff', roughness: 0.7, metalness: 0.08 }), cap * 4, true);
     this.visor.name = 'crowd-visor'; this.body.name = 'crowd-body';
     // weapons: one instanced mesh per (weapon, material)
     this.weapons = {};
@@ -62,13 +60,13 @@ export class Crowd {
     this.wound = mk(new THREE.BoxGeometry(1, 1, 1), std({ color: '#ffffff', roughness: 0.2, metalness: 0 }), cap * 6, true);
     this.wound.castShadow = false;
     this.nw = 0;
-    this.n = 0; this.nf = 0; this.nh = 0; this.na = 0;
+    this.n = 0; this.nf = 0; this.nh = 0;
     this.wn = {};
     this.tmp = new THREE.Matrix4();
   }
 
   begin() {
-    this.n = this.nf = this.nh = this.na = this.nw = 0;
+    this.n = this.nf = this.nh = this.nw = 0;
     for (const id in this.weapons) this.wn[id] = 0;
   }
 
@@ -114,16 +112,6 @@ export class Crowd {
       this.hand.setMatrixAt(j, t.multiplyMatrices(world, h));
       this.hand.instanceColor.setXYZ(j, TRIM_COL[team].r, TRIM_COL[team].g, TRIM_COL[team].b);
     }
-    if (p.showArms !== false && p.arms) {
-      for (let k = 0; k < p.arms.length; k++) {
-        const a = p.arms[k];
-        if (k & 1 && opts.lost & (1 << (k >> 1))) continue;
-        if (this.na >= this.cap * 4) break;
-        const j = this.na++;
-        this.arm.setMatrixAt(j, t.multiplyMatrices(world, a));
-        this.arm.instanceColor.setXYZ(j, PACK_COL[team].r, PACK_COL[team].g, PACK_COL[team].b);
-      }
-    }
     if (p.showWeapon && opts.weapon) {
       const list = this.weapons[opts.weapon];
       const k = this.wn[opts.weapon];
@@ -142,7 +130,7 @@ export class Crowd {
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
     };
     fin(this.body, this.n); fin(this.visor, this.n); fin(this.pack, this.n);
-    fin(this.foot, this.nf); fin(this.hand, this.nh); fin(this.arm, this.na); fin(this.wound, this.nw);
+    fin(this.foot, this.nf); fin(this.hand, this.nh); fin(this.wound, this.nw);
     for (const id in this.weapons) for (const m of this.weapons[id]) fin(m, this.wn[id]);
   }
 }
