@@ -22,6 +22,7 @@ const ICON = {
   tank: '<path d="M3 16h18l-1.5 3h-15zM6 16v-3h9l2 3M9 13v-3h4M13 11h7"/>',
   jeep: '<path d="M3 16h18v-3l-3-3h-5l-2 3H3zM7 18.5a1.8 1.8 0 100 .1M17 18.5a1.8 1.8 0 100 .1"/>',
   hover: '<path d="M3 14h18l-2 3H5zM6 14l3-5h6l3 5M4 20h16"/>',
+  walker: '<path d="M7 4h10v6H7zM9 10l-2 5-2 5h4M15 10l2 5 2 5h-4M12 6h6"/>',
   command: '<path d="M6 21V4M6 4h11l-3 4 3 4H6"/>',
 };
 const UNIT_ITEMS = [...Object.entries(KINDS).map(([k, v]) => ({ id: k, name: v.name, icon: 'unit', kind: 'unit' })),
@@ -30,9 +31,11 @@ const VEHICLE_ITEMS = [
   { id: 'tank', name: 'Iron Wagon', icon: 'tank', kind: 'vehicle', vkind: 'tank', crew: true },
   { id: 'jeep', name: 'Scout Car', icon: 'jeep', kind: 'vehicle', vkind: 'jeep', crew: true },
   { id: 'hover', name: 'Steam Skiff', icon: 'hover', kind: 'vehicle', vkind: 'hover', crew: true },
+  { id: 'walker', name: 'Strider', icon: 'walker', kind: 'vehicle', vkind: 'walker', crew: true },
   { id: 'tankEmpty', name: 'Tank (empty)', icon: 'tank', kind: 'vehicle', vkind: 'tank', crew: false },
   { id: 'jeepEmpty', name: 'Car (empty)', icon: 'jeep', kind: 'vehicle', vkind: 'jeep', crew: false },
   { id: 'hoverEmpty', name: 'Skiff (empty)', icon: 'hover', kind: 'vehicle', vkind: 'hover', crew: false },
+  { id: 'walkerEmpty', name: 'Strider (empty)', icon: 'walker', kind: 'vehicle', vkind: 'walker', crew: false },
 ];
 const COVER_ITEMS = Object.entries(PROPS).map(([k, v]) => ({ id: k, name: v.name, icon: k, kind: 'prop' }));
 const TOOL_ITEMS = [

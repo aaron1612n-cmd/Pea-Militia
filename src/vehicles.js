@@ -54,6 +54,20 @@ VEHICLES.hover = {
   ],
 };
 
+VEHICLES.walker = {
+  name: 'Strider', drive: 'legged', seats: 1,
+  hx: 1.5, hz: 1.5, h: 2.3, lift: 2.5, eyeH: 4.6, // hit box starts above the legs
+  hp: 700, armor: { bullet: 0.07, blast: 0.55, plasma: 0.6, flame: 0.15 },
+  maxSpeed: 6.2, maxRev: 2.6, accel: 2.8, brake: 7, turn: 1.0, maxSlope: 0.95, tilt: 0.3,
+  mass: 40, camDist: 12, camHeight: 5.2, steamAt: [-0.5, 4.3, -1.3], step: 1.3, crush: true, crushH: 2.2, runover: 0,
+  hint: 'WASD walk · click shoots · right-click mortar · X leaves',
+  turret: { rate: 1.5, pitchRate: 1.2, pitchMin: -0.45, pitchMax: 0.5, pivot: [0, 4.35, 0] },
+  weapons: [
+    { id: 'autocannon', name: 'Autocannon', ai: 'light', kind: 'hitscan', damage: 30, interval: 0.12, spread: 0.022, sound: 'mg', mag: Infinity, reserve: Infinity, range: 110, tracer: '#ffc070', burst: [8, 14], vehicleGun: true },
+    { id: 'mortar', name: 'Steam mortar', ai: 'heavy', kind: 'projectile', proj: 'shell', lob: 1.05, damage: 170, radius: 5.2, speed: 40, gravity: 16, interval: 3.4, spread: 0.02, sound: 'cannon', mag: Infinity, reserve: Infinity, range: 150, minRange: 22, burst: [1, 1], vehicleGun: true },
+  ],
+};
+
 const C = {
   steel: '#3b3e3d', dark: '#26292a', iron: '#4a4a45', brass: '#9c7a3c', copper: '#8a5236', rubber: '#1d1d1c',
   canvas: '#7d7559', wood: '#6a4a2f',
@@ -448,6 +462,189 @@ function buildSkiffModel(team) {
 }
 VEHICLES.hover.build = buildSkiffModel;
 
+// ---------------- the strider ----------------
+const WL = { hip: 2.95, x: 1.2, L1: 1.75, L2: 1.85, ankle: 0.36 };
+
+function striderParts(team) {
+  const T = TEAMS[team] || TEAMS[0];
+  const paint = T.body, trim = T.trim;
+  const hull = new CKit(), turret = new CKit(), gunK = new CKit(), glow = [];
+  // pelvis and hip housings
+  hull.add(block(2.1, 0.62, 1.5, 0.12, 0.04), C.steel, { pos: [0, 0, 0] });
+  for (const s of [-1, 1]) {
+    hull.add(cyl(0.4, 0.5, 18), C.iron, { pos: [s * 1.0, 0, 0], rot: [0, 0, Math.PI / 2] });
+    for (const dx of [0.2, 0.3]) hull.add(ring(0.4, 0.03, 18), C.brass, { pos: [s * (1.0 + dx), 0, 0], rot: [0, Math.PI / 2, 0] });
+  }
+  // torso: a tapering armoured tub
+  hull.add(profile([[-1.0, 0.25], [1.0, 0.25], [1.25, 0.75], [1.05, 1.35], [0.55, 1.55], [-0.85, 1.45], [-1.15, 0.9]], 1.9, 0.07, 2), paint, { pos: [0, 0, 0] });
+  hull.add(profile([[-1.0, 0.7], [1.15, 0.78], [1.0, 0.9], [-1.0, 0.86]], 1.96, 0.02, 1), trim);
+  for (const s of [-1, 1]) hull.add(block(0.08, 0.7, 1.7, 0.03, 0.02), C.steel, { pos: [s * 1.0, 0.7, 0.1], rot: [0, 0, s * 0.12] }); // side plates
+  // cockpit glass and its frame, glowing slit lamps
+  hull.add(ellipsoid(0.62, 0.42, 0.55, 16, 10, (v) => { if (v.y < -0.1) v.y *= 0.2; }), '#2c4947', { pos: [0, 1.0, 1.0] });
+  hull.add(ring(0.55, 0.035, 18), C.dark, { pos: [0, 1.0, 1.28], rot: [-0.55, 0, 0] });
+  for (const s of [-1, 1]) glow.push([cyl(0.09, 0.1, 10), [s * 0.8, 0.5, 1.22], [Math.PI / 2, 0, 0]]);
+  // back: twin boilers, rings, stacks and a steam manifold
+  for (const s of [-1, 1]) {
+    hull.add(cyl(0.34, 1.3, 18), C.brass, { pos: [s * 0.55, 1.05, -1.05] });
+    for (const y of [0.55, 1.05, 1.5]) hull.add(ring(0.345, 0.025, 18), C.copper, { pos: [s * 0.55, y, -1.05], rot: [Math.PI / 2, 0, 0] });
+    hull.add(turnedY([[0.0, 0], [0.34, 0], [0.2, 0.18], [0.0, 0.2]], 14), C.brass, { pos: [s * 0.55, 1.7, -1.05] });
+    hull.add(pipe([[s * 0.55, 1.85, -1.05], [s * 0.55, 2.2, -1.05], [s * 0.6, 2.5, -1.1]], 0.08, 8, 8), C.iron);
+  }
+  hull.add(pipe([[-0.55, 1.0, -0.78], [0, 1.1, -0.74], [0.55, 1.0, -0.78]], 0.05, 10, 6), C.copper);
+  hull.add(block(1.3, 0.3, 0.2, 0.03, 0.02), C.dark, { pos: [0, 0.55, -1.3] }); // exhaust shroud
+  // belly pipes, tool boxes
+  for (const s of [-1, 1]) hull.add(block(0.4, 0.34, 0.6, 0.04, 0.02), C.canvas, { pos: [s * 1.12, 0.2, -0.5] });
+  hull.add(pipe([[-0.9, 0.1, 0.5], [-0.3, -0.12, 0.6], [0.3, -0.12, 0.6], [0.9, 0.1, 0.5]], 0.045, 12, 6), C.copper);
+  // turret: a squat drum, a cheek for the cannon, the mortar tube racked on the left
+  turret.add(cyl(0.62, 0.3, 22), C.steel, { pos: [0, 0.1, 0] });
+  turret.add(profile([[-0.7, 0.2], [0.7, 0.2], [0.55, 0.62], [-0.5, 0.7]], 1.3, 0.05, 2), paint, { pos: [0, 0.1, 0] });
+  turret.add(block(0.5, 0.5, 0.6, 0.06, 0.03), C.iron, { pos: [0.55, 0.5, 0.45] });  // gun cradle
+  turret.add(block(0.5, 0.2, 0.5, 0.03, 0.02), paint, { pos: [-0.5, 0.38, -0.2] }); // mortar seat
+  turret.add(rod(0.2, 0.0, 1.35, 14), C.dark, { pos: [-0.5, 0.55, -0.2], rot: [-1.05, 0, 0] });
+  turret.add(turned([[0.2, 1.2], [0.26, 1.2], [0.26, 1.35], [0.2, 1.35]], 14), C.iron, { pos: [-0.5, 0.55, -0.2], rot: [-1.05, 0, 0] });
+  for (const z of [0.4, 0.8]) turret.add(ring(0.205, 0.03, 14), C.brass, { pos: [-0.5 + 0, 0.55 + z * Math.sin(1.05), -0.2 + z * Math.cos(1.05)], rot: [-1.05, 0, 0] });
+  turret.add(block(0.7, 0.04, 0.5, 0.01, 0.006), trim, { pos: [0, 0.78, -0.1] });
+  // autocannon on the gun pivot: shrouded barrel, brake, drum
+  gunK.add(block(0.34, 0.34, 0.9, 0.05, 0.02), C.steel, { pos: [0, 0, 0.1] });
+  gunK.add(rod(0.07, 0.4, 2.3, 12), C.dark);
+  gunK.add(turned([[0.13, 0.5], [0.15, 0.55], [0.15, 1.5], [0.13, 1.55]], 14), C.steel);
+  gunK.add(turned([[0.0001, 2.2], [0.1, 2.2], [0.1, 2.42], [0.06, 2.42]], 12), C.iron);
+  gunK.add(cyl(0.22, 0.3, 14), C.iron, { pos: [0.28, -0.05, 0.0], rot: [0, 0, Math.PI / 2] });
+  gunK.add(block(0.2, 0.08, 0.5, 0.02, 0.01), C.brass, { pos: [-0.12, 0.2, 0.2] });
+  return { hull, turret, gunK, glow };
+}
+
+function striderLeg(team) {
+  const T = TEAMS[team] || TEAMS[0];
+  const paint = T.body;
+  const { L1, L2 } = WL;
+  const thigh = new CKit(), shin = new CKit(), foot = new CKit();
+  // thigh: a tapered armoured slab with a piston alongside; hung down from the hip
+  thigh.add(cyl(0.3, 0.62, 16), C.brass, { rot: [0, 0, Math.PI / 2] });
+  thigh.add(profile([[-0.34, -0.1], [0.34, -0.1], [0.24, -L1 + 0.1], [-0.24, -L1 + 0.1]], 0.4, 0.05, 2), paint);
+  thigh.add(block(0.05, L1 * 0.8, 0.3, 0.01, 0.005), C.steel, { pos: [0.24, -L1 * 0.5, 0.0] });
+  thigh.add(rod(0.05, -L1 * 0.9, -0.2, 8).rotateX(-Math.PI / 2), C.copper, { pos: [0.28, 0, 0.38] });
+  thigh.add(cyl(0.24, 0.58, 16), C.iron, { pos: [0, -L1, 0], rot: [0, 0, Math.PI / 2] });
+  for (const d of [-0.22, 0.22]) thigh.add(ring(0.245, 0.025, 16), C.brass, { pos: [d, -L1, 0], rot: [0, Math.PI / 2, 0] });
+  // shin: slimmer, with a rear hydraulic ram
+  shin.add(profile([[-0.24, 0], [0.24, 0], [0.16, -L2 + 0.1], [-0.16, -L2 + 0.1]], 0.32, 0.04, 2), paint);
+  shin.add(pipe([[0.0, -0.1, -0.26], [0.0, -L2 * 0.5, -0.34], [0.0, -L2 + 0.35, -0.2]], 0.05, 10, 6), C.copper);
+  shin.add(block(0.4, 0.2, 0.3, 0.04, 0.02), C.steel, { pos: [0, -L2 * 0.35, 0.18] });
+  shin.add(cyl(0.2, 0.46, 14), C.iron, { pos: [0, -L2 + 0.1, 0], rot: [0, 0, Math.PI / 2] });
+  // foot: ankle block, broad pad and three toes
+  foot.add(block(0.5, 0.3, 0.5, 0.05, 0.02), C.steel, { pos: [0, WL.ankle - 0.05, 0] });
+  foot.add(profile([[-0.5, 0.0], [0.62, 0.0], [0.9, 0.08], [0.55, 0.22], [-0.45, 0.22]], 0.8, 0.04, 2), C.iron);
+  for (const x of [-0.26, 0, 0.26]) foot.add(profile([[0.55, 0.0], [1.05, 0.0], [1.15, 0.07], [0.6, 0.15]], 0.2, 0.02, 1), C.dark, { pos: [x, 0, 0] });
+  foot.add(block(0.5, 0.1, 0.3, 0.02, 0.01), C.dark, { pos: [0, 0.07, -0.55] }); // heel
+  return { thigh, shin, foot };
+}
+
+const _ik = { H: new THREE.Vector3(), A: new THREE.Vector3(), K: new THREE.Vector3(), d: new THREE.Vector3(), pole: new THREE.Vector3(), inv: new THREE.Matrix4(), dn: new THREE.Vector3(0, -1, 0), tmp: new THREE.Vector3() };
+const smooth = (u) => u * u * (3 - 2 * u);
+
+function buildStriderModel(team) {
+  const key = `walker${team}`;
+  if (!modelCache.has(key)) {
+    const p = striderParts(team), lg = striderLeg(team);
+    const gk = new CKit(); for (const [g, pos, rot] of p.glow) gk.add(g, '#ffe9a8', { pos, rot });
+    modelCache.set(key, { hull: p.hull.bake(), turret: p.turret.bake(), gun: p.gunK.bake(), glow: gk.bake(), thigh: lg.thigh.bake(), shin: lg.shin.bake(), foot: lg.foot.bake() });
+  }
+  const m = modelCache.get(key), def = VEHICLES.walker;
+  const root = new THREE.Group();
+  root.name = 'vehicle-walker';
+  const mesh = (g, mat = BODY, shadow = true) => { const o = new THREE.Mesh(g, mat); o.castShadow = shadow; o.receiveShadow = true; o.frustumCulled = false; return o; };
+  const bodyG = new THREE.Group();
+  const hull = mesh(m.hull);
+  const lamps = mesh(m.glow, new THREE.MeshStandardMaterial({ color: '#ffe9a8', emissive: '#ffd27a', emissiveIntensity: 1.3 }), false);
+  bodyG.add(hull, lamps);
+  const turretPivot = new THREE.Group(); turretPivot.position.set(...def.turret.pivot);
+  const tMesh = mesh(m.turret);
+  const gun = new THREE.Group(); gun.position.set(0.55, 0.5, 0.45);
+  const gMesh = mesh(m.gun);
+  const muzzle = new THREE.Object3D(); muzzle.position.set(0, 0, 2.45);
+  const mortarMuzzle = new THREE.Object3D(); mortarMuzzle.position.set(-0.5, 0.55 + 1.38 * Math.sin(1.05), -0.2 + 1.38 * Math.cos(1.05));
+  gun.add(gMesh, muzzle);
+  turretPivot.add(tMesh, gun, mortarMuzzle);
+  const meshes = [hull, tMesh, gMesh];
+  const legs = [-1, 1].map((side) => {
+    const th = mesh(m.thigh), sh = mesh(m.shin), ft = mesh(m.foot);
+    root.add(th, sh, ft); meshes.push(th, sh, ft);
+    return { side, th, sh, ft, fp: new THREE.Vector3(), from: new THREE.Vector3(), to: new THREE.Vector3(), stepping: false, u: 0, dur: 0.45, init: false };
+  });
+  root.add(bodyG, turretPivot);
+  const parts = { root, turretPivot, gun, gunZ: 0.45, recoilK: 0.0, muzzles: [muzzle, mortarMuzzle], meshes, legs, lastT: -1, hy: WL.hip };
+  parts.animate = (v) => striderAnimate(v, parts, bodyG);
+  return parts;
+}
+VEHICLES.walker.build = buildStriderModel;
+
+// foot planting: each foot stays where it landed until the body walks it out of range, then swings to a new spot
+function striderAnimate(v, P, bodyG) {
+  const { L1, L2 } = WL;
+  const dt = P.lastT < 0 ? 0 : clamp(v.t - P.lastT, 0, 0.1);
+  P.lastT = v.t;
+  const alive = v.alive, sp = Math.abs(v.speed);
+  const s = Math.sin(v.yaw), c = Math.cos(v.yaw);
+  const lead = clamp(v.speed * 0.4, -1.3, 1.6);
+  v.footfalls ||= [];
+  const [A, B] = P.legs;
+  let avg = 0;
+  for (const leg of P.legs) {
+    const other = leg === A ? B : A;
+    const hx = alive ? leg.side * 1.15 : leg.side * 1.9, hz = alive ? lead : (leg.side < 0 ? 0.5 : -0.5);
+    const hxw = v.pos.x + c * hx + s * hz, hzw = v.pos.z - s * hx + c * hz;
+    const fp = leg.fp;
+    if (!leg.init || Math.hypot(fp.x - hxw, fp.z - hzw) > 7) { fp.set(hxw, height(hxw, hzw), hzw); leg.init = true; leg.stepping = false; }
+    const dist = Math.hypot(fp.x - hxw, fp.z - hzw);
+    const thr = 0.85 + sp * 0.09;
+    if (alive && !leg.stepping && dist > thr && (!other.stepping || dist > thr * 2)) {
+      leg.stepping = true; leg.u = 0; leg.from.copy(fp);
+      const dx = hxw - fp.x, dz = hzw - fp.z, dl = Math.hypot(dx, dz) || 1, over = Math.min(0.7, 0.2 + sp * 0.1);
+      leg.to.set(hxw + dx / dl * over, 0, hzw + dz / dl * over); leg.to.y = height(leg.to.x, leg.to.z);
+      leg.dur = clamp(0.55 - sp * 0.04, 0.3, 0.55);
+    }
+    if (leg.stepping) {
+      leg.u = Math.min(1, leg.u + dt / leg.dur);
+      const e = smooth(leg.u);
+      fp.lerpVectors(leg.from, leg.to, e);
+      const gy = height(fp.x, fp.z);
+      fp.y = Math.max(gy, THREE.MathUtils.lerp(leg.from.y, leg.to.y, e)) + Math.sin(Math.PI * leg.u) * (0.35 + sp * 0.07);
+      if (leg.u >= 1) { leg.stepping = false; fp.y = height(fp.x, fp.z); v.footfalls.push([fp.x, fp.z]); }
+    } else fp.y = height(fp.x, fp.z);
+    avg += fp.y;
+  }
+  avg /= 2;
+  // the hull rides above its feet: lower when a foot is planted deep, sagging when wrecked
+  const wantHy = alive ? WL.hip + clamp(avg - v.pos.y, -0.7, 0.7) - (A.stepping || B.stepping ? 0.12 : 0) : WL.hip * 0.62;
+  P.hy += (wantHy - P.hy) * (alive ? Math.min(1, dt * 10) : Math.min(1, dt * 1.6));
+  if (dt === 0) P.hy = wantHy;
+  bodyG.position.y = P.hy;
+  bodyG.rotation.z = alive ? (A.stepping ? -0.025 : B.stepping ? 0.025 : 0) : 0.14;
+  bodyG.rotation.x = alive ? 0 : 0.08;
+  if (v.parts.turretPivot) v.parts.turretPivot.position.y += P.hy - WL.hip;
+  // two-bone IK from hip to ankle, knee bent forward
+  v.group.updateMatrixWorld(true);
+  _ik.inv.copy(v.group.matrixWorld).invert();
+  for (const leg of P.legs) {
+    _ik.H.set(leg.side * WL.x, P.hy, 0);
+    _ik.A.copy(leg.fp).applyMatrix4(_ik.inv); _ik.A.y += WL.ankle;
+    _ik.d.subVectors(_ik.A, _ik.H);
+    let d = _ik.d.length(); const maxD = L1 + L2 - 0.03;
+    _ik.d.multiplyScalar(1 / (d || 1));
+    if (d > maxD) { d = maxD; _ik.A.copy(_ik.H).addScaledVector(_ik.d, d); }
+    d = Math.max(d, 0.5);
+    const a = (L1 * L1 - L2 * L2 + d * d) / (2 * d), h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
+    _ik.pole.set(0, 0, 1); _ik.pole.addScaledVector(_ik.d, -_ik.d.z).normalize();
+    _ik.K.copy(_ik.H).addScaledVector(_ik.d, a).addScaledVector(_ik.pole, h);
+    leg.th.position.copy(_ik.H);
+    leg.th.quaternion.setFromUnitVectors(_ik.dn, _ik.tmp.subVectors(_ik.K, _ik.H).normalize());
+    leg.sh.position.copy(_ik.K);
+    leg.sh.quaternion.setFromUnitVectors(_ik.dn, _ik.tmp.subVectors(_ik.A, _ik.K).normalize());
+    leg.ft.position.copy(_ik.A); leg.ft.position.y -= WL.ankle;
+    leg.ft.quaternion.identity();
+  }
+}
+
 let vehicleId = 1;
 const wrapA = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 const clamp = THREE.MathUtils.clamp;
@@ -500,11 +697,11 @@ export class Vehicle {
   get isPlayerDriven() { return !!this.seats[0]?.isPlayer; }
   get hasPlayer() { return this.seats.some((u) => u?.isPlayer); }
   get speedKmh() { return Math.abs(this.speed) * 3.6; }
-  center(out = new THREE.Vector3()) { return out.set(this.pos.x, this.pos.y + this.def.h * 0.5, this.pos.z); }
-  eye(out = new THREE.Vector3()) { return out.set(this.pos.x, this.pos.y + 1.8, this.pos.z); }
+  center(out = new THREE.Vector3()) { return out.set(this.pos.x, this.pos.y + (this.alive ? this.def.lift || 0 : 0) + this.def.h * 0.5, this.pos.z); }
+  eye(out = new THREE.Vector3()) { return out.set(this.pos.x, this.pos.y + (this.def.eyeH || 1.8), this.pos.z); }
   hitBox() {
     const b = this.box;
-    b.x = this.pos.x; b.z = this.pos.z; b.yaw = this.yaw; b.y0 = this.pos.y; b.h = this.alive ? this.def.h : 1.1;
+    b.x = this.pos.x; b.z = this.pos.z; b.yaw = this.yaw; b.y0 = this.pos.y + (this.alive ? this.def.lift || 0 : 0); b.h = this.alive ? this.def.h : 1.1;
     return b;
   }
   // gun muzzle and aim for the player's HUD
@@ -619,7 +816,7 @@ export class Vehicle {
     if (c.brake && Math.abs(this.speed) < 0.1) this.speed = 0;
     // steering: tracks pivot on the spot, slower when hurtling
     let yawGoal;
-    if (d.drive === 'tracked') yawGoal = -str * d.turn * (1 - Math.min(0.55, Math.abs(this.speed) / d.maxSpeed * 0.5)) * (this.speed < -0.3 ? -1 : 1);
+    if (d.drive === 'tracked' || d.drive === 'legged') yawGoal = -str * d.turn * (1 - Math.min(0.55, Math.abs(this.speed) / d.maxSpeed * 0.5)) * (this.speed < -0.3 ? -1 : 1);
     else yawGoal = -str * d.turn * Math.min(1, Math.abs(this.speed) / 3) * (1 - 0.45 * Math.abs(this.speed) / d.maxSpeed) * (this.speed < -0.3 ? -1 : 1);
     this.yawRate += (yawGoal - this.yawRate) * (1 - Math.exp(-6 * dt));
     this.yaw += this.yawRate * dt;
@@ -645,7 +842,21 @@ export class Vehicle {
     this.wheelPhase = (this.wheelPhase || 0) + this.speed * dt;
     this.effects(dt, battle);
     this.syncModel(dt);
+    if (this.footfalls?.length) this.stomp(battle);
     this.updateEngine(battle);
+  }
+
+  // each planted foot of a walker shakes the dust and flattens whoever is under it
+  stomp(battle) {
+    for (const [x, z] of this.footfalls) {
+      battle.fx.dust(new THREE.Vector3(x, height(x, z) + 0.1, z), 3, 0.7);
+      if (Math.abs(this.speed) < 0.4) continue;
+      for (const u of battle.nearUnits(x, z, 2)) {
+        if (!u.alive || u.vehicle || u.team === this.team) continue;
+        battle.damageUnit(u, 90, this.shooter(), 'blast', _s.set(Math.sin(this.yaw), 0.4, Math.cos(this.yaw)));
+      }
+    }
+    this.footfalls.length = 0;
   }
 
   // push out of props, crush the low ones, run over soldiers
@@ -661,7 +872,7 @@ export class Vehicle {
         const top = p.box.y0 + p.box.h;
         if (top < this.pos.y - (d.hoverH || 0) + d.step) continue; // a kerb: roll over it
         // low, breakable cover is crushed under the tracks
-        if (d.crush && p.hp !== Infinity && p.box.h < 1.25 && Math.abs(this.speed) > 1.2) {
+        if (d.crush && p.hp !== Infinity && p.box.h < (d.crushH || 1.25) && Math.abs(this.speed) > 1.2) {
           const probe = { x: circle.x, z: circle.z };
           if (pushCircle(probe, r * 0.8, p.box)) { battle.damageProp(p, 5000, this.driver || this.crew[0] || null); this.speed *= 0.9; }
           continue;
@@ -732,8 +943,9 @@ export class Vehicle {
       return;
     }
     this.pos.y += (gy - this.pos.y) * Math.min(1, k * 1.4);
-    this.pitch += (tp - this.pitch) * k;
-    this.roll += (tr - this.roll) * k;
+    const tilt = d.tilt ?? 1;
+    this.pitch += (tp * tilt - this.pitch) * k;
+    this.roll += (tr * tilt - this.roll) * k;
     // gun fire and braking make the hull rock
     this.rock = (this.rock || 0) * Math.exp(-4 * dt);
   }
@@ -770,6 +982,25 @@ export class Vehicle {
     this.cool[i] = w.interval;
     if (w.alt) { this.alt = -(this.alt || 1); this.parts.muzzles[i].position.x = 0.22 * this.alt; }
     const m = this.muzzlePos(i), dir = this.muzzleDir(i);
+    if (w.lob) {
+      // a mortar: fixed elevation, speed chosen so the bomb lands on the aim point
+      const a = this.ctrl.aimAt, md = this.muzzleDir(0, _s.set(0, 0, 0));
+      let hx = md.x, hz = md.z; const hl = Math.hypot(hx, hz) || 1; hx /= hl; hz /= hl;
+      const R = a ? clamp(Math.hypot(a.x - m.x, a.z - m.z), w.minRange || 10, w.range) : 40, dy = a ? a.y - m.y : -2;
+      const th = w.lob, den = 2 * Math.cos(th) ** 2 * (R * Math.tan(th) - dy);
+      const spd = den > 0.5 ? clamp(Math.sqrt(w.gravity * R * R / den), 14, 70) : 40;
+      const jit = 1 + (Math.random() - 0.5) * w.spread * 4;
+      const vel = new THREE.Vector3(hx * Math.cos(th), Math.sin(th), hz * Math.cos(th)).multiplyScalar(spd * jit);
+      battle.stats.shots++;
+      battle.launch(w.proj, m, vel, who, w);
+      battle.fx.muzzle(m, dir, 1.8);
+      battle.fx.steam(m, new THREE.Vector3(0, 4, 0), 5, 0.9);
+      battle.fx.smoke(m, new THREE.Vector3(0, 3, 0), 1.0, 0.4);
+      battle.audio.play(w.sound, m, who?.isPlayer ? 0.8 : 1);
+      battle.heard(who, m);
+      this.recoil = 0.6; this.lastShot = this.t;
+      return;
+    }
     const sp = battle.spread(dir, w.spread + (w.kind === 'hitscan' ? Math.min(0.03, Math.abs(this.speed) * 0.002) : 0));
     battle.stats.shots++;
     if (w.kind === 'projectile') {
