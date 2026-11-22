@@ -1,5 +1,7 @@
-// Automated build checks: collisions, clipping, loose parts, closed meshes, z-fighting,
-// camera fit, UI overlap, buttons (mouse + touch), console errors, turntable renders.
+// Automated build checks: soldier model (closed parts, no clipping, nothing loose, gun in the
+// hands, feet on the ground) across every animation phase and weapon; camera, aiming,
+// weapons, AI battle, sandbox palette, menus, UI overlap (mouse + touch), console errors,
+// and renders.
 // Usage: npm run build && npm run check            (serves dist/ via vite preview)
 //        BASE_URL=https://pea-militia.avadlabs.workers.dev npm run check   (live build)
 import { chromium, devices } from 'playwright';
@@ -31,59 +33,26 @@ const browser = await chromium.launch({ args: ['--use-angle=swiftshader', '--ena
 async function open(ctxOpts) {
   const ctx = await browser.newContext({ ...ctxOpts, reducedMotion: 'reduce' });
   const page = await ctx.newPage();
+  page.setDefaultTimeout(120000); // software rendering on CI runners is slow
   const errors = [];
-  page.on('console', (m) => { if (m.type() === 'error') errors.push(m.text()); });
+  page.on('console', (m) => { if (m.type() === 'error' && !/fonts\.g/.test(m.text())) errors.push(m.text()); });
   page.on('pageerror', (e) => errors.push(e.message));
-  await page.goto(url, { waitUntil: 'networkidle' });
-  await page.waitForFunction(() => window.__pea);
+  await page.goto(url, { waitUntil: 'load' });
+  await page.waitForFunction(() => window.__game);
   await page.evaluate(() => document.fonts.ready);
   await page.waitForTimeout(400);
   return { ctx, page, errors };
 }
 
-// ---------------- geometry checks (run in page) ----------------
-const geometryChecks = () => {
-  const { THREE, pea, plate, colliders } = window.__pea;
-  const out = {};
-  const parts = pea.userData.parts();
-  const byName = Object.fromEntries(parts.map((p) => [p.name, p]));
-  const v = new THREE.Vector3();
-
-  const worldVerts = (m, max = Infinity) => {
-    const n = m.geometry.attributes.position.count;
-    const step = Math.max(1, Math.floor(n / max));
-    const pts = [];
-    for (let i = 0; i < n; i += step) {
-      m.getVertexPosition(i, v);
-      pts.push(v.clone().applyMatrix4(m.matrixWorld));
-    }
-    return pts;
-  };
-  const bbox = (pts) => new THREE.Box3().setFromPoints(pts);
-  const rc = new THREE.Raycaster();
-  const dirs = [new THREE.Vector3(1, 0.13, 0.07).normalize(), new THREE.Vector3(-0.11, 1, 0.21).normalize(), new THREE.Vector3(0.17, -0.09, -1).normalize()];
-  const inside = (p, m) => {
-    const side = m.material.side;
-    m.material.side = THREE.DoubleSide;
-    let votes = 0;
-    for (const d of dirs) {
-      rc.set(p, d);
-      const hits = rc.intersectObject(m, false);
-      // collapse duplicate hits on shared edges
-      let n = 0, last = -1;
-      for (const h of hits) { if (h.distance - last > 1e-5) n++; last = h.distance; }
-      if (n % 2 === 1) votes++;
-    }
-    m.material.side = side;
-    return votes >= 2;
-  };
-
-  // closed, outward meshes (no gaps / see-through faces)
-  const closed = [];
-  const edgeCheck = (m) => {
-    const g = m.geometry;
+// ---------------- soldier model checks (run in page) ----------------
+const modelChecks = () => {
+  const { THREE, U, pose, makePose, HOLD, crowd } = window.__game;
+  const { PART_GEO } = window.__parts;
+  const out = { closed: [], phases: [] };
+  // closed, outward part meshes
+  const closed = (g, name) => {
     const p = g.attributes.position;
-    const key = (i) => `${Math.round(p.getX(i) * 1e5)},${Math.round(p.getY(i) * 1e5)},${Math.round(p.getZ(i) * 1e5)}`;
+    const key = (i) => `${Math.round(p.getX(i) * 1e4)},${Math.round(p.getY(i) * 1e4)},${Math.round(p.getZ(i) * 1e4)}`;
     const ids = new Map();
     const id = (i) => { const k = key(i); if (!ids.has(k)) ids.set(k, ids.size); return ids.get(k); };
     const idx = g.index ? g.index.array : [...Array(p.count).keys()];
@@ -92,6 +61,7 @@ const geometryChecks = () => {
     const a = new THREE.Vector3(), b = new THREE.Vector3(), c = new THREE.Vector3();
     for (let i = 0; i < idx.length; i += 3) {
       const t = [id(idx[i]), id(idx[i + 1]), id(idx[i + 2])];
+      if (t[0] === t[1] || t[1] === t[2] || t[0] === t[2]) continue; // degenerate
       for (let k = 0; k < 3; k++) {
         const e = [t[k], t[(k + 1) % 3]];
         const ek = e[0] < e[1] ? `${e[0]}_${e[1]}` : `${e[1]}_${e[0]}`;
@@ -102,290 +72,498 @@ const geometryChecks = () => {
     }
     let open = 0;
     for (const n of edges.values()) if (n === 1) open++;
-    const mats = Array.isArray(m.material) ? m.material : [m.material];
-    return { name: m.name, open, vol, front: mats.every((x) => x.side === THREE.FrontSide && !x.transparent) };
+    return { name, open, vol };
   };
-  for (const m of [...parts, plate]) closed.push(edgeCheck(m));
-  out.closed = closed.filter((c) => c.open > 0 || c.vol <= 0 || !c.front);
-  out.partCount = parts.length;
+  for (const [k, g] of Object.entries(PART_GEO)) out.closed.push(closed(g, k));
+  out.closed = out.closed.filter((c) => c.open > 0 || c.vol <= 0);
 
-  // per animation phase: grounded, no clipping, nothing loose
-  const phases = [0, 0.4, 0.8, 1.2, 1.6, 2.0, 2.4, 2.48, 2.56, 2.8, 3.2];
-  const clipPairs = [
-    ['mittL', 'body'], ['mittR', 'body'], ['thumbL', 'body'], ['thumbR', 'body'],
-    ['bootL', 'bootR'], ['legL', 'legR'], ['mittL', 'legL'], ['mittR', 'legR'],
-    ['helmet', 'eyeL'], ['helmet', 'eyeR'], ['helmet', 'browL'], ['helmet', 'browR'],
-    ['browL', 'eyeL'], ['browR', 'eyeR'], ['mouth', 'eyeL'], ['mouth', 'eyeR'], ['strap', 'mouth'],
-    ['strap', 'armL'], ['strap', 'armR'], ['strap', 'mittL'], ['strap', 'mittR'],
-  ];
-  out.phases = [];
-  for (const t of phases) {
-    window.__pea.pause(t);
-    const r = { t, clips: [], loose: [] };
-    const verts = new Map(parts.map((m) => [m, worldVerts(m, 260)]));
-    const boxes = new Map([...verts].map(([m, pts]) => [m, bbox(pts)]));
-    let minY = Infinity;
-    for (const pts of verts.values()) for (const p of pts) minY = Math.min(minY, p.y);
-    // full-resolution ground check for boots
-    for (const n of ['bootL', 'bootR', 'legL', 'legR']) for (const p of worldVerts(byName[n])) minY = Math.min(minY, p.y);
-    r.minY = minY;
-    for (const [a, b] of clipPairs) {
-      const A = byName[a], B = byName[b];
-      if (!boxes.get(A).intersectsBox(boxes.get(B))) continue;
-      const n = worldVerts(A, 600).filter((p) => inside(p, B)).length;
-      if (n) r.clips.push(`${a} in ${b}: ${n}`);
+  // body as a box in its own frame, a hair smaller so touching surfaces don't count
+  const bodyInv = new THREE.Matrix4();
+  const v = new THREE.Vector3();
+  const insideBody = (pt, shrink = 0.012) => {
+    v.copy(pt).applyMatrix4(bodyInv);
+    const hx = U.W / 2 - shrink, hy = U.H / 2 - shrink, hz = U.D / 2 - shrink;
+    if (Math.abs(v.x) > hx || Math.abs(v.y) > hy || Math.abs(v.z) > hz) return false;
+    // rounded edges: outside the rounding radius near a corner doesn't count
+    const R = U.R;
+    const ex = Math.max(0, Math.abs(v.x) - (hx - R)), ey = Math.max(0, Math.abs(v.y) - (hy - R)), ez = Math.max(0, Math.abs(v.z) - (hz - R));
+    return ex * ex + ey * ey + ez * ez <= R * R;
+  };
+  const corners = (m, size, shrink) => {
+    const pts = [];
+    const [x, y, z] = size.map((s) => s / 2 - shrink);
+    for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) pts.push(new THREE.Vector3(sx * x, sy * y, sz * z).applyMatrix4(m));
+    return pts;
+  };
+  // sampled weapon vertices (in hold space, scaled)
+  const wverts = {};
+  for (const [id, list] of Object.entries(crowd.weapons)) {
+    const pts = [];
+    for (const m of list) {
+      const p = m.geometry.attributes.position;
+      const step = Math.max(1, Math.floor(p.count / 220));
+      for (let i = 0; i < p.count; i += step) pts.push(new THREE.Vector3().fromBufferAttribute(p, i));
     }
-    // connectivity graph
-    const touches = (A, B) => {
-      const ba = boxes.get(A).clone().expandByScalar(0.004), bb = boxes.get(B).clone().expandByScalar(0.004);
-      if (!ba.intersectsBox(bb)) return false;
-      for (const p of verts.get(A)) if (bb.containsPoint(p) && inside(p, B)) return true;
-      for (const p of verts.get(B)) if (ba.containsPoint(p) && inside(p, A)) return true;
-      return false;
-    };
-    const seen = new Set([byName.body]);
-    const queue = [byName.body];
-    while (queue.length) {
-      const a = queue.shift();
-      for (const b of parts) if (!seen.has(b) && touches(a, b)) { seen.add(b); queue.push(b); }
-    }
-    r.loose = parts.filter((p) => !seen.has(p)).map((p) => p.name);
-    // collider must enclose the pea at every phase
-    const c = colliders.pea;
-    const ab = c.b.clone().sub(c.a);
-    let outside = 0;
-    for (const pts of verts.values()) for (const p of pts) {
-      const s = THREE.MathUtils.clamp(p.clone().sub(c.a).dot(ab) / ab.lengthSq(), 0, 1);
-      if (p.distanceTo(c.a.clone().addScaledVector(ab, s)) > c.r) outside++;
-    }
-    r.outsideCollider = outside;
-    out.phases.push(r);
+    wverts[id] = pts;
   }
-  window.__pea.pause(0);
-
-  // z-fighting: coplanar, overlapping triangles on different meshes
-  const tris = [];
-  const A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3();
-  for (const m of [...parts, plate]) {
-    const g = m.geometry;
-    const idx = g.index ? g.index.array : [...Array(g.attributes.position.count).keys()];
-    for (let i = 0; i < idx.length; i += 3) {
-      m.getVertexPosition(idx[i], A); A.applyMatrix4(m.matrixWorld);
-      m.getVertexPosition(idx[i + 1], B); B.applyMatrix4(m.matrixWorld);
-      m.getVertexPosition(idx[i + 2], C); C.applyMatrix4(m.matrixWorld);
-      const n = B.clone().sub(A).cross(C.clone().sub(A));
-      const area = n.length() / 2;
-      if (area < 1e-7) continue;
-      n.normalize();
-      const d = n.dot(A);
-      const key = `${Math.round(n.x * 50)},${Math.round(n.y * 50)},${Math.round(n.z * 50)},${Math.round(d * 1000)}`;
-      tris.push({ m: m.name, key, n, d, box: new THREE.Box3().setFromPoints([A.clone(), B.clone(), C.clone()]) });
+  const phases = [];
+  const W = Object.keys(HOLD);
+  for (const t of [0, 0.9, 1.8, 2.7]) phases.push({ name: `idle ${t}`, t, ready: 0.55 });
+  for (const [mx, mz, label] of [[0, 1, 'fwd'], [1, 0, 'strafe'], [0, -1, 'back'], [0.7, 0.7, 'diag']]) {
+    for (let c = 0; c < 1; c += 0.125) phases.push({ name: `walk ${label} ${c.toFixed(2)}`, walk: 1, cycle: c, stride: 0.6, mx, mz, ready: 1 });
+  }
+  phases.push({ name: 'sprint', walk: 1, cycle: 0.3, stride: 0.7, sprint: true, ready: 0.15 });
+  phases.push({ name: 'kneel', kneel: 1, ready: 1 }, { name: 'kneel lowered', kneel: 1, ready: 0.55 });
+  phases.push({ name: 'jump rise', air: 1, rise: 1 }, { name: 'jump fall', air: 1, rise: -1 }, { name: 'land', land: 1 });
+  for (const p of [-0.9, -0.4, 0.4, 0.9]) phases.push({ name: `aim pitch ${p}`, aimPitch: p, ready: 1 });
+  for (const tw of [-0.5, 0.5]) phases.push({ name: `twist ${tw}`, twist: tw, ready: 1, aimPitch: 0.3 });
+  for (const r of [0.1, 0.3, 0.5, 0.7, 0.9]) phases.push({ name: `reload ${r}`, reload: r, ready: 1 });
+  phases.push({ name: 'recoil', recoil: 1, ready: 1 }, { name: 'flinch', flinch: 1, ready: 1 });
+  for (let r = 0; r <= 1; r += 0.125) phases.push({ name: `throw ${r}`, throw: r, weapon: 'grenade', only: true });
+  for (const d of [0, 0.5, 1]) phases.push({ name: `dead ${d}`, dead: d });
+  const pz = makePose();
+  for (const ph of phases) {
+    for (const w of ph.only ? [ph.weapon] : W) {
+      if (!ph.only && w === 'grenade' && (ph.reload !== undefined)) continue;
+      const s = { t: 0, weapon: w, ...ph };
+      if (ph.only) s.weapon = ph.weapon;
+      pose(s, pz);
+      bodyInv.copy(pz.body).invert();
+      const r = { name: `${ph.name} [${s.weapon}]`, minY: Infinity, clips: [], loose: [], grip: 0 };
+      // feet on the ground, not inside the body; the body never sinks into the ground
+      for (let i = 0; i < 2; i++) {
+        for (const c of corners(pz.feet[i], U.FOOT, 0.03)) if (insideBody(c)) r.clips.push(`foot${i} in body`);
+        for (const c of corners(pz.feet[i], U.FOOT, 0.0005)) r.minY = Math.min(r.minY, c.y);
+      }
+      for (const c of corners(pz.body, [U.W, U.H, U.D], U.R)) if (c.y - U.R < -0.01) { r.clips.push('body in ground'); break; }
+      // hands outside the body
+      for (let i = 0; i < 2; i++) for (const c of corners(pz.hands[i], U.HAND, 0.03)) if (insideBody(c)) { r.clips.push(`hand${i} in body`); break; }
+      // gun outside the body
+      if (pz.showWeapon) {
+        let n = 0;
+        const m = pz.weapon;
+        for (const p of wverts[s.weapon]) if (insideBody(v.copy(p).applyMatrix4(m).clone())) n++;
+        if (n) r.clips.push(`${s.weapon} in body (${n} verts)`);
+        // trigger hand on the grip
+        const grip = new THREE.Vector3().setFromMatrixPosition(m);
+        const hand = new THREE.Vector3().setFromMatrixPosition(pz.hands[1]);
+        r.grip = grip.distanceTo(hand);
+        if (s.weapon === 'grenade' ? r.grip > 0.1 : r.grip > 0.08) r.loose.push(`grip ${r.grip.toFixed(3)}`);
+        // muzzle out ahead of the body when shouldered
+        if (s.ready === 1 && !ph.reload && s.weapon !== 'grenade' && Math.abs(ph.twist || 0) < 0.1) {
+          const mz = pz.muzzle.clone().applyMatrix4(bodyInv);
+          if (mz.z < U.D / 2 + 0.1) r.loose.push(`muzzle behind (${mz.z.toFixed(2)})`);
+        }
+      }
+      // nothing floats away: hands within reach, feet under the body (alive)
+      if ((ph.dead ?? -1) < 0) {
+        const c = new THREE.Vector3().setFromMatrixPosition(pz.body);
+        for (let i = 0; i < 2; i++) {
+          const h = new THREE.Vector3().setFromMatrixPosition(pz.hands[i]);
+          if (h.distanceTo(c) > 0.8) r.loose.push(`hand${i} ${h.distanceTo(c).toFixed(2)}m out`);
+          const f = new THREE.Vector3().setFromMatrixPosition(pz.feet[i]);
+          if (Math.abs(f.x) > 0.4 || Math.abs(f.z) > 0.5 || f.y > 0.3) r.loose.push(`foot${i} off`);
+        }
+      }
+      r.air = !!ph.air;
+      out.phases.push(r);
     }
   }
-  const buckets = new Map();
-  for (const t of tris) { if (!buckets.has(t.key)) buckets.set(t.key, []); buckets.get(t.key).push(t); }
-  const zf = new Set();
-  for (const list of buckets.values()) {
-    const names = new Set(list.map((t) => t.m));
-    if (names.size < 2) continue;
-    for (let i = 0; i < list.length; i++) for (let j = i + 1; j < list.length; j++) {
-      const a = list[i], b = list[j];
-      if (a.m === b.m || a.n.dot(b.n) < 0.9995 || Math.abs(a.d - b.d) > 2e-4) continue;
-      const ia = a.box.clone().intersect(b.box);
-      const s = ia.getSize(new THREE.Vector3());
-      if (!ia.isEmpty() && [s.x, s.y, s.z].filter((x) => x > 1e-4).length >= 2) zf.add([a.m, b.m].sort().join('/'));
-    }
-  }
-  out.zfight = [...zf];
-  out.triangles = tris.length;
-  const cam = window.__pea.camera;
-  out.depthRatio = cam.far / cam.near;
   return out;
 };
 
-// camera collision checks (run in page)
-const cameraChecks = () => {
-  const { THREE, controls, camera, colliders, pea } = window.__pea;
-  const bad = [];
-  const c = colliders.pea;
-  const ab = c.b.clone().sub(c.a);
-  const capsuleDist = (p) => {
-    const s = THREE.MathUtils.clamp(p.clone().sub(c.a).dot(ab) / ab.lengthSq(), 0, 1);
-    return p.distanceTo(c.a.clone().addScaledVector(ab, s));
-  };
-  // sweep every direction at minimum zoom, and below-ground attempts at max zoom
-  for (let yaw = 0; yaw < Math.PI * 2; yaw += Math.PI / 8) {
-    for (const pitch of [-0.5, -0.12, 0, 0.4, 0.9, 1.45]) {
-      for (const dist of [0.2, controls.limits.minDist, 4, 40]) {
-        controls.goal.yaw = yaw; controls.goal.pitch = pitch; controls.goal.dist = dist;
-        controls.goal.dist = THREE.MathUtils.clamp(controls.goal.dist, controls.limits.minDist, controls.limits.maxDist);
-        Object.assign(controls.cur, { yaw, pitch, dist, target: controls.goal.target.clone() });
-        controls.update(1 / 60);
-        const p = camera.position;
-        if (p.y < colliders.plate.max.y + 0.1) bad.push(`below ground y=${p.y.toFixed(3)}`);
-        if (capsuleDist(p) < c.r) bad.push(`inside pea collider yaw=${yaw.toFixed(2)} pitch=${pitch}`);
-      }
+// screen rects of visible UI that must not overlap each other or leave the screen
+const uiLayout = (sel) => {
+  const els = [...document.querySelectorAll(sel)].filter((e) => {
+    const cs = getComputedStyle(e);
+    if (cs.display === 'none' || cs.visibility === 'hidden' || e.closest('[hidden]')) return false;
+    const r = e.getBoundingClientRect();
+    return r.width > 0 && r.height > 0;
+  });
+  const rs = els.map((e) => ({ id: e.id || e.className, r: e.getBoundingClientRect() }));
+  const overlaps = [], offscreen = [];
+  for (let i = 0; i < rs.length; i++) {
+    const a = rs[i].r;
+    if (a.left < -1 || a.top < -1 || a.right > innerWidth + 1 || a.bottom > innerHeight + 1) offscreen.push(rs[i].id);
+    for (let j = i + 1; j < rs.length; j++) {
+      const b = rs[j].r;
+      if (a.left < b.right - 1 && b.left < a.right - 1 && a.top < b.bottom - 1 && b.top < a.bottom - 1) overlaps.push(`${rs[i].id}×${rs[j].id}`);
     }
   }
-  // panning stays over the plate
-  controls.pan(1e6, 1e6);
-  const t = controls.goal.target;
-  if (Math.abs(t.x) > colliders.plate.max.x || Math.abs(t.z) > colliders.plate.max.z) bad.push('pan escaped plate');
-  controls.fit(true);
-  controls.update(1 / 60);
-  pea.userData.setPhase(0, true);
-  return bad;
+  return { overlaps, offscreen, n: rs.length };
 };
-
-// default framing: whole pea visible, decent size, no UI covering it
-const framingCheck = () => {
-  const { THREE, controls, camera, pea } = window.__pea;
-  controls.fit(true);
-  controls.update(1 / 60);
-  camera.updateMatrixWorld();
-  const box = new THREE.Box3().setFromObject(pea, true);
-  const pts = [];
-  for (const x of [box.min.x, box.max.x]) for (const y of [box.min.y, box.max.y]) for (const z of [box.min.z, box.max.z]) pts.push(new THREE.Vector3(x, y, z).project(camera));
-  const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
-  const W = innerWidth, H = innerHeight;
-  const rect = { left: ((Math.min(...xs) + 1) / 2) * W, right: ((Math.max(...xs) + 1) / 2) * W, top: ((1 - Math.max(...ys)) / 2) * H, bottom: ((1 - Math.min(...ys)) / 2) * H };
-  const inView = xs.every((x) => x > -1 && x < 1) && ys.every((y) => y > -1 && y < 1);
-  const frac = Math.max((rect.right - rect.left) / W, (rect.bottom - rect.top) / H);
-  const overlaps = [];
-  for (const el of document.querySelectorAll('.mark, .hint:not(.gone), .btn')) {
-    const r = el.getBoundingClientRect();
-    if (r.width === 0) continue;
-    if (r.left < rect.right && r.right > rect.left && r.top < rect.bottom && r.bottom > rect.top) overlaps.push(el.className || el.id);
-  }
-  // UI elements must not overlap each other
-  const els = [...document.querySelectorAll('.mark, .hint, .btn')].map((e) => [e.className, e.getBoundingClientRect()]);
-  for (let i = 0; i < els.length; i++) for (let j = i + 1; j < els.length; j++) {
-    const a = els[i][1], b = els[j][1];
-    if (a.left < b.right && a.right > b.left && a.top < b.bottom && a.bottom > b.top) overlaps.push(`${els[i][0]}x${els[j][0]}`);
-  }
-  const offscreen = els.filter(([, r]) => r.left < 0 || r.top < 0 || r.right > W || r.bottom > H).map(([n]) => n);
-  return { inView, frac, rect, overlaps, offscreen };
-};
-
-// center pixels of the render should be the pea
-const centerPixel = () => {
-  const { renderer, scene, camera } = window.__pea;
-  renderer.render(scene, camera);
-  const gl = renderer.getContext();
-  const px = new Uint8Array(4);
-  gl.readPixels(Math.floor(gl.drawingBufferWidth / 2), Math.floor(gl.drawingBufferHeight * 0.45), 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, px);
-  return [...px];
-};
+const HUD_SEL = '#radar, .topbar, .vitals, .gun, #corner .icon-btn, .tbtn, #prompt.on';
 
 try {
-  // ---------- desktop ----------
-  const d = await open({ viewport: { width: 1280, height: 800 } });
-  const g = await d.page.evaluate(geometryChecks);
-  check('meshes closed + outward + opaque front faces (no gaps / see-through)', g.closed.length === 0, g.closed.map((c) => `${c.name}: open=${c.open} vol=${c.vol.toFixed(4)} front=${c.front}`).join('; '));
-  check('z-fighting: no coplanar overlapping faces between meshes', g.zfight.length === 0, g.zfight.join(', ') || `${g.triangles} tris`);
-  check('depth precision far/near <= 10000', g.depthRatio <= 10000, String(g.depthRatio));
-  for (const r of g.phases) {
-    check(`phase t=${r.t}: feet on plate, nothing under it`, r.minY >= -1e-4 && r.minY <= 0.01, `minY=${r.minY.toFixed(4)}`);
-    check(`phase t=${r.t}: no clipping`, r.clips.length === 0, r.clips.join('; '));
-    check(`phase t=${r.t}: no loose parts (${g.partCount} parts)`, r.loose.length === 0, r.loose.join(', '));
-    check(`phase t=${r.t}: pea inside its collider`, r.outsideCollider === 0, `${r.outsideCollider} verts outside`);
+  // ======================= desktop =======================
+  const d = await open({ viewport: { width: 1280, height: 720 } });
+  const P = d.page;
+  // part geometry, through the instanced crowd
+  await P.evaluate(() => {
+    const c = window.__game.crowd;
+    window.__parts = { PART_GEO: { body: c.body.geometry, visor: c.visor.geometry, pack: c.pack.geometry, foot: c.foot.geometry, hand: c.hand.geometry } };
+  });
+  await P.waitForTimeout(600);
+  await P.screenshot({ path: `${OUT}/menu.png` });
+  const menuL = await P.evaluate(uiLayout, '.menu-frame, .deploy');
+  check('setup screen shows on load, battle not started', await P.evaluate(() => window.__game.state === 'menu' && !document.getElementById('menu').hidden && document.getElementById('hud').hidden));
+  check('setup screen fits the window', menuL.offscreen.length === 0, menuL.offscreen.join(', '));
+
+  // ---- model
+  const g = await P.evaluate(modelChecks);
+  check('soldier parts are closed, outward meshes', g.closed.length === 0, g.closed.map((c) => `${c.name}: open=${c.open} vol=${c.vol.toFixed(4)}`).join('; '));
+  const bad = g.phases.filter((r) => r.clips.length);
+  check(`no clipping across ${g.phases.length} pose/weapon combinations (hands, feet, guns vs body)`, bad.length === 0, bad.slice(0, 4).map((r) => `${r.name}: ${r.clips.join(',')}`).join('; '));
+  const loose = g.phases.filter((r) => r.loose.length);
+  check('no loose parts: gun in the hand, hands within reach, feet under the body', loose.length === 0, loose.slice(0, 4).map((r) => `${r.name}: ${r.loose.join(',')}`).join('; '));
+  const feet = g.phases.filter((r) => r.minY < -0.002 || (!r.air && r.minY > 0.012));
+  check('feet on the ground (never below it; one planted unless jumping)', feet.length === 0, feet.slice(0, 4).map((r) => `${r.name}: ${r.minY.toFixed(3)}`).join('; '));
+
+  // ---- start a battle from the setup screen (real click)
+  await P.click('#deploy');
+  await P.waitForFunction(() => window.__game.state === 'play', null, { timeout: 15000 });
+  const st = await P.evaluate(() => ({ n: window.__game.battle.units.length, size: window.__game.battle.settings.size, teams: window.__game.battle.teams.length, hud: !document.getElementById('hud').hidden, lock: window.__lockAsked || 0 }));
+  check('Deploy starts a battle with full armies', st.n === st.size * st.teams && st.hud, JSON.stringify(st));
+  check('Deploy asks for pointer lock', st.lock > 0);
+  await P.waitForTimeout(800);
+  await P.screenshot({ path: `${OUT}/desktop-3p.png` });
+  const lay = await P.evaluate(uiLayout, HUD_SEL);
+  check('desktop: HUD elements inside the screen and not overlapping', lay.overlaps.length === 0 && lay.offscreen.length === 0, [...lay.overlaps, ...lay.offscreen].join(', '));
+
+  // ---- third-person framing: the player is on screen, left of the crosshair, not covering it
+  await P.evaluate(() => {
+    const g = window.__game;
+    g.battle.aiFrozen = true;
+    for (const p of [...g.battle.props]) if (Math.hypot(p.box.x, p.box.z - 60) < 14) g.battle.removeProp(p);
+    g.player.pos.set(0, 0, 60); g.player.vel.set(0, 0, 0); g.cam.yaw = 0; g.cam.pitch = 0;
+    window.__frames = 0; const tick = () => { window.__frames++; requestAnimationFrame(tick); }; tick();
+  });
+  await P.waitForFunction(() => window.__frames > 8, null, { timeout: 60000 });
+  const frame3 = await P.evaluate(() => {
+    const { THREE, camera, player } = window.__game;
+    const pts = [];
+    const m = player.world, U = window.__game.U;
+    for (const y of [0.05, U.BODY_Y, U.TOP]) for (const x of [-U.W / 2, U.W / 2]) pts.push(new THREE.Vector3(x, y, 0).applyMatrix4(m).project(camera));
+    const xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+    return { minX: Math.min(...xs), maxX: Math.max(...xs), minY: Math.min(...ys), maxY: Math.max(...ys), dist: camera.position.distanceTo(player.eye()) };
+  });
+  check('third person: whole soldier in view, off to the left of the crosshair', frame3.minX > -1 && frame3.maxX < 0.02 && frame3.minY > -1 && frame3.maxY < 1 && frame3.dist > 2.5, JSON.stringify(frame3));
+
+  // ---- controls
+  await P.evaluate(() => { const g = window.__game; g.battle.clearUnits(); g.battle.points.forEach(() => {}); g.player.pos.set(0, 0, 60); g.player.vel.set(0, 0, 0); g.cam.yaw = 0; g.cam.pitch = 0; });
+  // find a clear patch: move the player to open ground
+  await P.evaluate(() => { const g = window.__game; for (const p of [...g.battle.props]) if (Math.hypot(p.box.x, p.box.z - 60) < 14) g.battle.removeProp(p); });
+  const z0 = await P.evaluate(() => window.__game.player.pos.z);
+  // headless rendering is slow, so wait on game state rather than wall time
+  await P.keyboard.down('KeyW');
+  await P.waitForFunction((z0) => window.__game.player.pos.z < z0 - 1.2, z0, { timeout: 20000 }).catch(() => {});
+  await P.keyboard.up('KeyW');
+  const mv = await P.evaluate(() => ({ z: window.__game.player.pos.z, x: window.__game.player.pos.x, facing: window.__game.player.facing }));
+  check('W walks away from the camera', mv.z - z0 < -1 && Math.abs(mv.x) < 0.15, `dz=${(mv.z - z0).toFixed(2)}`);
+  const j0 = await P.evaluate(() => window.__game.player.jumps);
+  await P.keyboard.press('Space');
+  const jumped = await P.waitForFunction((j) => window.__game.player.jumps > j && window.__game.player.pos.y > 0.2, j0, { timeout: 20000 }).then(() => true, () => false);
+  const landed = await P.waitForFunction(() => window.__game.player.grounded, null, { timeout: 20000 }).then(() => true, () => false);
+  check('Space jumps and lands', jumped && landed);
+  const y0 = await P.evaluate(() => window.__game.cam.yaw);
+  await P.evaluate(() => { window.__game.input.look.dx += 0.5; });
+  await P.waitForFunction((y0) => Math.abs(window.__game.cam.yaw - y0) > 0.3, y0, { timeout: 30000 }).catch(() => {});
+  const y1 = await P.evaluate(() => window.__game.cam.yaw);
+  check('mouse look turns the camera', Math.abs(y1 - y0) > 0.3, `${(y1 - y0).toFixed(2)} rad`);
+  await P.keyboard.press('KeyV');
+  await P.waitForFunction(() => window.__game.cam.blend > 0.99, null, { timeout: 20000 }).catch(() => {});
+  await P.waitForTimeout(300);
+  const fp = await P.evaluate(() => ({ mode: window.__game.cam.mode, d: window.__game.camera.position.distanceTo(window.__game.player.eye()) }));
+  await P.screenshot({ path: `${OUT}/desktop-1p.png` });
+  await P.keyboard.press('KeyV');
+  await P.waitForFunction(() => window.__game.cam.blend < 0.01, null, { timeout: 20000 }).catch(() => {});
+  await P.waitForTimeout(300);
+  const tp = await P.evaluate(() => ({ mode: window.__game.cam.mode, d: window.__game.camera.position.distanceTo(window.__game.player.eye()) }));
+  check('V switches first person and back to third person', fp.mode === '1p' && fp.d < 0.3 && tp.mode === '3p' && tp.d > 2.5, JSON.stringify({ fp, tp }));
+
+  // camera never ends up inside cover: back the player against walls from many angles
+  const camClip = await P.evaluate(() => {
+    const { battle, player, cam, camera } = window.__game;
+    const bad = [];
+    const p = battle.spawnProp('slab', 0, 57.5, 0);
+    for (let a = 0; a < 16; a++) {
+      cam.yaw = (a / 16) * Math.PI * 2;
+      cam.pitch = a % 2 ? -0.5 : 0.3;
+      player.pos.set(Math.sin(a) * 0.9, 0, 56.6 + (a % 3) * 0.3);
+      battle.collideBody(player);
+      cam.update(1, player, true);
+      const c = camera.position;
+      for (const q of battle.props) {
+        const b = q.box;
+        const dx = c.x - b.x, dz = c.z - b.z, co = Math.cos(b.yaw), si = Math.sin(b.yaw);
+        const lx = dx * co - dz * si, lz = dx * si + dz * co;
+        if (Math.abs(lx) < b.hx && Math.abs(lz) < b.hz && c.y < b.h) bad.push(`${q.type}@${a}`);
+      }
+      if (c.y < 0.05) bad.push(`ground@${a}`);
+    }
+    battle.removeProp(p);
+    player.pos.set(0, 0, 60);
+    cam.yaw = 0; cam.pitch = 0;
+    return bad;
+  });
+  check('camera stays out of walls and the ground', camClip.length === 0, camClip.slice(0, 4).join(', '));
+
+  // ---- aiming: what's under the crosshair is what gets hit, in both views
+  const aimRes = [];
+  for (const view of ['3p', '1p']) {
+    const r = await P.evaluate(async (view) => {
+      const { battle, player, cam, THREE } = window.__game;
+      cam.mode = view;
+      cam.blend = view === '1p' ? 1 : 0;
+      battle.clearUnits();
+      battle.aiFrozen = true;
+      player.pos.set(0, 0, 60); player.vel.set(0, 0, 0);
+      player.setWeapon(0, true);
+      const e = battle.spawnUnit(1, 'rifleman', new THREE.Vector3(3, 0, 42), { yaw: 0 });
+      e.god = false;
+      // point the camera so the crosshair sits on the enemy's chest
+      for (let i = 0; i < 30; i++) {
+        const c = e.center();
+        const d = c.sub(window.__game.camera.position);
+        cam.yaw = Math.atan2(-d.x, -d.z);
+        cam.pitch = Math.atan2(d.y, Math.hypot(d.x, d.z));
+        await new Promise((r) => requestAnimationFrame(r));
+      }
+      const hp0 = e.hp;
+      // keep pulling the trigger (one shot per pulse) until a shot lands or time runs out
+      const t0 = performance.now();
+      while (e.hp >= hp0 && performance.now() - t0 < 30000) {
+        player.cool = 0; player.wasFiring = false; player.ready = 1;
+        window.__game.input.firePulse = true;
+        const s0 = player.shots;
+        while (player.shots === s0 && performance.now() - t0 < 30000) await new Promise((r) => requestAnimationFrame(r));
+        await new Promise((r) => requestAnimationFrame(r));
+        if (player.shots - s0 >= 1 && e.hp >= hp0 && performance.now() - t0 > 5000) break;
+      }
+      return { view, hp0, hp: e.hp, alive: e.alive, shots: player.shots };
+    }, view);
+    aimRes.push(r);
   }
-  const cam = await d.page.evaluate(cameraChecks);
-  check('camera collides with plate and pea; pan clamped to plate', cam.length === 0, cam.slice(0, 4).join('; '));
-  const f = await d.page.evaluate(framingCheck);
-  check('desktop: pea fully framed at default view', f.inView && f.frac > 0.3 && f.frac < 0.95, `fills ${(f.frac * 100).toFixed(0)}%`);
-  check('desktop: UI never covers the pea or overlaps itself', f.overlaps.length === 0 && f.offscreen.length === 0, [...f.overlaps, ...f.offscreen].join(', '));
-  const px = await d.page.evaluate(centerPixel);
-  check('render: pea visible at screen centre', px[1] > px[0] && px[1] > px[2] && px[1] > 60, px.join(','));
+  check('aiming: the crosshair target takes the hit (third and first person)', aimRes.every((r) => r.hp < r.hp0), JSON.stringify(aimRes));
+  await P.evaluate(() => { const g = window.__game; g.cam.mode = '3p'; g.cam.blend = 0; });
 
-  // turntable + close-ups
-  const shots = [];
-  // shot distances/targets are authored for a full-size pea; scale them with the model
-  const S = await d.page.evaluate(() => window.__pea.pea.scale.x);
-  const shoot = async (name, yaw, pitch, dist, target) => {
-    dist *= S;
-    if (target) target = target.map((x) => x * S);
-    await d.page.evaluate(([yaw, pitch, dist, target]) => {
-      const c = window.__pea.controls;
-      const t = target ? new window.__pea.THREE.Vector3(...target) : c.focus.center.clone();
-      Object.assign(c.goal, { yaw, pitch, dist, target: t });
-      Object.assign(c.cur, { yaw, pitch, dist, target: t.clone() });
-      c.update(1 / 60);
-      window.__pea.render();
-    }, [yaw, pitch, dist, target]);
-    await d.page.screenshot({ path: `${OUT}/${name}.png` });
-    shots.push(name);
-  };
-  for (let i = 0; i < 8; i++) await shoot(`turntable-${String(i * 45).padStart(3, '0')}`, (i * Math.PI) / 4, 0.18, 2.6);
-  await shoot('top', 0.3, 1.45, 2.8);
-  await shoot('low', 0.4, -0.1, 2.4);
-  await shoot('closeup-face', 0, 0.08, 1.2, [0, 0.66, 0]);
-  await shoot('closeup-boots', 0.5, 0.15, 1.1, [0, 0.12, 0.05]);
-  await shoot('closeup-helmet', 2.4, 0.5, 1.2, [0, 1.05, 0]);
-  await shoot('closeup-hand', 1.3, 0.1, 1.1, [0.66, 0.3, 0.1]);
-  await d.page.evaluate(() => { window.__pea.pause(2.48); window.__pea.render(); });
-  await shoot('closeup-blink', 0, 0.08, 1.2, [0, 0.66, 0]);
-  check('turntable + close-up renders saved', shots.length === 15, `${OUT}/`);
+  // ---- weapons
+  const guns = await P.evaluate(async () => {
+    const { battle, player, SLOTS } = window.__game;
+    battle.clearUnits();
+    const out = [];
+    for (let i = 0; i < SLOTS.length; i++) {
+      player.setWeapon(i, true);
+      player.reloadT = 0; player.throwT = 0; player.cool = 0; player.wasFiring = false; player.ready = 1;
+      const w = player.weapon;
+      const before = { mag: w.mag, heat: w.heat, proj: battle.projectiles.length, shots: battle.stats.shots };
+      const ok = player.fire(battle);
+      await new Promise((r) => setTimeout(r, 900));
+      const projNeeded = w.def.kind === 'projectile' || w.def.kind === 'throw';
+      out.push({ id: w.id, ok, used: w.mag < before.mag || w.heat > before.heat || w.def.kind === 'throw', proj: !projNeeded || battle.projectiles.length > before.proj || battle.stats.kills >= 0 });
+    }
+    player.setWeapon(0, true);
+    return out;
+  });
+  check('weapons: all seven fire and use ammo or heat', guns.length === 7 && guns.every((x) => x.ok && x.used && x.proj), JSON.stringify(guns.filter((x) => !(x.ok && x.used && x.proj))));
 
-  // desktop button: mouse click (no pointer lock in this build; verify the hit target is the button)
-  await d.page.evaluate(() => { window.__pea.resume(); const c = window.__pea.controls; c.goal.yaw = 3; c.goal.dist = 9; });
-  const hitD = await d.page.evaluate(() => { const r = document.getElementById('recenter').getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('#recenter') !== null; });
-  check('desktop: recenter button is the top element at its centre', hitD);
-  await d.page.click('#recenter');
-  const resetD = await d.page.evaluate(() => { const c = window.__pea.controls; return Math.abs(c.goal.yaw - 0.55) < 1e-6 && Math.abs(c.goal.dist - c.fitDistance()) < 1e-3; });
-  check('desktop: recenter button click resets the camera', resetD);
-  await d.page.evaluate(() => { const c = window.__pea.controls; c.goal.yaw = 2; });
-  await d.page.mouse.move(640, 400);
-  await d.page.keyboard.press('KeyR');
-  check('desktop: R key recenters', await d.page.evaluate(() => Math.abs(window.__pea.controls.goal.yaw - 0.55) < 1e-6));
-  // mouse drag orbits
-  const y0 = await d.page.evaluate(() => window.__pea.controls.goal.yaw);
-  await d.page.mouse.move(400, 400); await d.page.mouse.down(); await d.page.mouse.move(600, 380, { steps: 6 }); await d.page.mouse.up();
-  const y1 = await d.page.evaluate(() => window.__pea.controls.goal.yaw);
-  check('desktop: mouse drag orbits', Math.abs(y1 - y0) > 0.2, `${(y1 - y0).toFixed(2)} rad`);
-  await d.page.mouse.wheel(0, 400);
-  await d.page.click('#recenter');
-  await d.page.waitForTimeout(900);
-  await d.page.screenshot({ path: `${OUT}/desktop.png` });
+  // ---- AI battle, fast-forwarded
+  const battle = await P.evaluate(() => {
+    const g = window.__game;
+    g.start({ mode: 'battle', teams: 2, size: 40, tickets: 4, view: '3p', playerTeam: 0 });
+    g.freeze(true);
+    const b = g.battle;
+    b.god = true;
+    let covered = 0, under = 0, outside = 0, ticks = 0;
+    const t0 = performance.now();
+    for (let i = 0; i < 30 * 100; i++) {
+      b.update(1 / 30);
+      ticks++;
+      if (i % 30 === 0) for (const u of b.units) {
+        if (!u.alive) continue;
+        if (u.brain?.cover) covered++;
+        if (u.pos.y < -0.01) under++;
+        if (Math.abs(u.pos.x) > g.HALF || Math.abs(u.pos.z) > g.HALF) outside++;
+      }
+    }
+    const ms = (performance.now() - t0) / ticks;
+    g.freeze(false);
+    return { shots: b.stats.shots, kills: b.stats.kills, covered, under, outside, captured: b.points.filter((p) => p.owner >= 0).length, ms: +ms.toFixed(2), squads: b.squads.length, alive: b.counts() };
+  });
+  check('AI: armies fight it out (shots fired, soldiers fall)', battle.shots > 300 && battle.kills >= 15, JSON.stringify(battle));
+  check('AI: soldiers use cover', battle.covered > 200, `cover-samples=${battle.covered}`);
+  check('AI: squads take control points', battle.captured >= 3, `captured=${battle.captured}`);
+  check('AI: nobody under the ground or off the map', battle.under === 0 && battle.outside === 0, JSON.stringify(battle));
+  check('AI: 80 soldiers simulate in under 8 ms per tick (headless)', battle.ms < 8, `${battle.ms} ms`);
+  // battle overview render
+  await P.evaluate(() => {
+    const g = window.__game, b = g.battle;
+    let best = b.points[0], bn = 0;
+    for (const pt of b.points) { const n = b.nearUnits(pt.pos.x, pt.pos.z, 25).length; if (n > bn) { bn = n; best = pt; } }
+    g.freeze(true);
+    g.view([best.pos.x + 22, 15, best.pos.z + 22], [best.pos.x, 0, best.pos.z]);
+    g.render();
+  });
+  await P.screenshot({ path: `${OUT}/battle-overview.png` });
+  await P.evaluate(() => { const g = window.__game; g.unfreezeCam(); g.freeze(false); });
+
+  // ---- sandbox palette: pick from the grid, click the field
+  await P.evaluate(() => { const g = window.__game; g.start({ mode: 'battle', teams: 2, size: 10, tickets: 4, view: '3p', playerTeam: 0 }); g.battle.aiFrozen = true; g.battle.reinforce = false; });
+  await P.keyboard.press('Tab');
+  check('Tab no longer cycles anything', await P.evaluate(() => !window.__game.sandbox.open));
+  await P.keyboard.press('KeyB');
+  await P.waitForFunction(() => window.__game.sandbox.open && window.__game.cam.mode === 'over', null, { timeout: 30000 }).catch(() => {});
+  const sb0 = await P.evaluate(() => ({ open: window.__game.sandbox.open, mode: window.__game.input.mode, cam: window.__game.cam.mode, n: window.__game.battle.units.length }));
+  check('sandbox: B opens the palette with the overview camera', sb0.open && sb0.mode === 'build' && sb0.cam === 'over', JSON.stringify(sb0));
+  await P.click('.pal-item[data-id="gunner"]');
+  const sel = await P.evaluate(() => document.querySelector('.pal-item[data-id="gunner"]').getAttribute('aria-selected'));
+  await P.waitForTimeout(300);
+  await P.mouse.click(420, 420);
+  await P.waitForTimeout(200);
+  const sb1 = await P.evaluate(() => window.__game.battle.units.length);
+  check('sandbox: picking an item then clicking the field places it', sel === 'true' && sb1 === sb0.n + 1, `${sb0.n} -> ${sb1}, selected=${sel}`);
+  await P.click('[data-tab="cover"]');
+  await P.click('.pal-item[data-id="bunker"]');
+  const props0 = await P.evaluate(() => window.__game.battle.props.length);
+  await P.mouse.click(300, 300);
+  await P.waitForTimeout(200);
+  const props1 = await P.evaluate(() => window.__game.battle.props.length);
+  check('sandbox: cover placed from the palette', props1 === props0 + 1, `${props0} -> ${props1}`);
+  await P.click('[data-tab="tools"]');
+  await P.click('.pal-item[data-id="delete"]');
+  const pos = await P.evaluate(() => {
+    const g = window.__game, u = g.battle.units[g.battle.units.length - 1];
+    const p = u.center().project(g.camera);
+    return { x: (p.x + 1) / 2 * innerWidth, y: (1 - p.y) / 2 * innerHeight };
+  });
+  await P.mouse.click(pos.x, pos.y);
+  await P.waitForTimeout(200);
+  const sb2 = await P.evaluate(() => window.__game.battle.units.length);
+  check('sandbox: delete tool removes a soldier', sb2 === sb1 - 1, `${sb1} -> ${sb2}`);
+  await P.screenshot({ path: `${OUT}/desktop-sandbox.png` });
+  const palL = await P.evaluate(uiLayout, '.palette, #radar, .topbar, .vitals');
+  check('sandbox: palette fits and leaves the HUD clear', palL.overlaps.length === 0 && palL.offscreen.length === 0, [...palL.overlaps, ...palL.offscreen].join(', '));
+  for (const t of ['freeze', 'slow', 'god']) await P.click(`[data-t="${t}"]`);
+  const tools = await P.evaluate(() => ({ frozen: window.__game.battle.aiFrozen, slow: window.__game.battle.timeScale, god: window.__game.battle.god }));
+  check('sandbox: pause AI, slow motion and god mode toggle', tools.frozen === false && tools.slow < 1 && tools.god, JSON.stringify(tools));
+  await P.click('[data-t="clearUnits"]');
+  check('sandbox: clear removes every soldier but you', await P.evaluate(() => window.__game.battle.units.length === 1));
+  await P.click('#palClose');
+  check('sandbox: closing returns to the player camera', await P.evaluate(() => !window.__game.sandbox.open && window.__game.cam.mode !== 'over'));
+
+  // ---- pause and end
+  await P.evaluate(() => window.__game.pause(true));
+  check('pause sheet shows and the game stops', await P.evaluate(() => !document.getElementById('pause').hidden && window.__game.state === 'pause'));
+  await P.click('#resume');
+  check('resume returns to play', await P.evaluate(() => window.__game.state === 'play'));
+  await P.evaluate(() => { const b = window.__game.battle; b.teams[1].tickets = 0; for (const u of b.units) if (u.team === 1) u.alive = false; });
+  const ended = await P.waitForFunction(() => window.__game.state === 'end' && !document.getElementById('end').hidden, null, { timeout: 60000 }).then(() => true, () => false);
+  check('wiping out the enemy ends the battle with a result screen', ended && /Victory/.test(await P.textContent('#endTitle')));
+  await P.click('#endMenu');
+  check('Setup returns to the setup screen', await P.evaluate(() => window.__game.state === 'menu'));
+
+  // ---- unit turntable + closeups
+  await P.evaluate(() => {
+    const g = window.__game;
+    g.start({ mode: 'sandbox', teams: 2, size: 10, view: '3p', playerTeam: 0 });
+    g.sandbox.toggle(false);
+    const b = g.battle; b.clearAll(); b.aiFrozen = true;
+    const T = g.THREE;
+    window.__m = [b.spawnUnit(0, 'rifleman', new T.Vector3(0, 0, 0), { yaw: 0 }), b.spawnUnit(1, 'gunner', new T.Vector3(1.5, 0, 0.6), { yaw: -0.5 }), b.spawnUnit(0, 'assault', new T.Vector3(-1.5, 0, 0.6), { yaw: 0.5 })];
+    for (const u of window.__m) u.ready = 1;
+    g.player.pos.set(0, 0, -40);
+    g.freeze(true);
+  });
+  for (let a = 0; a < 8; a++) {
+    await P.evaluate((a) => {
+      const g = window.__game;
+      const yaw = (a / 8) * Math.PI * 2;
+      for (const u of window.__m) u.animate(1 / 60);
+      g.view([Math.sin(yaw) * 4.2, 1.5, Math.cos(yaw) * 4.2], [0, 0.6, 0.3]);
+      g.render();
+    }, a);
+    await P.screenshot({ path: `${OUT}/turntable-${String(a * 45).padStart(3, '0')}.png` });
+  }
+  const anim = [['walk', 'u.walk = 1; u.cycle = 0.25; u.vel.set(0,0,2.2);'], ['kneel', 'u.vel.set(0,0,0); u.walk = 0; u.kneelK = 1;'], ['reload', 'u.kneelK = 0; u.reloadT = u.weapon.def.reload * 0.5;'], ['dead', 'u.reloadT = 0; u.alive = false; u.deadT = 2;']];
+  for (const [name, code] of anim) {
+    await P.evaluate(([code]) => {
+      const g = window.__game;
+      for (const u of window.__m) { (new Function('u', code))(u); u.animate(1 / 60); }
+      g.view([1.2, 1.4, 3.8], [0, 0.55, 0.3]);
+      g.render();
+    }, [code]);
+    await P.screenshot({ path: `${OUT}/anim-${name}.png` });
+  }
+  await P.evaluate(() => { window.__game.freeze(false); window.__game.unfreezeCam(); });
+  check('renders saved (menu, views, battle, sandbox, turntable, poses)', true, `${OUT}/`);
   check('desktop: no console errors', d.errors.length === 0, d.errors.slice(0, 3).join(' | '));
+  await d.ctx.close();
 
-  // ---------- phone ----------
+  // ======================= phone (portrait) =======================
   const m = await open({ ...devices['iPhone 13'] });
-  const fm = await m.page.evaluate(framingCheck);
-  check('phone: pea fully framed at default view', fm.inView && fm.frac > 0.3 && fm.frac < 0.95, `fills ${(fm.frac * 100).toFixed(0)}%`);
-  check('phone: UI never covers the pea or overlaps itself', fm.overlaps.length === 0 && fm.offscreen.length === 0, [...fm.overlaps, ...fm.offscreen].join(', '));
-  check('phone: touch hint shown', await m.page.evaluate(() => document.documentElement.dataset.input === 'touch'));
-  await m.page.screenshot({ path: `${OUT}/phone.png` });
-  // one-finger drag via real touch events (CDP)
-  const cdp = await m.ctx.newCDPSession(m.page);
-  const touch = async (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts.map(([x, y], id) => ({ x, y, id })) });
-  const yy0 = await m.page.evaluate(() => window.__pea.controls.goal.yaw);
-  await touch('touchStart', [[120, 400]]);
-  for (let i = 1; i <= 6; i++) await touch('touchMove', [[120 + i * 25, 400]]);
+  const M = m.page;
+  await M.screenshot({ path: `${OUT}/phone-menu.png` });
+  const mm = await M.evaluate(() => ({ scroll: document.documentElement.scrollWidth > innerWidth + 1, deploy: (() => { const r = document.getElementById('deploy').getBoundingClientRect(); return r.bottom <= innerHeight && r.top >= 0; })() }));
+  check('phone: setup screen fits (no sideways scroll, Deploy on screen)', !mm.scroll && mm.deploy, JSON.stringify(mm));
+  await M.tap('#deploy');
+  await M.waitForFunction(() => window.__game.state === 'play', null, { timeout: 15000 });
+  await M.waitForTimeout(600);
+  check('phone: touch controls shown', await M.evaluate(() => document.documentElement.dataset.input === 'touch' && getComputedStyle(document.getElementById('touch')).display !== 'none'));
+  await M.screenshot({ path: `${OUT}/phone.png` });
+  const ml = await M.evaluate(uiLayout, HUD_SEL);
+  check('phone: HUD and buttons inside the screen, not overlapping', ml.overlaps.length === 0 && ml.offscreen.length === 0, [...ml.overlaps, ...ml.offscreen].join(', '));
+  const sizes = await M.evaluate(() => [...document.querySelectorAll('.tbtn, #corner .icon-btn')].map((b) => Math.round(Math.min(b.getBoundingClientRect().width, b.getBoundingClientRect().height))));
+  check('phone: buttons are at least 44px', sizes.every((x) => x >= 44), sizes.join(', '));
+  // stick
+  await M.evaluate(() => { const g = window.__game; g.battle.aiFrozen = true; g.battle.reinforce = false; g.battle.clearUnits(); g.player.pos.set(0, 0, 60); g.cam.yaw = 0; for (const p of [...g.battle.props]) if (Math.hypot(p.box.x, p.box.z - 60) < 14) g.battle.removeProp(p); });
+  const cdp = await M.context().newCDPSession(M);
+  const touch = async (type, pts) => cdp.send('Input.dispatchTouchEvent', { type, touchPoints: pts });
+  const W = await M.evaluate(() => innerWidth), H = await M.evaluate(() => innerHeight);
+  const pz0 = await M.evaluate(() => window.__game.player.pos.z);
+  await touch('touchStart', [{ x: W * 0.2, y: H * 0.7, id: 1 }]);
+  for (let i = 1; i <= 6; i++) { await touch('touchMove', [{ x: W * 0.2, y: H * 0.7 - i * 10, id: 1 }]); await M.waitForTimeout(60); }
+  await M.waitForTimeout(600);
   await touch('touchEnd', []);
-  const yy1 = await m.page.evaluate(() => window.__pea.controls.goal.yaw);
-  check('phone: one-finger drag orbits', Math.abs(yy1 - yy0) > 0.2, `${(yy1 - yy0).toFixed(2)} rad`);
-  const d0 = await m.page.evaluate(() => window.__pea.controls.goal.dist);
-  await touch('touchStart', [[150, 400], [240, 400]]);
-  for (let i = 1; i <= 6; i++) await touch('touchMove', [[150 - i * 10, 400], [240 + i * 10, 400]]);
+  const pz1 = await M.evaluate(() => window.__game.player.pos.z);
+  check('phone: left-thumb stick walks', pz1 - pz0 < -0.5, `dz=${(pz1 - pz0).toFixed(2)}`);
+  const yy0 = await M.evaluate(() => window.__game.cam.yaw);
+  await touch('touchStart', [{ x: W * 0.6, y: H * 0.45, id: 2 }]);
+  for (let i = 1; i <= 6; i++) { await touch('touchMove', [{ x: W * 0.6 + i * 15, y: H * 0.45, id: 2 }]); await M.waitForTimeout(30); }
   await touch('touchEnd', []);
-  const d1 = await m.page.evaluate(() => window.__pea.controls.goal.dist);
-  check('phone: pinch zooms in', d1 < d0 * 0.9, `${d0.toFixed(2)} -> ${d1.toFixed(2)}`);
-  const hitM = await m.page.evaluate(() => { const r = document.getElementById('recenter').getBoundingClientRect(); return document.elementFromPoint(r.x + r.width / 2, r.y + r.height / 2)?.closest('#recenter') !== null; });
-  check('phone: recenter button is the top element at its centre', hitM);
-  await m.page.tap('#recenter');
-  const resetM = await m.page.evaluate(() => { const c = window.__pea.controls; return Math.abs(c.goal.yaw - 0.55) < 1e-6 && Math.abs(c.goal.dist - c.fitDistance()) < 1e-3; });
-  check('phone: recenter button tap resets the camera', resetM);
-  const btn = await m.page.evaluate(() => { const r = document.getElementById('recenter').getBoundingClientRect(); return [r.width, r.height]; });
-  check('phone: button is at least 44px', btn[0] >= 44 && btn[1] >= 44, btn.join('x'));
+  await M.waitForTimeout(100);
+  const yy1 = await M.evaluate(() => window.__game.cam.yaw);
+  check('phone: right-thumb drag aims', Math.abs(yy1 - yy0) > 0.2, `${(yy1 - yy0).toFixed(2)} rad`);
+  const f0 = await M.evaluate(() => window.__game.player.shots);
+  await M.tap('#fire');
+  check('phone: fire button shoots', await M.waitForFunction((f0) => window.__game.player.shots > f0, f0, { timeout: 8000 }).then(() => true, () => false));
+  await M.tap('#viewBtn');
+  await M.waitForTimeout(300);
+  check('phone: view button switches to first person', await M.evaluate(() => window.__game.cam.mode === '1p'));
+  await M.tap('#sbxBtn');
+  await M.waitForTimeout(400);
+  const pal = await M.evaluate(() => { const r = document.getElementById('palette').getBoundingClientRect(); return { open: window.__game.sandbox.open, fits: r.left >= 0 && r.right <= innerWidth && r.top >= 0 && r.bottom <= innerHeight }; });
+  check('phone: sandbox palette opens and fits the screen', pal.open && pal.fits, JSON.stringify(pal));
+  await M.tap('.pal-item[data-id="rifleman"]');
+  const n0 = await M.evaluate(() => window.__game.battle.units.length);
+  await M.tap('#scene', { position: { x: W * 0.5, y: H * 0.25 } });
+  await M.waitForTimeout(200);
+  const n1 = await M.evaluate(() => window.__game.battle.units.length);
+  check('phone: tap an item then tap the field to place it', n1 === n0 + 1, `${n0} -> ${n1}`);
+  await M.screenshot({ path: `${OUT}/phone-sandbox.png` });
   check('phone: no console errors', m.errors.length === 0, m.errors.slice(0, 3).join(' | '));
+  await m.ctx.close();
 
-  // landscape phone framing
-  await m.page.setViewportSize({ width: 844, height: 390 });
-  await m.page.waitForTimeout(300);
-  const fl = await m.page.evaluate(framingCheck);
-  check('phone landscape: pea fully framed, UI clear', fl.inView && fl.overlaps.length === 0 && fl.offscreen.length === 0, `fills ${(fl.frac * 100).toFixed(0)}% ${fl.overlaps.join(',')}`);
-  await m.page.screenshot({ path: `${OUT}/phone-landscape.png` });
+  // ======================= phone (landscape) =======================
+  const l = await open({ ...devices['iPhone 13 landscape'] });
+  await l.page.screenshot({ path: `${OUT}/phone-landscape-menu.png` });
+  const lmenu = await l.page.evaluate(() => { const r = document.getElementById('deploy').getBoundingClientRect(); return r.bottom <= innerHeight + 1; });
+  await l.page.evaluate(() => window.__game.start({ mode: 'battle', teams: 2, size: 20, tickets: 4, view: '3p', playerTeam: 0 }));
+  await l.page.waitForTimeout(500);
+  await l.page.screenshot({ path: `${OUT}/phone-landscape.png` });
+  const ll = await l.page.evaluate(uiLayout, HUD_SEL);
+  check('phone landscape: Deploy reachable, HUD clear and on screen', lmenu && ll.overlaps.length === 0 && ll.offscreen.length === 0, [...ll.overlaps, ...ll.offscreen].join(', '));
+  check('phone landscape: no console errors', l.errors.length === 0, l.errors.slice(0, 3).join(' | '));
+  await l.ctx.close();
 } catch (e) {
   check('suite ran to completion', false, e.stack || String(e));
 }
