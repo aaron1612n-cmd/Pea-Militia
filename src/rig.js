@@ -86,7 +86,6 @@ export function makePose() {
   return {
     body: new THREE.Matrix4(), visor: new THREE.Matrix4(), pack: new THREE.Matrix4(),
     feet: [new THREE.Matrix4(), new THREE.Matrix4()], hands: [new THREE.Matrix4(), new THREE.Matrix4()],
-    arms: [new THREE.Matrix4(), new THREE.Matrix4(), new THREE.Matrix4(), new THREE.Matrix4()], showArms: true,
     weapon: new THREE.Matrix4(), muzzle: new THREE.Vector3(), showWeapon: true, height: U.TOP,
   };
 }
@@ -209,11 +208,9 @@ function poseCore(s, out) {
   const fp = (s.fp || 0) * (1 - ads);
   // aimed (shouldered): the gun tucks in beside the cheek and rises to eye level
   const aimK = smooth(0.55, 1, ready) * (1 - rk);
-  // the gun is held out in front of the chest, butt against the front of the body, so neither arm
-  // ever has to pass through the torso: right hand on the grip, left hand forward on the fore-end
-  const px = lerp(lerp(-0.14, -0.2, fp), 0, ads);
+  const px = lerp(lerp(-h.x, -0.2, fp), 0, ads);
   const py = lerp(U.EYE - 0.12 + aimK * 0.04 - fp * 0.09, U.EYE - 0.085, ads) - bodyDrop - lowered * 0.1 - rk * h.anim.drop;
-  const pz = lerp(Math.max(0.17, U.D / 2 + 0.09 + (s.sprint ? 0.1 : 0) + Math.max(0, -(s.aimPitch || 0)) * 0.2 + (h.back || 0.3) - 0.13) + fp * 0.1, 0.02, ads);
+  const pz = lerp(0.04 + fp * 0.1, 0.02, ads);
   const pitch = (s.aimPitch || 0) - lowered * 0.55 - rk * h.anim.tilt + recoil * h.anim.climb;
   // twist turns the whole arms-and-gun assembly about the body's axis
   E.set(0, twist, 0, 'YXZ');
@@ -227,15 +224,8 @@ function poseCore(s, out) {
   out.muzzle.copy(h.muzzle).applyMatrix4(out.weapon);
   // trigger hand just under the grip; support hand on the fore-end, or on the mag mid-reload
   out.hands[1].multiplyMatrices(out.weapon, compose(M, 0, -0.045, -0.01));
-  let fz = lerp(h.fore, h.anim.hand[1], rk);
-  const fy = lerp(h.foreY, h.anim.hand[0], rk);
-  // keep the support hand within reach of the left shoulder: slide it back along the gun if needed
-  SH0.set(U.W / 2 + 0.055, U.BODY_Y + SHY - bodyDrop, U.D / 2 + 0.02);
-  for (let i = 0; i < 12; i++) {
-    out.hands[0].multiplyMatrices(out.weapon, compose(M, 0, fy, fz));
-    if (SH0.distanceTo(P.setFromMatrixPosition(out.hands[0])) <= ARM.UPPER + ARM.FORE - 0.04) break;
-    fz -= 0.02;
-  }
+  const fz = lerp(h.fore, h.anim.hand[1], rk), fy = lerp(h.foreY, h.anim.hand[0], rk);
+  out.hands[0].multiplyMatrices(out.weapon, compose(M, 0, fy, fz));
   return out;
 }
 
@@ -249,59 +239,7 @@ export const PRONE = { PIVOT: U.D / 2 + 0.01, BACK: 0.46, GUN_Y: 0.3, ANGLE: Mat
 export function pose(s, out = makePose()) {
   poseCore(s, out);
   postures(s, out);
-  // shoulders sit on the body's upper corners
-  SHL.set(U.W / 2 + 0.055, SHY, U.D / 2 + 0.02).applyMatrix4(out.body);
-  SHR.set(-(U.W / 2 + 0.055), SHY, U.D / 2 + 0.02).applyMatrix4(out.body);
-  armsFor(out, SHL, SHR, out.body, smooth(0, 1, s.prone || 0));
   return out;
-}
-
-// Two-segment arms from each shoulder to its hand with the elbow bent down and out.
-// hands[0] is the support hand (left, +x), hands[1] the trigger hand (right, -x).
-const SH0 = new THREE.Vector3();
-const SHL = new THREE.Vector3(), SHR = new THREE.Vector3();
-const A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3(), D = new THREE.Vector3(), X = new THREE.Vector3(), Y = new THREE.Vector3(), Z = new THREE.Vector3();
-export const SHY = 0.15; // shoulder height above the body's centre
-const ARM = { W: 0.085, UPPER: 0.34, FORE: 0.34 };
-function seg(m, a, b, extra = 0.03) {
-  Z.subVectors(b, a);
-  const len = Z.length() + extra;
-  Z.normalize();
-  X.crossVectors(THREE.Object3D.DEFAULT_UP, Z);
-  if (X.lengthSq() < 1e-6) X.set(1, 0, 0);
-  X.normalize();
-  Y.crossVectors(Z, X);
-  m.makeBasis(X.multiplyScalar(ARM.W), Y.multiplyScalar(ARM.W), Z.multiplyScalar(len));
-  m.setPosition(C.addVectors(a, b).multiplyScalar(0.5));
-}
-const SIDE = new THREE.Vector3(), FWD = new THREE.Vector3();
-export function armsFor(out, shl, shr, ref, prone = 0) {
-  const sh = [shl, shr];
-  for (let i = 0; i < 2; i++) {
-    A.copy(sh[i]);
-    B.setFromMatrixPosition(out.hands[i]);
-    D.subVectors(B, A);
-    const len = Math.min(D.length(), ARM.UPPER + ARM.FORE - 0.01);
-    const mid = C.addVectors(A, B).multiplyScalar(0.5).clone();
-    const h = Math.sqrt(Math.max(0, ARM.UPPER * ARM.UPPER - (len / 2) * (len / 2)));
-    // bend: down and outward (away from the body centre), kept perpendicular to the arm
-    const side = i === 0 ? 1 : -1;
-    // elbows hang down and a little out (a short reach folds the arm, so swing the elbow wider);
-    // lying prone they point out to the sides and up instead. Directions are in the soldier's
-    // horizontal frame, not the tilted body's, so a lean or a prone body doesn't flip them.
-    SIDE.set(1, 0, 0); FWD.set(0, 0, 1);
-    if (ref) { SIDE.transformDirection(ref); FWD.transformDirection(ref); }
-    SIDE.y = 0; FWD.y = 0;
-    if (SIDE.lengthSq() < 1e-4) SIDE.set(1, 0, 0); else SIDE.normalize();
-    if (FWD.lengthSq() < 1e-4) FWD.set(0, 0, 0); else FWD.normalize();
-    const out_ = (0.25 + Math.max(0, 0.5 - len) * 3) * side;
-    Y.set(0, lerp(-1, 0, prone), 0).addScaledVector(SIDE, out_ * lerp(1, 4, prone)).addScaledVector(FWD, 0.5 * (1 - prone));
-    D.normalize();
-    Y.addScaledVector(D, -Y.dot(D)).normalize();
-    const E = mid.addScaledVector(Y, h);
-    seg(out.arms[i * 2], sh[i], E);
-    seg(out.arms[i * 2 + 1], E, B, 0.0);
-  }
 }
 
 function postures(s, out) {
@@ -327,13 +265,10 @@ function postures(s, out) {
     for (const m of upper) m.premultiply(R);
     for (const f of out.feet) { f.premultiply(R); f.elements[13] -= 0.03 * k * k * k; } // toes rest on the ground
     // the gun keeps its aim; it moves out past the head, butt just clear of it, low to the ground,
-    // with both arms reaching forward along it
     G.setFromMatrixPosition(out.weapon);
     let headZ = -Infinity;
     for (const sy of [-1, 1]) for (const sz of [-1, 1]) headZ = Math.max(headZ, V3.set(0, sy * U.H / 2, sz * U.D / 2).applyMatrix4(out.body).z);
-    // (and far enough that the arms stretch out ahead instead of folding back into the body)
-    const shZ = V3.set(0, SHY, U.D / 2).applyMatrix4(out.body).z;
-    const gz = lerp(G.clone().applyMatrix4(R).z, Math.max(headZ + 0.03 + (h.back || 0.3), shZ + 0.56), k);
+    const gz = lerp(G.clone().applyMatrix4(R).z, headZ + 0.03 + (h.back || 0.3), k);
     T.set(0, lerp(G.y, Math.max(0.1, Math.min(0.16, (h.low || 0.1) + 0.02)), k) - G.y, gz - G.z);
     R.makeTranslation(T.x, T.y, T.z);
     for (const m of held) m.premultiply(R);

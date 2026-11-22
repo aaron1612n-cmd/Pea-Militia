@@ -140,32 +140,6 @@ const modelChecks = () => {
         for (const c of corners(pz.feet[i], U.FOOT, 0.0005)) r.minY = Math.min(r.minY, c.y);
       }
       for (const c of corners(pz.body, [U.W, U.H, U.D], U.R)) if (c.y - U.R < -0.01) { r.clips.push('body in ground'); break; }
-      // arms: never through the torso or the head, and they reach their hands
-      if ((ph.dead ?? -1) < 0) {
-        const visorInv = new THREE.Matrix4().copy(pz.visor).invert();
-        const inVisor = (pt) => { const q = v.copy(pt).applyMatrix4(visorInv); return Math.abs(q.x) < U.VISOR[0] / 2 + 0.01 && Math.abs(q.y) < U.VISOR[1] / 2 + 0.01 && Math.abs(q.z) < U.VISOR[2] / 2 + 0.01; };
-        const ax = new THREE.Vector3(), ctr = new THREE.Vector3();
-        for (let a = 0; a < 4; a++) {
-          const e = pz.arms[a].elements;
-          ax.set(e[8], e[9], e[10]); // z axis scaled by the segment length
-          ctr.set(e[12], e[13], e[14]);
-          let bad = null;
-          for (let k = 0; k <= 10; k++) {
-            const t = k / 10 - 0.5;
-            if (a % 2 === 0 && t < -0.3) continue; // the shoulder end sits on the body's surface
-            const pt = ctr.clone().addScaledVector(ax, t);
-            if (insideBody(pt, -0.015)) { bad = 'torso'; break; }
-            if (inVisor(pt)) { bad = 'head'; break; }
-          }
-          if (bad) r.clips.push(`arm${a} in ${bad}`);
-        }
-        for (let i = 0; i < 2; i++) {
-          const e = pz.arms[i * 2 + 1].elements;
-          const tip = new THREE.Vector3(e[12] + e[8] / 2, e[13] + e[9] / 2, e[14] + e[10] / 2);
-          const hp = new THREE.Vector3().setFromMatrixPosition(pz.hands[i]);
-          if (tip.distanceTo(hp) > 0.09) r.loose.push(`arm${i} gap ${tip.distanceTo(hp).toFixed(2)}`);
-        }
-      }
       // hands outside the body
       for (let i = 0; i < 2; i++) for (const c of corners(pz.hands[i], U.HAND, 0.03)) if (insideBody(c)) { r.clips.push(`hand${i} in body`); break; }
       // gun outside the body
@@ -231,7 +205,7 @@ try {
   // part geometry, through the instanced crowd
   await P.evaluate(() => {
     const c = window.__game.crowd;
-    window.__parts = { PART_GEO: { body: c.body.geometry, visor: c.visor.geometry, pack: c.pack.geometry, foot: c.foot.geometry, hand: c.hand.geometry, arm: c.arm.geometry } };
+    window.__parts = { PART_GEO: { body: c.body.geometry, visor: c.visor.geometry, pack: c.pack.geometry, foot: c.foot.geometry, hand: c.hand.geometry } };
   });
   await P.waitForTimeout(600);
   await P.screenshot({ path: `${OUT}/menu.png` });

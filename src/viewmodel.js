@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HOLD, makePose, armsFor } from './rig.js';
+import { HOLD, makePose } from './rig.js';
 
 // First-person gun, bodycam style: the gun and hands hang in front of the camera, bob with the
 // stride, lag behind quick turns, kick on each shot, and come up to the centre line when aiming
@@ -10,7 +10,6 @@ const P = new THREE.Vector3();
 const S1 = new THREE.Vector3(1, 1, 1);
 const S = new THREE.Vector3(1, 1, 1);
 const HAND_S = new THREE.Matrix4().makeScale(0.9, 0.9, 0.9);
-const SL = new THREE.Vector3(), SR = new THREE.Vector3();
 // the gun is drawn a bit smaller up close so it frames the view instead of filling it
 const VM_SCALE = 0.8;
 const L = new THREE.Matrix4();
@@ -25,15 +24,6 @@ export class ViewModel {
     this.swayV = new THREE.Vector2();
     this.sprintK = 0;
     this.identity = new THREE.Matrix4();
-  }
-
-  // forearms run from below the screen edge up to each hand
-  arms(camera) {
-    SL.set(-0.3, -0.5, 0.15).applyMatrix4(camera.matrixWorld);
-    SR.set(0.3, -0.5, 0.15).applyMatrix4(camera.matrixWorld);
-    // armsFor works in the soldier's frame (faces +z, left is +x), so turn the camera frame about
-    L.copy(camera.matrixWorld).multiply(M.makeRotationY(Math.PI));
-    armsFor(this.pose, SL, SR, L);
   }
 
   // look: this frame's look input (radians), dt: frame time
@@ -75,7 +65,6 @@ export class ViewModel {
       p.hands[0].multiplyMatrices(camera.matrixWorld, L);
       p.showWeapon = !(u.thrown && u.throwT > 0);
       p.muzzle.setFromMatrixPosition(p.hands[1]);
-      this.arms(camera);
       return p;
     }
     // hip: low and right, angled a touch inward; sights: the bore sits just under the crosshair.
@@ -98,7 +87,6 @@ export class ViewModel {
     p.hands[0].multiply(HAND_S); p.hands[1].multiply(HAND_S);
     p.showWeapon = true;
     p.muzzle.copy(h.muzzle).applyMatrix4(p.weapon);
-    this.arms(camera);
     return p;
   }
 }
