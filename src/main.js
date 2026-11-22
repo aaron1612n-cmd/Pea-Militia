@@ -257,6 +257,8 @@ function pause(on) {
 }
 $('resume').addEventListener('click', () => pause(false));
 $('restart').addEventListener('click', () => startBattle(settings));
+$('pauseFree').addEventListener('click', () => { pause(false); toggleFree(); });
+$('pauseFree').addEventListener('pointerdown', (e) => e.stopPropagation());
 $('toMenu').addEventListener('click', openMenu);
 $('again').addEventListener('click', () => { if (!input.touch) input.requestLock(); startBattle(settings); });
 $('endMenu').addEventListener('click', openMenu);

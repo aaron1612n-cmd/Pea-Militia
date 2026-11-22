@@ -379,3 +379,6 @@ html[data-free='1'] #freeBtn { border-color: var(--accent); color: var(--accent)
   .palette[data-more='1'] { grid-template-rows: auto auto 1fr auto; }
   .palette[data-more='1'] .pal-toggles button { min-height: 30px; font-size: 10px; padding: 0 6px; }
 }
+
+@media (max-width: 640px), (max-height: 500px) { #freeBtn { display: none; } }
+html[data-free='1'] #pauseFree::after { content: ' (back to soldier)'; }
