@@ -22,6 +22,17 @@ U.TOP = U.LIFT + U.H;
 // Per-weapon hold: where the support hand goes along the gun, and how far out from the body
 // the gun rides. Filled in from the weapon models' bounds by setWeaponBounds().
 export const HOLD = {};
+// Per-weapon handling: how far the gun kicks back and climbs per shot, and the reload move
+// (support hand target [y, z] in gun space, gun tilt up, roll, and how far it drops).
+export const ANIM = {
+  rifle: { kick: 0.05, climb: 0.1, hand: [-0.1, 0.07], tilt: 0.35, roll: 0.55, drop: 0.07 },
+  smg: { kick: 0.022, climb: 0.05, hand: [-0.17, 0.1], tilt: 0.3, roll: 0.35, drop: 0.06 },
+  mg: { kick: 0.035, climb: 0.05, hand: [0.13, 0.1], tilt: 0.5, roll: 0.15, drop: 0.11 },
+  plasma: { kick: 0.012, climb: 0.04, hand: [-0.09, 0.08], tilt: 0.2, roll: 0.6, drop: 0.05 },
+  flame: { kick: 0.0, climb: 0.012, hand: [-0.15, 0.1], tilt: 0.1, roll: 0.2, drop: 0.07 },
+  launcher: { kick: 0.07, climb: 0.13, hand: [0.1, 0.3], tilt: 0.7, roll: 0.0, drop: 0.08 },
+  grenade: { kick: 0, climb: 0, hand: [0, 0], tilt: 0, roll: 0, drop: 0 },
+};
 export function setWeaponBounds(id, box, muzzle, sight = box.max.y) {
   const s = U.WEAPON_SCALE;
   const half = Math.max(Math.abs(box.min.x), Math.abs(box.max.x)) * s;
@@ -31,6 +42,9 @@ export function setWeaponBounds(id, box, muzzle, sight = box.max.y) {
     foreY: Math.min(-0.03, box.min.y * s * 0.35),
     muzzle: new THREE.Vector3(...muzzle).multiplyScalar(s),
     oneHand: id === 'grenade',
+    anim: ANIM[id],
+    low: Math.max(0, -box.min.y) * s,
+    back: Math.max(0, -box.min.z) * s, // how far the stock reaches behind the grip
     top: box.max.y * s,
     sight: sight * s,
     // gun bounds in its own (scaled) frame, for the dropped-gun physics
@@ -128,7 +142,7 @@ function poseCore(s, out) {
     by = py + T.y;
   }
 
-  attachToBody(out, THREE.MathUtils.clamp(s.twist || 0, -0.5, 0.5) * 0.55, THREE.MathUtils.clamp(s.aimPitch || 0, -0.6, 0.6) * 0.35 * (dead >= 0 ? 0 : 1));
+  attachToBody(out, THREE.MathUtils.clamp(s.twist || 0, -0.5, 0.5) * 0.3, THREE.MathUtils.clamp(s.aimPitch || 0, -0.6, 0.6) * 0.35 * (dead >= 0 ? 0 : 1));
 
   // ---- feet
   for (let i = 0; i < 2; i++) {
@@ -173,11 +187,11 @@ function poseCore(s, out) {
   if (h.oneHand) {
     // grenade in the right hand; throw: wind up behind, release over the top, follow through
     const th = s.throw ?? -1;
-    let rx = -0.3, ry = 0.62, rz = 0.18, lx = 0.34, ly = 0.55, lz = 0.06;
+    let rx = -0.34, ry = 0.62, rz = 0.22, lx = 0.34, ly = 0.55, lz = 0.06;
     if (th >= 0) {
       const a = smooth(0, 0.42, th), b = smooth(0.42, 0.62, th), c = smooth(0.62, 1, th);
-      rx = lerp(-0.3, -0.32, a); ry = lerp(lerp(0.62, 1.12, a), 0.92, b); rz = lerp(lerp(0.18, -0.26, a), 0.5, b);
-      ry = lerp(ry, 0.62, c); rz = lerp(rz, 0.18, c);
+      rx = lerp(-0.34, -0.46, a); ry = lerp(lerp(0.62, 1.1, a), 0.92, b); rz = lerp(lerp(0.22, 0.0, a), 0.5, b);
+      ry = lerp(ry, 0.62, c); rz = lerp(rz, 0.22, c); rx = lerp(rx, -0.34, c);
       lx = lerp(0.34, 0.33, a); ly = lerp(0.55, 0.85, a * (1 - c)); lz = lerp(0.06, 0.42, a * (1 - c));
     }
     compose(out.hands[1], rx, ry - bodyDrop, rz, -0.3, 0, 0);
@@ -195,24 +209,33 @@ function poseCore(s, out) {
   const fp = (s.fp || 0) * (1 - ads);
   // aimed (shouldered): the gun tucks in beside the cheek and rises to eye level
   const aimK = smooth(0.55, 1, ready) * (1 - rk);
-  const px = lerp(lerp(-h.x, -0.2, fp), 0, ads);
-  const py = lerp(U.EYE - 0.12 + aimK * 0.04 - fp * 0.09, U.EYE - 0.085, ads) - bodyDrop - lowered * 0.1 - rk * 0.06;
-  const pz = lerp(0.04 + fp * 0.1, 0.02, ads);
-  const pitch = (s.aimPitch || 0) - lowered * 0.55 - rk * 0.45 + recoil * 0.09;
+  // the gun is held out in front of the chest, butt against the front of the body, so neither arm
+  // ever has to pass through the torso: right hand on the grip, left hand forward on the fore-end
+  const px = lerp(lerp(-0.14, -0.2, fp), 0, ads);
+  const py = lerp(U.EYE - 0.12 + aimK * 0.04 - fp * 0.09, U.EYE - 0.085, ads) - bodyDrop - lowered * 0.1 - rk * h.anim.drop;
+  const pz = lerp(Math.max(0.17, U.D / 2 + 0.09 + (s.sprint ? 0.1 : 0) + Math.max(0, -(s.aimPitch || 0)) * 0.2 + (h.back || 0.3) - 0.13) + fp * 0.1, 0.02, ads);
+  const pitch = (s.aimPitch || 0) - lowered * 0.55 - rk * h.anim.tilt + recoil * h.anim.climb;
   // twist turns the whole arms-and-gun assembly about the body's axis
   E.set(0, twist, 0, 'YXZ');
   Q2.setFromEuler(E);
-  E.set(-pitch, twist, -rk * 0.3, 'YXZ');
+  E.set(-pitch, twist, -rk * h.anim.roll, 'YXZ');
   Q.setFromEuler(E);
   T.set(px, py, pz).applyAxisAngle(THREE.Object3D.DEFAULT_UP, twist);
   // the grip sits a little forward and below the shoulder line; recoil kicks it back
-  P.set(0, -0.05, 0.13 - recoil * 0.045).applyQuaternion(Q).add(T);
+  P.set(0, -0.05, 0.13 - recoil * h.anim.kick).applyQuaternion(Q).add(T);
   out.weapon.compose(P, Q, S1);
   out.muzzle.copy(h.muzzle).applyMatrix4(out.weapon);
   // trigger hand just under the grip; support hand on the fore-end, or on the mag mid-reload
   out.hands[1].multiplyMatrices(out.weapon, compose(M, 0, -0.045, -0.01));
-  const fz = lerp(h.fore, 0.1, rk), fy = lerp(h.foreY, -0.1, rk);
-  out.hands[0].multiplyMatrices(out.weapon, compose(M, 0, fy, fz));
+  let fz = lerp(h.fore, h.anim.hand[1], rk);
+  const fy = lerp(h.foreY, h.anim.hand[0], rk);
+  // keep the support hand within reach of the left shoulder: slide it back along the gun if needed
+  SH0.set(U.W / 2 + 0.055, U.BODY_Y + SHY - bodyDrop, U.D / 2 + 0.02);
+  for (let i = 0; i < 12; i++) {
+    out.hands[0].multiplyMatrices(out.weapon, compose(M, 0, fy, fz));
+    if (SH0.distanceTo(P.setFromMatrixPosition(out.hands[0])) <= ARM.UPPER + ARM.FORE - 0.04) break;
+    fz -= 0.02;
+  }
   return out;
 }
 
@@ -221,22 +244,25 @@ function poseCore(s, out) {
 const R = new THREE.Matrix4();
 const R2 = new THREE.Matrix4();
 const G = new THREE.Vector3();
+const V3 = new THREE.Vector3();
 export const PRONE = { PIVOT: U.D / 2 + 0.01, BACK: 0.46, GUN_Y: 0.3, ANGLE: Math.PI / 2 * 0.94 };
 export function pose(s, out = makePose()) {
   poseCore(s, out);
   postures(s, out);
   // shoulders sit on the body's upper corners
-  SHL.set(U.W / 2 - 0.03, 0.17, 0.0).applyMatrix4(out.body);
-  SHR.set(-(U.W / 2 - 0.03), 0.17, 0.0).applyMatrix4(out.body);
-  armsFor(out, SHL, SHR, out.body);
+  SHL.set(U.W / 2 + 0.055, SHY, U.D / 2 + 0.02).applyMatrix4(out.body);
+  SHR.set(-(U.W / 2 + 0.055), SHY, U.D / 2 + 0.02).applyMatrix4(out.body);
+  armsFor(out, SHL, SHR, out.body, smooth(0, 1, s.prone || 0));
   return out;
 }
 
 // Two-segment arms from each shoulder to its hand with the elbow bent down and out.
 // hands[0] is the support hand (left, +x), hands[1] the trigger hand (right, -x).
+const SH0 = new THREE.Vector3();
 const SHL = new THREE.Vector3(), SHR = new THREE.Vector3();
 const A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3(), D = new THREE.Vector3(), X = new THREE.Vector3(), Y = new THREE.Vector3(), Z = new THREE.Vector3();
-const ARM = { W: 0.085, UPPER: 0.27, FORE: 0.27 };
+export const SHY = 0.15; // shoulder height above the body's centre
+const ARM = { W: 0.085, UPPER: 0.34, FORE: 0.34 };
 function seg(m, a, b, extra = 0.03) {
   Z.subVectors(b, a);
   const len = Z.length() + extra;
@@ -248,7 +274,8 @@ function seg(m, a, b, extra = 0.03) {
   m.makeBasis(X.multiplyScalar(ARM.W), Y.multiplyScalar(ARM.W), Z.multiplyScalar(len));
   m.setPosition(C.addVectors(a, b).multiplyScalar(0.5));
 }
-export function armsFor(out, shl, shr, ref) {
+const SIDE = new THREE.Vector3(), FWD = new THREE.Vector3();
+export function armsFor(out, shl, shr, ref, prone = 0) {
   const sh = [shl, shr];
   for (let i = 0; i < 2; i++) {
     A.copy(sh[i]);
@@ -259,8 +286,16 @@ export function armsFor(out, shl, shr, ref) {
     const h = Math.sqrt(Math.max(0, ARM.UPPER * ARM.UPPER - (len / 2) * (len / 2)));
     // bend: down and outward (away from the body centre), kept perpendicular to the arm
     const side = i === 0 ? 1 : -1;
-    Y.set(side * 0.55, -1, -0.15);
-    if (ref) Y.transformDirection(ref);
+    // elbows hang down and a little out (a short reach folds the arm, so swing the elbow wider);
+    // lying prone they point out to the sides and up instead. Directions are in the soldier's
+    // horizontal frame, not the tilted body's, so a lean or a prone body doesn't flip them.
+    SIDE.set(1, 0, 0); FWD.set(0, 0, 1);
+    if (ref) { SIDE.transformDirection(ref); FWD.transformDirection(ref); }
+    SIDE.y = 0; FWD.y = 0;
+    if (SIDE.lengthSq() < 1e-4) SIDE.set(1, 0, 0); else SIDE.normalize();
+    if (FWD.lengthSq() < 1e-4) FWD.set(0, 0, 0); else FWD.normalize();
+    const out_ = (0.25 + Math.max(0, 0.5 - len) * 3) * side;
+    Y.set(0, lerp(-1, 0, prone), 0).addScaledVector(SIDE, out_ * lerp(1, 4, prone)).addScaledVector(FWD, 0.5 * (1 - prone));
     D.normalize();
     Y.addScaledVector(D, -Y.dot(D)).normalize();
     const E = mid.addScaledVector(Y, h);
@@ -270,6 +305,7 @@ export function armsFor(out, shl, shr, ref) {
 }
 
 function postures(s, out) {
+  const h = HOLD[s.weapon || 'rifle'] || {};
   const lean = s.lean || 0, prone = s.prone || 0;
   if (Math.abs(lean) < 0.001 && prone < 0.001) return out;
   const upper = [out.body, out.visor, out.pack];
@@ -290,10 +326,15 @@ function postures(s, out) {
     R.makeTranslation(0, P0 + 0.05 * Math.sin(Math.PI * k) , -PRONE.BACK * k).multiply(R2.makeRotationX(th)).multiply(M.makeTranslation(0, -P0, 0));
     for (const m of upper) m.premultiply(R);
     for (const f of out.feet) { f.premultiply(R); f.elements[13] -= 0.03 * k * k * k; } // toes rest on the ground
-    // the gun keeps its aim; it just moves to the front of the prone body, low to the ground
+    // the gun keeps its aim; it moves out past the head, butt just clear of it, low to the ground,
+    // with both arms reaching forward along it
     G.setFromMatrixPosition(out.weapon);
-    const gz = G.clone().applyMatrix4(R).z + 0.12 * k;
-    T.set(0, lerp(G.y, PRONE.GUN_Y, k) - G.y, gz - G.z);
+    let headZ = -Infinity;
+    for (const sy of [-1, 1]) for (const sz of [-1, 1]) headZ = Math.max(headZ, V3.set(0, sy * U.H / 2, sz * U.D / 2).applyMatrix4(out.body).z);
+    // (and far enough that the arms stretch out ahead instead of folding back into the body)
+    const shZ = V3.set(0, SHY, U.D / 2).applyMatrix4(out.body).z;
+    const gz = lerp(G.clone().applyMatrix4(R).z, Math.max(headZ + 0.03 + (h.back || 0.3), shZ + 0.56), k);
+    T.set(0, lerp(G.y, Math.max(0.1, Math.min(0.16, (h.low || 0.1) + 0.02)), k) - G.y, gz - G.z);
     R.makeTranslation(T.x, T.y, T.z);
     for (const m of held) m.premultiply(R);
     out.muzzle.applyMatrix4(R);
