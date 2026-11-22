@@ -19,7 +19,7 @@ export const PROPS = {
   stonewall: { name: 'Field wall', hx: 1.6, hz: 0.27, h: 0.62, hp: 2600, debris: '#7f7a6e', raw: true },
   rock: { name: 'Boulder', hx: 0.85, hz: 0.7, h: 0.95, hp: Infinity, debris: '#77766c', raw: true },
   // tree trunks: colliders only, the trees themselves are drawn in bulk by the map
-  tree: { name: 'Tree', hx: 0.2, hz: 0.2, h: 3.2, hp: Infinity, debris: '#4a3b2c', raw: true, nocover: true, noModel: true, fixed: true },
+  tree: { name: 'Tree', hx: 0.2, hz: 0.2, h: 3.2, hp: Infinity, debris: '#4a3b2c', raw: true, noModel: true, fixed: true },
 };
 // The small props were modelled for a shorter soldier; scale them to the current one.
 export const PROP_SCALE = 1.6;
