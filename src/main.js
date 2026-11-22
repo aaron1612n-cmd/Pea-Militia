@@ -12,7 +12,7 @@ import { buildMap } from './map.js';
 import { Effects } from './effects.js';
 import { Audio } from './audio.js';
 import { Hud } from './hud.js';
-import { SLOTS } from './weapons.js';
+import { SLOTS, weaponModel } from './weapons.js';
 import { Sandbox } from './sandbox.js';
 import { TEAMS } from './factions.js';
 import { ViewModel } from './viewmodel.js';
@@ -578,7 +578,7 @@ if (params.has('play')) startBattle({ mode: params.get('play') || 'battle' });
 
 // Test hooks for the check suite.
 window.__game = { maxSpeed: MAX_SPEED,
-  THREE, scene, camera, renderer, cam, input, crowd, fx, SLOTS, U, pose, makePose, HOLD, HALF,
+  THREE, scene, camera, renderer, cam, input, crowd, fx, SLOTS, U, pose, makePose, HOLD, HALF, weaponModel,
   height, get battle() { return battle; }, get player() { return player; }, get state() { return state; },
   sandbox, start: startBattle, openMenu, pause,
   freeze(on = true) { frozen = on; },
