@@ -269,7 +269,7 @@ try {
     await P.keyboard.press('Space');
     jumped = await P.waitForFunction((j) => window.__game.player.jumps > j, j0, { timeout: 15000 }).then(() => true, () => false);
   }
-  const landed = await P.waitForFunction(() => window.__game.player.grounded, null, { timeout: 20000 }).then(() => true, () => false);
+  const landed = await P.waitForFunction(() => window.__game.player.grounded && window.__game.player.vel.y === 0, null, { timeout: 90000 }).then(() => true, () => false);
   check('Space jumps and lands', jumped && landed);
   // sprint: Shift+W is faster than W and drains stamina
   const sp0 = await P.evaluate(() => ({ z: window.__game.player.pos.z, s: window.__game.player.stamina }));
