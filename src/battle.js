@@ -7,6 +7,7 @@ import { projectileModel, WEAPONS } from './weapons.js';
 import { hostile, TEAMS } from './factions.js';
 import { HALF, pointMarker } from './world.js';
 import { rayBox, pushCircle, segmentHitsBox, corners, segDist, toLocal } from './physics.js';
+import { height, rayTerrain, terrainClear, normalAt } from './terrain.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const V = () => new THREE.Vector3();
@@ -117,6 +118,7 @@ export class Battle {
     this.result = null;
     this.reinforce = true;
     this.stats = { shots: 0, kills: 0 };
+    this.decor = []; // scenery the map adds (trees)
   }
 
   // ---------- setup ----------
@@ -137,9 +139,10 @@ export class Battle {
 
   addPoint(name, x, z, r = 8) {
     const m = pointMarker(r);
-    m.position.set(x, 0, z);
+    const y = height(x, z);
+    m.position.set(x, y, z);
     this.scene.add(m);
-    const p = { name, pos: new THREE.Vector3(x, 0, z), r, owner: -1, capture: 0, capTeam: -1, contested: false, model: m, counts: [0, 0, 0] };
+    const p = { name, pos: new THREE.Vector3(x, y, z), r, owner: -1, capture: 0, capTeam: -1, contested: false, model: m, counts: [0, 0, 0] };
     this.points.push(p);
     this.paintPoint(p);
     return p;
@@ -155,7 +158,7 @@ export class Battle {
     const u = new Unit({ team, loadout: KINDS[kind].loadout, pos, kind });
     u.pos.x = THREE.MathUtils.clamp(u.pos.x, -EDGE, EDGE);
     u.pos.z = THREE.MathUtils.clamp(u.pos.z, -EDGE, EDGE);
-    u.pos.y = Math.max(0, this.groundAt(u.pos.x, u.pos.z, 5));
+    u.pos.y = this.groundAt(u.pos.x, u.pos.z, height(u.pos.x, u.pos.z) + 5);
     u.facing = u.aimYaw = yaw ?? Math.atan2(-pos.x, -pos.z);
     if (!squad) squad = this.freeSquad(team, pos);
     squad.add(u);
@@ -189,15 +192,41 @@ export class Battle {
   spawnProp(type, x, z, yaw = 0) {
     const def = PROPS[type];
     const g = propModel(type);
-    g.position.set(x, 0, z);
     g.rotation.y = yaw;
     this.scene.add(g);
-    const p = { type, def, group: g, hp: def.hp, alive: true, box: { x, z, yaw, hx: def.hx, hz: def.hz, h: def.h }, cover: [] };
-    p.cover = coverSpots(p);
+    const p = { type, def, group: g, hp: def.hp, alive: true, box: { x, z, yaw, hx: def.hx, hz: def.hz, h: def.h, y0: 0 }, cover: [] };
+    this.seat(p);
     g.traverse((o) => { o.userData.prop = p; });
     this.props.push(p);
     this.propGrid.insertBox(p, p.box);
+    this.refreshCover(p);
     return p;
+  }
+
+  // stand a prop on the ground: its footing sits at the lowest corner so nothing floats
+  seat(p) {
+    const b = p.box;
+    let y = height(b.x, b.z);
+    for (const [cx, cz] of corners(b, 0)) y = Math.min(y, height(cx, cz));
+    b.y0 = y - 0.04;
+    p.group.position.set(b.x, b.y0, b.z);
+  }
+
+  // cover spots for this prop and its neighbours, minus any that ended up inside another prop
+  // or off the field
+  refreshCover(p) {
+    const near = this.propGrid.near(p.box.x, p.box.z, Math.hypot(p.box.hx, p.box.hz) + 4, []);
+    for (const q of near) {
+      q.cover = coverSpots(q).filter((s) => {
+        if (Math.abs(s.x) > EDGE - 0.5 || Math.abs(s.z) > EDGE - 0.5) return false;
+        for (const o of near) {
+          if (o === q || !o.alive) continue;
+          const [lx, lz] = toLocal(o.box, s.x, s.z);
+          if (Math.abs(lx) < o.box.hx + RADIUS && Math.abs(lz) < o.box.hz + RADIUS) return false;
+        }
+        return true;
+      });
+    }
   }
 
   rebuildPropGrid() {
@@ -207,19 +236,21 @@ export class Battle {
 
   moveProp(p, x, z, yaw = p.box.yaw) {
     p.box.x = x; p.box.z = z; p.box.yaw = yaw;
-    p.group.position.set(x, 0, z);
     p.group.rotation.y = yaw;
+    this.seat(p);
     for (const s of p.cover) if (s.owner?.brain?.cover === s) s.owner.brain.releaseCover();
-    p.cover = coverSpots(p);
     this.rebuildPropGrid();
+    this.refreshCover(p);
   }
 
   removeProp(p) {
     p.alive = false;
     for (const s of p.cover) if (s.owner?.brain?.cover === s) s.owner.brain.releaseCover();
     this.scene.remove(p.group);
+    if (this.clearing) return;
     this.props = this.props.filter((q) => q !== p);
     this.rebuildPropGrid();
+    this.refreshCover(p);
   }
 
   removeUnit(u) {
@@ -238,7 +269,11 @@ export class Battle {
 
   clearAll() {
     this.clearUnits();
+    this.clearing = true;
     for (const p of [...this.props]) this.removeProp(p);
+    this.clearing = false;
+    this.props = [];
+    this.rebuildPropGrid();
     for (const p of this.projectiles) this.scene.remove(p.model);
     this.projectiles = [];
   }
@@ -247,24 +282,28 @@ export class Battle {
     this.clearAll();
     for (const p of this.points) this.scene.remove(p.model);
     this.points = [];
+    for (const d of this.decor) this.scene.remove(d);
+    this.decor = [];
   }
 
   // ---------- queries ----------
   nearUnits(x, z, r) { return this.unitGrid.near(x, z, r, this.tmpA); }
 
+  // standing height at (x, z) for something at height y: the terrain, or the top of a prop
+  // it is already above
   groundAt(x, z, y = 0) {
-    let g = 0;
+    let g = height(x, z);
     for (const p of this.propGrid.near(x, z, 0.1, this.tmpB)) {
-      const b = p.box;
-      if (y < b.h - 0.3) continue;
+      const b = p.box, top = b.y0 + b.h;
+      if (y < top - 0.3) continue;
       const [lx, lz] = toLocal(b, x, z);
-      if (Math.abs(lx) <= b.hx && Math.abs(lz) <= b.hz) g = Math.max(g, b.h);
+      if (Math.abs(lx) <= b.hx && Math.abs(lz) <= b.hz) g = Math.max(g, top);
     }
     return g;
   }
 
   collideBody(u) {
-    for (const p of this.propGrid.near(u.pos.x, u.pos.z, 1, this.tmpB)) if (u.pos.y < p.box.h - 0.06) pushCircle(u.pos, RADIUS, p.box);
+    for (const p of this.propGrid.near(u.pos.x, u.pos.z, 1, this.tmpB)) if (u.pos.y < p.box.y0 + p.box.h - 0.06) pushCircle(u.pos, RADIUS, p.box);
     if (Math.abs(u.pos.x) > EDGE) { u.pos.x = Math.sign(u.pos.x) * EDGE; u.vel.x = 0; }
     if (Math.abs(u.pos.z) > EDGE) { u.pos.z = Math.sign(u.pos.z) * EDGE; u.vel.z = 0; }
   }
@@ -296,13 +335,8 @@ export class Battle {
       const h = rayBox(o, d, best.t, p.box);
       if (h && h.t < best.t) { best = { t: h.t, prop: p, normal: h.n }; best.unit = undefined; }
     }
-    if (d.y < -1e-6) {
-      const t = -o.y / d.y;
-      if (t > 0 && t < best.t) {
-        const x = o.x + d.x * t, z = o.z + d.z * t;
-        if (Math.abs(x) <= HALF && Math.abs(z) <= HALF) best = { t, ground: true, normal: UP.clone() };
-      }
-    }
+    const tg = rayTerrain(o, d, best.t);
+    if (tg >= 0 && tg < best.t) best = { t: tg, ground: true, normal: normalAt(o.x + d.x * tg, o.z + d.z * tg) };
     best.point = o.clone().addScaledVector(d, best.t);
     best.hit = !!(best.unit || best.prop || best.ground);
     return best;
@@ -315,7 +349,7 @@ export class Battle {
     if (len < 0.01) return true;
     d.divideScalar(len);
     for (const p of this.propGrid.along(a.x, a.z, b.x, b.z, stampN++, this.tmpB)) if (rayBox(a, d, len - 0.05, p.box)) return false;
-    return true;
+    return terrainClear(a, b);
   }
 
   friendlyInLine(u, from, to) {
@@ -415,12 +449,12 @@ export class Battle {
     if (!p.alive || p.hp === Infinity) return;
     p.hp -= dmg;
     if (p.hp <= 0) {
-      const c = new THREE.Vector3(p.box.x, p.box.h / 2, p.box.z);
+      const c = new THREE.Vector3(p.box.x, p.box.y0 + p.box.h / 2, p.box.z);
       this.fx.debris(c, p.def.debris, 16);
       this.fx.dust(c, 6, 1.2);
       this.audio.play('clank', c);
       this.removeProp(p);
-      if (p.def.explodes) this.explode(c.setY(0.5), 3.4, 110, from, 1);
+      if (p.def.explodes) this.explode(c.setY(p.box.y0 + 0.5), 3.4, 110, from, 1);
     }
   }
 
@@ -434,12 +468,14 @@ export class Battle {
     return p;
   }
 
+  // where an arcing throw comes down, stepping along the arc until it meets the ground
   predictLanding(pos, vel, g) {
-    const a = -0.5 * g, b = vel.y, c = pos.y;
-    const disc = b * b - 4 * a * c;
-    if (disc < 0) return null;
-    const t = (-b - Math.sqrt(disc)) / (2 * a);
-    return new THREE.Vector3(pos.x + vel.x * t, 0, pos.z + vel.z * t);
+    for (let t = 0.05; t < 6; t += 0.05) {
+      const x = pos.x + vel.x * t, z = pos.z + vel.z * t, y = pos.y + vel.y * t - 0.5 * g * t * t;
+      const h = height(x, z);
+      if (y <= h && (vel.y - g * t) < 0) return new THREE.Vector3(x, h, z);
+    }
+    return null;
   }
 
   releaseThrow(u) {
@@ -482,7 +518,7 @@ export class Battle {
     }
     for (const p of this.propGrid.near(from.x, from.z, def.range, this.tmpB)) {
       if (p.type !== 'crate' && p.type !== 'drum') continue;
-      const pc = new THREE.Vector3(p.box.x, p.box.h / 2, p.box.z);
+      const pc = new THREE.Vector3(p.box.x, p.box.y0 + p.box.h / 2, p.box.z);
       const along = V().subVectors(pc, from).dot(dir);
       if (along > 0 && along < def.range && segDist(from, from.clone().addScaledVector(dir, def.range), pc) < 0.9) this.damageProp(p, dmg * 0.6, shooter);
     }
@@ -494,7 +530,7 @@ export class Battle {
     this.audio.play('boom', pos);
     this.events.push({ type: 'boom', pos: pos.clone(), r });
     const c = V();
-    const from = pos.clone().setY(Math.max(pos.y, 0.3));
+    const from = pos.clone().setY(Math.max(pos.y, height(pos.x, pos.z) + 0.3));
     const team = owner?.team ?? -1;
     for (const u of [...this.unitGrid.near(pos.x, pos.z, r * 2.2, this.tmpA)]) {
       if (team >= 0 && u.team === team && u !== owner) continue; // no friendly blast damage
@@ -553,7 +589,7 @@ export class Battle {
       if (p.type === 'shell' && Math.random() < 0.6) this.fx.steam(p.pos, new THREE.Vector3(0, 0.2, 0), 1, 0.25);
       if (p.type === 'grenade') {
         p.fuse -= dt;
-        p.landing = p.pos.clone().setY(0);
+        p.landing = p.pos.clone().setY(height(p.pos.x, p.pos.z));
         if (p.fuse <= 0) { this.explode(p.pos.clone().setY(Math.max(0.15, p.pos.y)), p.def.radius, p.def.damage, p.owner, p.def.pierce); done = true; }
       }
       if (p.t > 8 || p.pos.y < -5 || Math.abs(p.pos.x) > HALF + 20 || Math.abs(p.pos.z) > HALF + 20) done = true;

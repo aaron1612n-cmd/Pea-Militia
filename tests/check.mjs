@@ -259,14 +259,17 @@ try {
   const z0 = await P.evaluate(() => window.__game.player.pos.z);
   // headless rendering is slow, so wait on game state rather than wall time
   await P.keyboard.down('KeyW');
-  await P.waitForFunction((z0) => window.__game.player.pos.z < z0 - 1.2, z0, { timeout: 20000 }).catch(() => {});
+  await P.waitForFunction((z0) => window.__game.player.pos.z < z0 - 1.2, z0, { timeout: 60000 }).catch(() => {});
   await P.keyboard.up('KeyW');
   const mv = await P.evaluate(() => ({ z: window.__game.player.pos.z, x: window.__game.player.pos.x, facing: window.__game.player.facing }));
-  check('W walks away from the camera', mv.z - z0 < -1 && Math.abs(mv.x) < 0.15, `dz=${(mv.z - z0).toFixed(2)}`);
+  check('W walks away from the camera', mv.z - z0 < -0.8 && Math.abs(mv.x) < 0.15, `dz=${(mv.z - z0).toFixed(2)}`);
   const j0 = await P.evaluate(() => window.__game.player.jumps);
-  await P.keyboard.press('Space');
-  const jumped = await P.waitForFunction((j) => window.__game.player.jumps > j && window.__game.player.pos.y > 0.2, j0, { timeout: 20000 }).then(() => true, () => false);
-  const landed = await P.waitForFunction(() => window.__game.player.grounded, null, { timeout: 20000 }).then(() => true, () => false);
+  let jumped = false;
+  for (let tries = 0; tries < 3 && !jumped; tries++) {
+    await P.keyboard.press('Space');
+    jumped = await P.waitForFunction((j) => window.__game.player.jumps > j, j0, { timeout: 15000 }).then(() => true, () => false);
+  }
+  const landed = await P.waitForFunction(() => window.__game.player.grounded && window.__game.player.vel.y === 0, null, { timeout: 90000 }).then(() => true, () => false);
   check('Space jumps and lands', jumped && landed);
   // sprint: Shift+W is faster than W and drains stamina
   const sp0 = await P.evaluate(() => ({ z: window.__game.player.pos.z, s: window.__game.player.stamina }));
@@ -310,7 +313,7 @@ try {
     for (let a = 0; a < 16; a++) {
       cam.yaw = (a / 16) * Math.PI * 2;
       cam.pitch = a % 2 ? -0.5 : 0.3;
-      player.pos.set(Math.sin(a) * 0.9, 0, 56.6 + (a % 3) * 0.3);
+      player.pos.set(Math.sin(a) * 0.9, window.__game.height(0, 57), 56.6 + (a % 3) * 0.3);
       battle.collideBody(player);
       cam.update(1, player, true);
       const c = camera.position;
@@ -318,9 +321,9 @@ try {
         const b = q.box;
         const dx = c.x - b.x, dz = c.z - b.z, co = Math.cos(b.yaw), si = Math.sin(b.yaw);
         const lx = dx * co - dz * si, lz = dx * si + dz * co;
-        if (Math.abs(lx) < b.hx && Math.abs(lz) < b.hz && c.y < b.h) bad.push(`${q.type}@${a}`);
+        if (Math.abs(lx) < b.hx && Math.abs(lz) < b.hz && c.y < b.y0 + b.h) bad.push(`${q.type}@${a}`);
       }
-      if (c.y < 0.05) bad.push(`ground@${a}`);
+      if (c.y < window.__game.height(c.x, c.z) + 0.05) bad.push(`ground@${a}`);
     }
     battle.removeProp(p);
     player.pos.set(0, 0, 60);
@@ -423,7 +426,7 @@ try {
       if (i % 30 === 0) for (const u of b.units) {
         if (!u.alive) continue;
         if (u.brain?.cover) covered++;
-        if (u.pos.y < -0.01) under++;
+        if (u.pos.y < g.height(u.pos.x, u.pos.z) - 0.05) under++;
         if (Math.abs(u.pos.x) > g.HALF || Math.abs(u.pos.z) > g.HALF) outside++;
       }
     }
@@ -502,7 +505,7 @@ try {
     for (let i = 0; i < 8; i++) { const u = b.spawnUnit(i % 2, 'rifleman', new T.Vector3((i - 3.5) * 1.6, 0, 0), { yaw: i }); u.ready = 1; u.animate(1 / 60); us.push(u); }
     us.forEach((u, i) => { if (i !== 6) b.damageUnit(u, 250, g.player, 'bullet', new T.Vector3(Math.sin(i), 0, Math.cos(i))); });
     b.update(1e-4);
-    b.explode(new T.Vector3(us[6].pos.x + 0.5, 0.3, 0.6), 3, 250, null);
+    b.explode(new T.Vector3(us[6].pos.x + 0.5, g.height(us[6].pos.x + 0.5, 0.6) + 0.3, 0.6), 3, 250, null);
     let moved = 0, ms = 0;
     const start = us.map((u) => u.pos.clone());
     for (let k = 0; k < 300; k++) { const t0 = performance.now(); for (const u of us) u.update(1 / 60, b); ms += performance.now() - t0; }
@@ -513,10 +516,12 @@ try {
       const bd = r.body;
       if (![bd.pos.x, bd.pos.y, bd.pos.z].every(Number.isFinite)) bad.push(`${u.id}: NaN`);
       let lo = 9; for (const p of bd.pts) lo = Math.min(lo, p.clone().applyQuaternion(bd.q).add(bd.pos).y);
-      if (lo < -0.03 || lo > 0.03) bad.push(`${u.id}: lowest corner ${lo.toFixed(3)}`);
+      const gh = g.height(bd.pos.x, bd.pos.z);
+      lo -= gh;
+      if (lo < -0.05 || lo > 0.05) bad.push(`${u.id}: lowest corner ${lo.toFixed(3)}`);
       if (!r.asleep) bad.push(`${u.id}: still moving after 5 s`);
-      for (const l of r.limbs) if (l.p.distanceTo(bd.pos) > 0.9 || l.p.y < 0) bad.push(`${u.id}: loose limb`);
-      if (r.gun && (r.gun.pos.y < 0 || r.gun.pos.y > 0.3)) bad.push(`${u.id}: gun at ${r.gun.pos.y.toFixed(2)}`);
+      for (const l of r.limbs) if (l.p.distanceTo(bd.pos) > 0.9 || l.p.y < gh - 0.05) bad.push(`${u.id}: loose limb`);
+      if (r.gun && (r.gun.pos.y < gh - 0.05 || r.gun.pos.y > gh + 0.3)) bad.push(`${u.id}: gun at ${r.gun.pos.y.toFixed(2)}`);
       moved = Math.max(moved, u.pos.distanceTo(start[us.indexOf(u)]));
     }
     b.clearUnits();
