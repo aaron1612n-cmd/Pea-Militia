@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { U, pose, makePose } from './rig.js';
 import { WEAPONS } from './weapons.js';
 import { wrap } from './physics.js';
+import { Ragdoll } from './ragdoll.js';
 
 export const RADIUS = U.RADIUS;
 export const WALK = 2.2; // m/s
@@ -149,10 +150,26 @@ export class Unit {
       this.facing = Math.atan2(from.pos.x - this.pos.x, from.pos.z - this.pos.z);
       if (from.team !== undefined) from.kills++;
     }
+    // ragdoll: thrown along the killing hit, harder for heavy hits and blasts
+    const h = this.lastHit;
+    const kick = new THREE.Vector3();
+    if (h && h.dir && this.t - h.t < 0.05) {
+      const k = h.kind === 'blast' ? 1.5 : THREE.MathUtils.clamp(1.6 + h.dmg / 25, 1.8, 5);
+      kick.copy(h.dir).setY(0).normalize().multiplyScalar(k);
+      kick.y = h.kind === 'blast' ? 1.5 : 0.6 + Math.random() * 0.6;
+    } else {
+      // burned or bled out: slump forward or back
+      const a = this.facing + (Math.random() < 0.5 ? 0 : Math.PI) + (Math.random() - 0.5);
+      kick.set(Math.sin(a) * 1.3, 0.2, Math.cos(a) * 1.3);
+    }
+    this.vel.set(0, 0, 0);
+    this.rag = new Ragdoll(this, kick);
+    this.lastThud = 0;
     if (world) world.onDeath(this, from);
   }
 
   impulse(v) {
+    if (this.rag && !this.alive) { this.rag.kick(v.clone().multiplyScalar(1.3)); return; }
     this.vel.add(v);
     if (v.y > 0.5) this.grounded = false;
   }
@@ -161,6 +178,7 @@ export class Unit {
   update(dt, world) {
     this.t += dt;
     if (!this.alive) return this.updateDead(dt, world);
+    this.rag = null;
     const c = this.ctrl;
     this.cool -= dt;
     this.flinch = Math.max(0, this.flinch - dt * 3);
@@ -323,6 +341,20 @@ export class Unit {
   updateDead(dt, world) {
     this.deadT += dt;
     if (this.burn > 0) { this.burn -= dt; if (Math.random() < dt * 15) world.fx.burn(this.center()); }
+    if (this.rag) {
+      this.rag.step(dt, world);
+      const b = this.rag.body.pos;
+      this.pos.x = b.x; this.pos.z = b.z;
+      this.pos.y = world ? world.groundAt(b.x, b.z, b.y) : 0;
+      const th = this.rag.takeThump();
+      if (th > 2.2 && this.t - this.lastThud > 0.25 && world?.audio) {
+        this.lastThud = this.t;
+        world.audio.play('thud', b, Math.min(1, th / 6));
+        if (th > 3.5) world.fx?.dust(b.clone().setY(this.pos.y + 0.05), 2, 0.5);
+      }
+      this.animate(dt);
+      return;
+    }
     if (!this.grounded || this.vel.lengthSq() > 0.01) {
       this.vel.y -= GRAVITY * dt;
       const drag = Math.exp(-(this.grounded ? 6 : 0.3) * dt);
@@ -366,6 +398,12 @@ export class Unit {
     s.lean = this.alive ? this.leanK || 0 : 0; s.prone = this.alive ? this.proneK || 0 : 0;
     s.dead = this.alive ? -1 : Math.min(1, this.deadT / 0.7);
     s.weapon = this.weapon.id;
+    if (this.rag && !this.alive) {
+      // the ragdoll writes world-space parts; sink into the ground before removal
+      this.world.identity();
+      this.rag.write(this.poseOut, this.deadT > 10 ? (this.deadT - 10) * 0.2 : 0);
+      return;
+    }
     pose(s, this.poseOut);
     this.poseOut.showWeapon = this.alive && !(this.weapon.def.kind === 'throw' && this.thrown && this.throwT > 0);
     this.world.makeRotationY(this.facing).setPosition(this.pos.x, this.pos.y - (this.deadT > 10 ? (this.deadT - 10) * 0.2 : 0), this.pos.z);

@@ -391,6 +391,7 @@ export class Battle {
       const d = segDist(a, b, c);
       if (d < 1.8) {
         u.suppression = Math.min(1, u.suppression + (1.8 - d) * 0.1);
+        if (u.isPlayer && d < 1.4) this.audio.play('whiz', null, 0.5 * (1.4 - d));
         if (u.squad) u.squad.know(shooter, shooter.pos, false);
       }
     }
@@ -402,6 +403,7 @@ export class Battle {
     const c = u.center();
     this.fx.impact(c.clone().addScaledVector(dir || UP, -0.25), dir ? dir.clone().negate() : UP, 'metal');
     if (Math.random() < 0.5) this.fx.debris(c, TEAMS[u.team].body, 2);
+    u.lastHit = { dir: dir ? dir.clone() : null, dmg, kind, t: u.t };
     u.hurt(dmg, from, this, kind);
     if (from && from === this.player) this.onHitMarker?.(!u.alive);
     if (u.isPlayer) this.onPlayerHurt?.(dmg, from);
@@ -593,6 +595,8 @@ export class Battle {
     const c = u.center();
     this.fx.debris(c, TEAMS[u.team].body, 6);
     this.fx.impact(c, UP, 'metal');
+    const k = u.lastHit?.kind;
+    if (k === 'blast' || k === 'fire' || k === 'plasma' || u.burn > 0) this.fx.smoulder(() => (u.rag ? u.rag.body.pos.clone() : u.center()), k === 'fire' || u.burn > 0 ? 5 : 3);
     this.events.push({ type: 'death', unit: u, from });
     this.stats.kills++;
     u.brain?.releaseCover();

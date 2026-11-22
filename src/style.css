@@ -21,6 +21,8 @@ html, body { margin: 0; height: 100%; overflow: hidden; background: #101316; col
 body { -webkit-tap-highlight-color: transparent; user-select: none; -webkit-user-select: none; touch-action: none; }
 button, label, a, select, .pal-grid > * { touch-action: manipulation; }
 #scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
+/* soft lens vignette over the scene, under all UI */
+.vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse 120% 95% at 50% 48%, transparent 58%, rgba(22, 18, 12, 0.38) 100%); }
 [hidden] { display: none !important; }
 button { font: inherit; color: inherit; }
 .num { font-family: var(--head); font-variant-numeric: tabular-nums; }
