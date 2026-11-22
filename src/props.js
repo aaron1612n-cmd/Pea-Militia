@@ -14,6 +14,12 @@ export const PROPS = {
   trap: { name: 'Tank trap', hx: 0.55, hz: 0.55, h: 0.85, hp: Infinity, debris: '#3b3e3d', nocover: true },
   slab: { name: 'Concrete wall', hx: 2.2, hz: 0.22, h: 2.3, hp: Infinity, debris: '#9b9b94', raw: true },
   bunker: { name: 'Bunker', hx: 1.7, hz: 1.7, h: 2.0, hp: Infinity, debris: '#9b9b94', raw: true },
+  ruin: { name: 'Ruined wall', hx: 2.0, hz: 0.22, h: 2.0, hp: Infinity, debris: '#8d877a', raw: true },
+  ruinLow: { name: 'Broken wall', hx: 1.5, hz: 0.22, h: 0.74, hp: Infinity, debris: '#8d877a', raw: true },
+  stonewall: { name: 'Field wall', hx: 1.6, hz: 0.27, h: 0.62, hp: 2600, debris: '#7f7a6e', raw: true },
+  rock: { name: 'Boulder', hx: 0.85, hz: 0.7, h: 0.95, hp: Infinity, debris: '#77766c', raw: true },
+  // tree trunks: colliders only, the trees themselves are drawn in bulk by the map
+  tree: { name: 'Tree', hx: 0.2, hz: 0.2, h: 3.2, hp: Infinity, debris: '#4a3b2c', raw: true, nocover: true, noModel: true, fixed: true },
 };
 // The small props were modelled for a shorter soldier; scale them to the current one.
 export const PROP_SCALE = 1.6;
@@ -30,7 +36,85 @@ function bag() {
   return bagGeo;
 }
 
+const stone = (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.92, flatShading: true });
+const STONE = [stone('#8d877a'), stone('#7c766a'), stone('#9a9384')];
+const PLASTER = new THREE.MeshStandardMaterial({ color: '#b3aa95', roughness: 0.95 });
+const CHAR = new THREE.MeshStandardMaterial({ color: '#2e2a26', roughness: 0.9 });
+const ROCK = new THREE.MeshStandardMaterial({ color: '#7a786f', roughness: 0.95, flatShading: true });
+
+// A lumpy stone: a low-poly sphere pushed about by a seeded wobble.
+function lump(rx, ry, rz, seed) {
+  const g = new THREE.IcosahedronGeometry(1, 1);
+  const p = g.attributes.position;
+  let s = seed * 7919 + 13;
+  const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+  const bumps = Array.from({ length: 4 }, () => [rnd() * 2 - 1, rnd() * 2 - 1, rnd() * 2 - 1, 0.12 + rnd() * 0.12]);
+  for (let i = 0; i < p.count; i++) {
+    let x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    let k = 1;
+    for (const [bx, by, bz, a] of bumps) k += a * (x * bx + y * by + z * bz);
+    k = Math.max(0.7, k);
+    if (y < -0.3) y = -0.3 - (y + 0.3) * 0.3; // flatter underside
+    p.setXYZ(i, x * k * rx, y * k * ry, z * k * rz);
+  }
+  g.computeVertexNormals();
+  return g;
+}
+
+// Coursed stone wall from x0..x1, with a broken top given by top(x). Plaster clings to one face.
+function masonry(k, x0, x1, thick, top, seed) {
+  let s = seed;
+  const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+  const ch = 0.25;
+  for (let row = 0, y = 0; y < 2.2; row++, y += ch) {
+    let x = x0 - (row % 2 ? 0.27 : 0);
+    while (x < x1) {
+      const w = 0.42 + rnd() * 0.3;
+      const a = Math.max(x, x0), b = Math.min(x + w, x1);
+      const mid = (a + b) / 2;
+      if (b - a > 0.08 && y + ch <= top(mid) + 0.02) {
+        const hh = ch - 0.025;
+        k.add(block(b - a - 0.03, hh, thick - rnd() * 0.04, 0.03, 0.012), STONE[Math.floor(rnd() * 3)], { pos: [mid, y + ch / 2, (rnd() - 0.5) * 0.03] });
+      } else if (b - a > 0.15 && y < top(mid) && rnd() < 0.6) {
+        // a loose stone sitting on the break
+        k.add(lump(0.14, 0.08, 0.12, Math.floor(rnd() * 1e6)), STONE[Math.floor(rnd() * 3)], { pos: [mid, y + 0.06, (rnd() - 0.5) * 0.15] });
+      }
+      x += w;
+    }
+  }
+}
+
 const BUILD = {
+  ruin(k) {
+    // a house wall: stepped break along the top, a patch of old plaster and a scorched lintel
+    const top = (x) => (x < -1.2 ? 2.0 : x < -0.2 ? 1.75 : x < 0.9 ? 1.5 - (x - -0.2) * 0.2 : x < 1.5 ? 1.15 : 0.9);
+    masonry(k, -2.0, 2.0, 0.44, top, 101);
+    k.add(block(1.6, 0.9, 0.02, 0.01, 0.004), PLASTER, { pos: [-1.1, 1.05, 0.235] });
+    k.add(block(1.1, 0.5, 0.02, 0.01, 0.004), PLASTER, { pos: [0.6, 0.55, -0.235] });
+    k.add(block(1.5, 0.12, 0.5, 0.02, 0.01), CHAR, { pos: [-1.0, 1.92, 0] });
+    k.add(block(4.1, 0.14, 0.52, 0.03, 0.012), STONE[1], { pos: [0, 0.03, 0] }); // footing
+  },
+  ruinLow(k) {
+    const top = (x) => 0.74 - Math.max(0, x - 0.6) * 0.25;
+    masonry(k, -1.5, 1.5, 0.44, top, 202);
+    k.add(block(3.1, 0.14, 0.52, 0.03, 0.012), STONE[1], { pos: [0, 0.03, 0] });
+    for (let i = 0; i < 4; i++) k.add(lump(0.16, 0.1, 0.13, 300 + i), STONE[i % 3], { pos: [-1.2 + i * 0.85, 0.06, 0.36 * (i % 2 ? 1 : -1)] });
+  },
+  stonewall(k) {
+    // dry-stone field wall: two faces of rough stones, capped with a row on edge
+    let s = 55;
+    const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
+    for (const [y, n, sy] of [[0.12, 9, 0.12], [0.33, 9, 0.11], [0.5, 8, 0.1]]) {
+      for (let i = 0; i < n; i++) {
+        const x = -1.5 + (3.0 * (i + 0.5)) / n + (rnd() - 0.5) * 0.08;
+        for (const z of y < 0.45 ? [-0.13, 0.13] : [0]) k.add(lump(0.19, sy, y < 0.45 ? 0.15 : 0.2, Math.floor(rnd() * 1e6)), STONE[Math.floor(rnd() * 3)], { pos: [x, y, z * (1 - y * 0.6)] });
+      }
+    }
+  },
+  rock(k) {
+    k.add(lump(0.95, 0.75, 0.8, 9), ROCK, { pos: [0, 0.45, 0] });
+    k.add(lump(0.4, 0.3, 0.35, 21), ROCK, { pos: [0.75, 0.15, 0.45] });
+  },
   sandbags(k) {
     const rows = [[5, 0], [5, 0.27], [4, 0.0]];
     let rnd = 3;
@@ -119,6 +203,7 @@ const BUILD = {
 
 const baked = new Map();
 export function propModel(type) {
+  if (PROPS[type].noModel) return new THREE.Group();
   if (!baked.has(type)) {
     const k = new Kit();
     BUILD[type](k);

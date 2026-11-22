@@ -168,8 +168,8 @@ export class Sandbox {
     const h = this.pick(x, y);
     if (!h.hit) return;
     const p = h.point;
-    if (this.ghost) { this.ghost.visible = true; this.ghost.position.set(p.x, 0, p.z); this.ghost.rotation.y = this.yaw; }
-    else { this.ring.visible = true; this.ring.position.set(p.x, (h.prop ? h.prop.box.h : 0) + 0.03, p.z); }
+    if (this.ghost) { this.ghost.visible = true; this.ghost.position.set(p.x, p.y, p.z); this.ghost.rotation.y = this.yaw; }
+    else { this.ring.visible = true; this.ring.position.set(p.x, p.y + 0.05, p.z); }
   }
 
   click(x, y, button = 0) {
@@ -195,7 +195,7 @@ export class Sandbox {
       b.spawnProp(it.id, p.x, p.z, this.yaw);
     } else if (it.id === 'delete') {
       if (h.unit && h.unit !== b.player) b.removeUnit(h.unit);
-      else if (h.prop) b.removeProp(h.prop);
+      else if (h.prop && !h.prop.def.fixed) b.removeProp(h.prop);
       else {
         // nearest soldier to the click, within a couple of metres
         const near = b.nearUnits(p.x, p.z, 2).filter((u) => u.alive && u !== b.player);
@@ -204,7 +204,7 @@ export class Sandbox {
     } else if (it.id === 'move') {
       if (!this.picked) {
         const near = h.unit || b.nearUnits(p.x, p.z, 2).find((u) => u.alive);
-        this.picked = near ? { unit: near } : h.prop ? { prop: h.prop } : null;
+        this.picked = near ? { unit: near } : h.prop && !h.prop.def.fixed ? { prop: h.prop } : null;
       } else {
         if (this.picked.unit) { this.picked.unit.pos.copy(p); this.picked.unit.vel.set(0, 0, 0); }
         else if (this.picked.prop?.alive) b.moveProp(this.picked.prop, p.x, p.z);

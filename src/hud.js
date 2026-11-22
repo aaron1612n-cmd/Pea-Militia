@@ -1,6 +1,7 @@
 import { TEAMS } from './factions.js';
 import { SLOTS } from './weapons.js';
 import { HALF } from './world.js';
+import { minimapImage } from './terrain.js';
 
 const $ = (id) => document.getElementById(id);
 
@@ -128,6 +129,9 @@ export class Hud {
     c.rotate(cam.mode === 'over' ? 0 : cam.yaw);
     const ox = cam.mode === 'over' ? cam.over.x : player.pos.x, oz = cam.mode === 'over' ? cam.over.z : player.pos.z;
     const X = (x) => (x - ox) * s, Z = (z) => (z - oz) * s;
+    // the ground itself: hill shading, roads and contours
+    const map = minimapImage();
+    if (map) { c.globalAlpha = 0.55; c.drawImage(map, X(-HALF), Z(-HALF), HALF * 2 * s, HALF * 2 * s); c.globalAlpha = 1; }
     c.strokeStyle = 'rgba(230,232,228,0.18)';
     c.lineWidth = 2;
     c.strokeRect(X(-HALF), Z(-HALF), HALF * 2 * s, HALF * 2 * s);

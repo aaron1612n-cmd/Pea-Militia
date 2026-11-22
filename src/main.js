@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import './style.css';
-import { createGround, createSky, HALF } from './world.js';
+import { createSky, HALF } from './world.js';
+import { height } from './terrain.js';
 import { Input } from './input.js';
 import { PlayerCam } from './camera.js';
 import { Unit } from './unit.js';
@@ -36,8 +37,6 @@ sky.material.uniforms.top.value.set('#8d99a3');
 sky.material.uniforms.mid.value.set('#d4c8b2');
 sky.material.uniforms.low.value.set('#b6ad9c');
 scene.add(sky);
-const ground = createGround();
-scene.add(ground);
 
 // Overcast light: neutral sky fill, one cool key whose shadow box follows the camera.
 scene.add(new THREE.HemisphereLight('#d9dde2', '#5e554a', 1.05));
@@ -411,8 +410,8 @@ function frame() {
       menuT += dt * (reduced ? 0.2 : 1);
       battle.update(dt);
       const a = menuT * 0.03;
-      camera.position.set(Math.sin(a) * 70, 26, Math.cos(a) * 70);
-      camera.lookAt(Math.sin(a + 0.6) * 10, 0, Math.cos(a + 0.6) * 10);
+      camera.position.set(Math.sin(a) * 70, 30, Math.cos(a) * 70);
+      camera.lookAt(Math.sin(a + 0.6) * 10, 2, Math.cos(a + 0.6) * 10);
       cam.setFov(60, 1);
     } else if (state === 'play' || state === 'end') {
       if (state === 'play') {
@@ -479,7 +478,7 @@ if (params.has('play')) startBattle({ mode: params.get('play') || 'battle' });
 // Test hooks for the check suite.
 window.__game = {
   THREE, scene, camera, renderer, cam, input, crowd, fx, SLOTS, U, pose, makePose, HOLD, HALF,
-  get battle() { return battle; }, get player() { return player; }, get state() { return state; },
+  height, get battle() { return battle; }, get player() { return player; }, get state() { return state; },
   sandbox, start: startBattle, openMenu, pause,
   freeze(on = true) { frozen = on; },
   // render one frame now (for screenshots while frozen)
