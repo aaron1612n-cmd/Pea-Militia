@@ -227,7 +227,7 @@ try {
     window.__parts = { PART_GEO: { body: c.body.geometry, visor: c.visor.geometry, pack: c.pack.geometry, foot: c.foot.geometry, hand: c.hand.geometry, arm: c.arm.geometry } };
   });
   await P.waitForTimeout(600);
-  await P.screenshot({ path: `${OUT}/menu.png` });
+  await shot(P, `${OUT}/menu.png`);
   const menuL = await P.evaluate(uiLayout, '.menu-frame, .deploy');
   check('setup screen shows on load, battle not started', await P.evaluate(() => window.__game.state === 'menu' && !document.getElementById('menu').hidden && document.getElementById('hud').hidden));
   check('setup screen fits the window', menuL.offscreen.length === 0, menuL.offscreen.join(', '));
@@ -249,7 +249,7 @@ try {
   check('Deploy starts a battle with full armies', st.n === st.size * st.teams && st.hud, JSON.stringify(st));
   check('Deploy asks for pointer lock', st.lock > 0);
   await P.waitForTimeout(800);
-  await P.screenshot({ path: `${OUT}/desktop-3p.png` });
+  await shot(P, `${OUT}/desktop-3p.png`);
   const lay = await P.evaluate(uiLayout, HUD_SEL);
   check('desktop: HUD elements inside the screen and not overlapping', lay.overlaps.length === 0 && lay.offscreen.length === 0, [...lay.overlaps, ...lay.offscreen].join(', '));
 
@@ -317,7 +317,7 @@ try {
   await P.keyboard.press('KeyV');
   await until(P, () => window.__game.cam.blend > 0.99, null);
   const fp = await P.evaluate(() => ({ mode: window.__game.cam.mode, d: window.__game.camera.position.distanceTo(window.__game.player.eye()) }));
-  await P.screenshot({ path: `${OUT}/desktop-1p.png` });
+  await shot(P, `${OUT}/desktop-1p.png`);
   await P.keyboard.press('KeyV');
   await until(P, () => window.__game.cam.blend < 0.01, null);
   const tp = await P.evaluate(() => ({ mode: window.__game.cam.mode, d: window.__game.camera.position.distanceTo(window.__game.player.eye()) }));
@@ -474,7 +474,7 @@ try {
     g.view([best.pos.x + 22, 15, best.pos.z + 22], [best.pos.x, 0, best.pos.z]);
     g.render();
   });
-  await P.screenshot({ path: `${OUT}/battle-overview.png` });
+  await shot(P, `${OUT}/battle-overview.png`);
   await P.evaluate(() => { const g = window.__game; g.unfreezeCam(); g.freeze(false); });
 
   // ---- sandbox palette: pick from the grid, click the field
@@ -510,7 +510,7 @@ try {
   await P.waitForTimeout(200);
   const sb2 = await P.evaluate(() => window.__game.battle.units.length);
   check('sandbox: delete tool removes a soldier', sb2 === sb1 - 1, `${sb1} -> ${sb2}`);
-  await P.screenshot({ path: `${OUT}/desktop-sandbox.png` });
+  await shot(P, `${OUT}/desktop-sandbox.png`);
   const palL = await P.evaluate(uiLayout, '.palette, #radar, .topbar, .vitals');
   check('sandbox: palette fits and leaves the HUD clear', palL.overlaps.length === 0 && palL.offscreen.length === 0, [...palL.overlaps, ...palL.offscreen].join(', '));
   for (const t of ['freeze', 'slow', 'god']) await P.click(`[data-t="${t}"]`);
@@ -640,7 +640,7 @@ try {
       g.view([Math.sin(yaw) * 4.2, 1.5, Math.cos(yaw) * 4.2], [0, 0.6, 0.3]);
       g.render();
     }, a);
-    await P.screenshot({ path: `${OUT}/turntable-${String(a * 45).padStart(3, '0')}.png` });
+    await shot(P, `${OUT}/turntable-${String(a * 45).padStart(3, '0')}.png`);
   }
   const anim = [['walk', 'u.walk = 1; u.cycle = 0.25; u.vel.set(0,0,2.2);'], ['kneel', 'u.vel.set(0,0,0); u.walk = 0; u.kneelK = 1;'], ['reload', 'u.kneelK = 0; u.reloadT = u.weapon.def.reload * 0.5;'], ['dead', 'u.reloadT = 0; u.alive = false; u.deadT = 2;']];
   for (const [name, code] of anim) {
@@ -650,15 +650,15 @@ try {
       g.view([1.2, 1.4, 3.8], [0, 0.55, 0.3]);
       g.render();
     }, [code]);
-    await P.screenshot({ path: `${OUT}/anim-${name}.png` });
+    await shot(P, `${OUT}/anim-${name}.png`);
   }
   await P.evaluate(() => { window.__game.freeze(false); window.__game.unfreezeCam(); });
   // ---- ground: detail shading, grass clutter, draw-call and frame budget
   await P.evaluate(() => { const g = window.__game; g.freeze(true); const y = g.height(0, 62); g.view([0, y + 1.7, 62], [0, y + 1.2, 40]); g.render(); });
   await P.waitForTimeout(300);
-  await P.screenshot({ path: `${OUT}/ground-eye.png` });
+  await shot(P, `${OUT}/ground-eye.png`);
   await P.evaluate(() => { const g = window.__game; g.view([40, g.height(40, 40) + 7, 40], [10, g.height(10, 10), 10]); g.render(); });
-  await P.screenshot({ path: `${OUT}/ground-high.png` });
+  await shot(P, `${OUT}/ground-high.png`);
   const gr = await P.evaluate(() => {
     const g = window.__game; const y = g.height(0, 62); g.view([0, y + 1.7, 62], [0, y + 1.2, 40]); g.render();
     const grass = g.scene.getObjectByName('grass');
@@ -676,14 +676,14 @@ try {
   // ======================= phone (portrait) =======================
   const m = await open({ ...devices['iPhone 13'] });
   const M = m.page;
-  await M.screenshot({ path: `${OUT}/phone-menu.png` });
+  await shot(M, `${OUT}/phone-menu.png`);
   const mm = await M.evaluate(() => ({ scroll: document.documentElement.scrollWidth > innerWidth + 1, deploy: (() => { const r = document.getElementById('deploy').getBoundingClientRect(); return r.bottom <= innerHeight && r.top >= 0; })() }));
   check('phone: setup screen fits (no sideways scroll, Deploy on screen)', !mm.scroll && mm.deploy, JSON.stringify(mm));
   await M.tap('#deploy');
   await M.waitForFunction(() => window.__game.state === 'play', null, { timeout: 15000 });
   await M.waitForTimeout(600);
   check('phone: touch controls shown', await M.evaluate(() => document.documentElement.dataset.input === 'touch' && getComputedStyle(document.getElementById('touch')).display !== 'none'));
-  await M.screenshot({ path: `${OUT}/phone.png` });
+  await shot(M, `${OUT}/phone.png`);
   const ml = await M.evaluate(uiLayout, HUD_SEL);
   check('phone: HUD and buttons inside the screen, not overlapping', ml.overlaps.length === 0 && ml.offscreen.length === 0, [...ml.overlaps, ...ml.offscreen].join(', '));
   const sizes = await M.evaluate(() => [...document.querySelectorAll('.tbtn, #corner .icon-btn')].filter((b) => b.offsetParent !== null).map((b) => Math.round(Math.min(b.getBoundingClientRect().width, b.getBoundingClientRect().height))));
@@ -723,17 +723,17 @@ try {
   await until(M, (n) => window.__game.battle.units.length > n, n0, 60);
   const n1 = await M.evaluate(() => window.__game.battle.units.length);
   check('phone: tap an item then tap the field to place it', n1 === n0 + 1, `${n0} -> ${n1}`);
-  await M.screenshot({ path: `${OUT}/phone-sandbox.png` });
+  await shot(M, `${OUT}/phone-sandbox.png`);
   check('phone: no console errors', m.errors.length === 0, m.errors.slice(0, 3).join(' | '));
   await m.ctx.close();
 
   // ======================= phone (landscape) =======================
   const l = await open({ ...devices['iPhone 13 landscape'] });
-  await l.page.screenshot({ path: `${OUT}/phone-landscape-menu.png` });
+  await shot(l.page, `${OUT}/phone-landscape-menu.png`);
   const lmenu = await l.page.evaluate(() => { const r = document.getElementById('deploy').getBoundingClientRect(); return r.bottom <= innerHeight + 1; });
   await l.page.evaluate(() => window.__game.start({ mode: 'battle', teams: 2, size: 20, tickets: 4, view: '3p', playerTeam: 0 }));
   await l.page.waitForTimeout(500);
-  await l.page.screenshot({ path: `${OUT}/phone-landscape.png` });
+  await shot(l.page, `${OUT}/phone-landscape.png`);
   const ll = await l.page.evaluate(uiLayout, HUD_SEL);
   check('phone landscape: Deploy reachable, HUD clear and on screen', lmenu && ll.overlaps.length === 0 && ll.offscreen.length === 0, [...ll.overlaps, ...ll.offscreen].join(', '));
   check('phone landscape: no console errors', l.errors.length === 0, l.errors.slice(0, 3).join(' | '));
