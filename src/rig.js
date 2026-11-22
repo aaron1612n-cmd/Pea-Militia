@@ -46,6 +46,7 @@ const P = new THREE.Vector3();
 const S1 = new THREE.Vector3(1, 1, 1);
 const T = new THREE.Vector3();
 const M = new THREE.Matrix4();
+const M2 = new THREE.Matrix4();
 const smooth = (a, b, x) => THREE.MathUtils.smoothstep(x, a, b);
 const lerp = THREE.MathUtils.lerp;
 
@@ -56,9 +57,13 @@ function compose(out, x, y, z, rx = 0, ry = 0, rz = 0) {
 }
 
 // visor and pack ride on the body
-export function attachToBody(out) {
+export function attachToBody(out, headYaw = 0, headPitch = 0) {
   M.copy(out.body);
-  out.visor.multiplyMatrices(M, compose(out.visor, 0, U.VISOR_Y - U.BODY_Y, U.D / 2 + 0.006));
+  // the head (visor) turns and tips toward what the soldier is aiming at; it rides on the body's surface
+  const hy = U.VISOR_Y - U.BODY_Y;
+  compose(out.visor, 0, hy, 0, -headPitch, headYaw, 0);
+  out.visor.multiply(M2.makeTranslation(0, 0, U.D / 2 + 0.006));
+  out.visor.multiplyMatrices(M, out.visor);
   out.pack.multiplyMatrices(M, compose(out.pack, 0, U.PACK_Y - U.BODY_Y, -U.D / 2 - U.PACK[2] / 2 + 0.02));
   return out;
 }
@@ -67,6 +72,7 @@ export function makePose() {
   return {
     body: new THREE.Matrix4(), visor: new THREE.Matrix4(), pack: new THREE.Matrix4(),
     feet: [new THREE.Matrix4(), new THREE.Matrix4()], hands: [new THREE.Matrix4(), new THREE.Matrix4()],
+    arms: [new THREE.Matrix4(), new THREE.Matrix4(), new THREE.Matrix4(), new THREE.Matrix4()], showArms: true,
     weapon: new THREE.Matrix4(), muzzle: new THREE.Vector3(), showWeapon: true, height: U.TOP,
   };
 }
@@ -122,7 +128,7 @@ function poseCore(s, out) {
     by = py + T.y;
   }
 
-  attachToBody(out);
+  attachToBody(out, THREE.MathUtils.clamp(s.twist || 0, -0.5, 0.5) * 0.55, THREE.MathUtils.clamp(s.aimPitch || 0, -0.6, 0.6) * 0.35 * (dead >= 0 ? 0 : 1));
 
   // ---- feet
   for (let i = 0; i < 2; i++) {
@@ -187,10 +193,12 @@ function poseCore(s, out) {
   const lowered = 1 - ready;
   // first person pulls the gun in a little lower and further forward so it frames the view
   const fp = (s.fp || 0) * (1 - ads);
+  // aimed (shouldered): the gun tucks in beside the cheek and rises to eye level
+  const aimK = smooth(0.55, 1, ready) * (1 - rk);
   const px = lerp(lerp(-h.x, -0.2, fp), 0, ads);
-  const py = lerp(U.EYE - 0.12 - fp * 0.09, U.EYE - 0.085, ads) - bodyDrop - lowered * 0.1 - rk * 0.06;
+  const py = lerp(U.EYE - 0.12 + aimK * 0.04 - fp * 0.09, U.EYE - 0.085, ads) - bodyDrop - lowered * 0.1 - rk * 0.06;
   const pz = lerp(0.04 + fp * 0.1, 0.02, ads);
-  const pitch = (s.aimPitch || 0) - lowered * 0.55 - rk * 0.45 + recoil * 0.06;
+  const pitch = (s.aimPitch || 0) - lowered * 0.55 - rk * 0.45 + recoil * 0.09;
   // twist turns the whole arms-and-gun assembly about the body's axis
   E.set(0, twist, 0, 'YXZ');
   Q2.setFromEuler(E);
@@ -216,6 +224,52 @@ const G = new THREE.Vector3();
 export const PRONE = { PIVOT: U.D / 2 + 0.01, BACK: 0.46, GUN_Y: 0.3, ANGLE: Math.PI / 2 * 0.94 };
 export function pose(s, out = makePose()) {
   poseCore(s, out);
+  postures(s, out);
+  // shoulders sit on the body's upper corners
+  SHL.set(U.W / 2 - 0.03, 0.17, 0.0).applyMatrix4(out.body);
+  SHR.set(-(U.W / 2 - 0.03), 0.17, 0.0).applyMatrix4(out.body);
+  armsFor(out, SHL, SHR, out.body);
+  return out;
+}
+
+// Two-segment arms from each shoulder to its hand with the elbow bent down and out.
+// hands[0] is the support hand (left, +x), hands[1] the trigger hand (right, -x).
+const SHL = new THREE.Vector3(), SHR = new THREE.Vector3();
+const A = new THREE.Vector3(), B = new THREE.Vector3(), C = new THREE.Vector3(), D = new THREE.Vector3(), X = new THREE.Vector3(), Y = new THREE.Vector3(), Z = new THREE.Vector3();
+const ARM = { W: 0.085, UPPER: 0.27, FORE: 0.27 };
+function seg(m, a, b, extra = 0.03) {
+  Z.subVectors(b, a);
+  const len = Z.length() + extra;
+  Z.normalize();
+  X.crossVectors(THREE.Object3D.DEFAULT_UP, Z);
+  if (X.lengthSq() < 1e-6) X.set(1, 0, 0);
+  X.normalize();
+  Y.crossVectors(Z, X);
+  m.makeBasis(X.multiplyScalar(ARM.W), Y.multiplyScalar(ARM.W), Z.multiplyScalar(len));
+  m.setPosition(C.addVectors(a, b).multiplyScalar(0.5));
+}
+export function armsFor(out, shl, shr, ref) {
+  const sh = [shl, shr];
+  for (let i = 0; i < 2; i++) {
+    A.copy(sh[i]);
+    B.setFromMatrixPosition(out.hands[i]);
+    D.subVectors(B, A);
+    const len = Math.min(D.length(), ARM.UPPER + ARM.FORE - 0.01);
+    const mid = C.addVectors(A, B).multiplyScalar(0.5).clone();
+    const h = Math.sqrt(Math.max(0, ARM.UPPER * ARM.UPPER - (len / 2) * (len / 2)));
+    // bend: down and outward (away from the body centre), kept perpendicular to the arm
+    const side = i === 0 ? 1 : -1;
+    Y.set(side * 0.55, -1, -0.15);
+    if (ref) Y.transformDirection(ref);
+    D.normalize();
+    Y.addScaledVector(D, -Y.dot(D)).normalize();
+    const E = mid.addScaledVector(Y, h);
+    seg(out.arms[i * 2], sh[i], E);
+    seg(out.arms[i * 2 + 1], E, B, 0.0);
+  }
+}
+
+function postures(s, out) {
   const lean = s.lean || 0, prone = s.prone || 0;
   if (Math.abs(lean) < 0.001 && prone < 0.001) return out;
   const upper = [out.body, out.visor, out.pack];
