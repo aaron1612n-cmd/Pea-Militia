@@ -28,7 +28,7 @@ for (const d of Object.values(PROPS)) if (!d.raw) { d.hx *= PROP_SCALE; d.hz *= 
 let bagGeo = null;
 function bag() {
   // a stuffed sack: flattened, squared-off pillow with tucked ends
-  if (!bagGeo) bagGeo = ellipsoid(0.27, 0.072, 0.15, 20, 12, (v) => {
+  if (!bagGeo) bagGeo = ellipsoid(0.27, 0.072, 0.15, 12, 8, (v) => {
     v.x = Math.sign(v.x) * Math.abs(v.x) ** 0.55;
     v.z = Math.sign(v.z) * Math.abs(v.z) ** 0.7;
     v.y *= 1 - 0.25 * v.x * v.x;
@@ -244,4 +244,67 @@ export function coverSpots(prop) {
     }
   }
   return out;
+}
+
+// Draws every prop of a type with one instanced mesh per part, so a big field of cover costs a
+// few draw calls instead of one per sandbag. Each prop keeps a plain Group as its transform;
+// call sync(prop) after moving it and drop(prop) when it is gone.
+export class PropBatch {
+  constructor(scene) {
+    this.scene = scene;
+    this.types = new Map();
+    this.m = new THREE.Matrix4();
+    this.q = new THREE.Quaternion();
+    this.up = new THREE.Vector3(0, 1, 0);
+    this.one = new THREE.Vector3();
+  }
+  _type(type) {
+    let t = this.types.get(type);
+    if (t) return t;
+    if (!baked.has(type)) { const k = new Kit(); BUILD[type](k); baked.set(type, k.bake()); }
+    t = { parts: baked.get(type).map(({ geometry, material }) => this._mesh(geometry, material, 64)), free: [], used: 0 };
+    this.types.set(type, t);
+    return t;
+  }
+  _mesh(geometry, material, cap) {
+    const im = new THREE.InstancedMesh(geometry, material, cap);
+    im.count = 0; im.frustumCulled = false; im.castShadow = true; im.receiveShadow = true; im.name = 'props';
+    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    this.scene.add(im);
+    return im;
+  }
+  add(p) {
+    const t = this._type(p.type);
+    p.slot = t.free.length ? t.free.pop() : t.used++;
+    if (p.slot >= t.parts[0].instanceMatrix.count) {
+      // grow: new, bigger meshes with the old matrices copied over
+      t.parts = t.parts.map((im) => {
+        const bigger = this._mesh(im.geometry, im.material, im.instanceMatrix.count * 2);
+        bigger.instanceMatrix.array.set(im.instanceMatrix.array);
+        this.scene.remove(im); im.dispose();
+        return bigger;
+      });
+    }
+    for (const im of t.parts) im.count = Math.max(im.count, t.used);
+  }
+  sync(p) {
+    const t = this.types.get(p.type);
+    if (!t) return;
+    const s = PROPS[p.type].raw ? 1 : PROP_SCALE;
+    this.q.setFromAxisAngle(this.up, p.group.rotation.y);
+    this.m.compose(p.group.position, this.q, this.one.set(s, s, s));
+    for (const im of t.parts) { im.setMatrixAt(p.slot, this.m); im.instanceMatrix.needsUpdate = true; }
+  }
+  drop(p) {
+    const t = this.types.get(p.type);
+    if (!t || p.slot == null) return;
+    this.m.makeScale(0, 0, 0);
+    for (const im of t.parts) { im.setMatrixAt(p.slot, this.m); im.instanceMatrix.needsUpdate = true; }
+    t.free.push(p.slot);
+    p.slot = null;
+  }
+  clear() {
+    for (const t of this.types.values()) for (const im of t.parts) { this.scene.remove(im); im.dispose(); }
+    this.types.clear();
+  }
 }

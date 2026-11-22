@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 
-// The battlefield is 180 m square; the ground itself lives in terrain.js.
-export const MAP = { size: 180 };
+// The battlefield is 300 m square; the ground itself lives in terrain.js.
+export const MAP = { size: 300 };
 export const HALF = MAP.size / 2;
 
 export function createSky() {

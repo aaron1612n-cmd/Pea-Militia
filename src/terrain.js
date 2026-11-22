@@ -9,15 +9,22 @@ import { HALF } from './world.js';
 // ---- layout ----
 // Control points: C sits in a village on the valley floor, A and D on the two hills, B and E
 // in the farmland down in the valley.
-const RING = 38;
+const RING = 68;
 export const POINTS = [
   { name: 'C', x: 0, z: 0, theme: 'village' },
   ...[0, 1, 2, 3].map((i) => {
     const a = Math.PI / 4 + (i * Math.PI) / 2;
     return { name: ['A', 'B', 'D', 'E'][i], x: Math.cos(a) * RING, z: Math.sin(a) * RING, theme: i % 2 ? 'farm' : 'hill' };
   }),
+  // two depots out on the long lane, far enough from the middle that vehicles have somewhere to go
+  { name: 'F', x: -106, z: 19, theme: 'depot' },
+  { name: 'G', x: 106, z: -19, theme: 'depot' },
 ];
-export const POINT_R = 8;
+export const POINT_R = 9;
+// everything was first laid out for a 180 m field; this stretches the shapes to the current one
+const K = HALF / 90;
+// the across-the-field lane, which the depots sit on
+const LANE = [[-HALF + 3, 24], [-68, 15], [-24, 5], [0, 0], [24, -5], [68, -15], [HALF - 3, -24]];
 
 let N = HALF * 2; // grid cells per side (1 m)
 let grid = null; // Float32Array (N+1)^2
@@ -44,20 +51,20 @@ const gauss = (x, z, cx, cz, r) => Math.exp(-((x - cx) ** 2 + (z - cz) ** 2) / (
 // Big shapes only: valley, hills and the long swells. Roads follow this.
 function macro(x, z) {
   const s = (x + z) / Math.SQRT2; // across the valley; A's hill is on the + side
-  let h = 5.4 * (1 - Math.exp(-(s * s) / (24 * 24)));
+  let h = 5.4 * (1 - Math.exp(-(s * s) / (24 * K * 24 * K)));
   const A = POINTS[1], D = POINTS[3];
-  h += 3.4 * gauss(x, z, A.x, A.z, 17) + 3.4 * gauss(x, z, D.x, D.z, 17);
-  h += (noise(x / 31 + 7, z / 31 + 2) - 0.5) * 4.2;
+  h += 4 * gauss(x, z, A.x, A.z, 17 * K) + 4 * gauss(x, z, D.x, D.z, 17 * K);
+  h += (noise(x / (31 * K) + 7, z / (31 * K) + 2) - 0.5) * 4.6;
   return h;
 }
 // The creek: a meandering bed along the valley floor.
 export function creekDist(x, z) {
   const s = (x + z) / Math.SQRT2, along = (x - z) / Math.SQRT2;
-  return Math.abs(s - Math.sin(along / 13) * 3.2 - Math.sin(along / 5.3) * 0.8);
+  return Math.abs(s - Math.sin(along / (13 * K)) * 3.2 * K - Math.sin(along / (5.3 * K)) * 0.8);
 }
 function raw(x, z) {
   let h = macro(x, z);
-  h += (noise(x / 11 + 4, z / 11 + 9) - 0.5) * 1.5;
+  h += (noise(x / 14 + 4, z / 14 + 9) - 0.5) * 1.5;
   h += (noise(x / 4.3 + 21, z / 4.3 + 5) - 0.5) * 0.35;
   h -= 1.1 * (1 - smooth(1.2, 4.5, creekDist(x, z)));
   return h;
@@ -125,26 +132,27 @@ export function setupTerrain(bases) {
     const mx = b.x * 0.5, mz = b.z * 0.5, l = Math.hypot(b.x, b.z) || 1;
     const px = -b.z / l, pz = b.x / l;
     const out = Math.min(HALF - 3, l + 12) / l;
-    layout.roads.push({ w: 1.9, kind: 'road', pts: curve([[b.x * out, b.z * out], [b.x, b.z], [mx + px * 6, mz + pz * 6], [b.x * 0.15 - px * 2, b.z * 0.15 - pz * 2], [0, 0]]) });
+    layout.roads.push({ w: 2.8, kind: 'road', pts: curve([[b.x * out, b.z * out], [b.x, b.z], [mx + px * 10, mz + pz * 10], [b.x * 0.15 - px * 3, b.z * 0.15 - pz * 3], [0, 0]]) });
   }
   for (const p of POINTS.slice(1)) {
     const l = Math.hypot(p.x, p.z);
     const px = -p.z / l, pz = p.x / l;
-    layout.roads.push({ w: 1.3, kind: 'track', pts: curve([[p.x, p.z], [p.x * 0.55 + px * 7, p.z * 0.55 + pz * 7], [0, 0]]) });
+    if (p.theme === 'depot') continue;
+    layout.roads.push({ w: 2.0, kind: 'track', pts: curve([[p.x, p.z], [p.x * 0.55 + px * 12, p.z * 0.55 + pz * 12], [0, 0]]) });
   }
-  layout.roads.push({ w: 1.5, kind: 'lane', pts: curve([[-HALF + 3, 14], [-40, 9], [-14, 3], [0, 0], [14, -3], [40, -9], [HALF - 3, -14]]) });
+  layout.roads.push({ w: 2.4, kind: 'lane', pts: curve(LANE) });
   // plateaus under the points and the bases (heights from the land they sit on)
-  for (const p of POINTS) layout.flats.push({ x: p.x, z: p.z, r: POINT_R + 3.5, blend: 11, h: p.theme === 'farm' ? Math.max(0.2, macro(p.x, p.z)) : macro(p.x, p.z) });
-  for (const b of bases) layout.flats.push({ x: b.x, z: b.z, r: 13, blend: 14, h: macro(b.x, b.z) });
+  for (const p of POINTS) layout.flats.push({ x: p.x, z: p.z, r: POINT_R + 4.5, blend: 14, h: p.theme === 'farm' ? Math.max(0.2, macro(p.x, p.z)) : macro(p.x, p.z) });
+  for (const b of bases) layout.flats.push({ x: b.x, z: b.z, r: 20, blend: 16, h: macro(b.x, b.z) });
   // shell craters, thicker toward the middle
   let s = 4242;
   const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
-  for (let i = 0, tries = 0; i < 34 && tries < 600; tries++) {
+  for (let i = 0, tries = 0; i < 90 && tries < 1500; tries++) {
     const r = Math.sqrt(rnd()) * (HALF - 10), a = rnd() * Math.PI * 2;
     const x = Math.cos(a) * r, z = Math.sin(a) * r;
     if (layout.flats.some((f) => Math.hypot(x - f.x, z - f.z) < f.r + 2)) continue;
     if (nearRoad(x, z) < 2) continue;
-    layout.craters.push({ x, z, r: 1.6 + rnd() * 1.8, depth: 0.45 + rnd() * 0.5 });
+    layout.craters.push({ x, z, r: 1.8 + rnd() * 2.2, depth: 0.45 + rnd() * 0.5 });
     i++;
   }
   // bake
@@ -233,7 +241,7 @@ const COL = {
   grass: [104, 112, 80], grass2: [86, 96, 64], dry: [128, 124, 92], dirt: [118, 104, 82], rock: [118, 116, 108],
   mud: [84, 76, 62], road: [142, 132, 112], rut: [104, 94, 78], scorch: [62, 58, 52],
 };
-const TEX = 1024;
+const TEX = 1536;
 const lerp3 = (o, a, k) => { o[0] += (a[0] - o[0]) * k; o[1] += (a[1] - o[1]) * k; o[2] += (a[2] - o[2]) * k; };
 
 // Colour map for the field: grass and dry patches by noise, rock on slopes, mud in the creek,
@@ -252,8 +260,8 @@ function paintField() {
       const h = height(wx, z);
       const sl = Math.min(1, slopeAt(wx, z) * 1.5);
       col[0] = COL.grass[0]; col[1] = COL.grass[1]; col[2] = COL.grass[2];
-      lerp3(col, COL.grass2, noise(wx / 9 + 31, z / 9 + 17));
-      lerp3(col, COL.dry, Math.max(0, noise(wx / 23, z / 23) - 0.45) * 1.7 + Math.max(0, h - 6) * 0.05);
+      lerp3(col, COL.grass2, noise(wx / 12 + 31, z / 12 + 17));
+      lerp3(col, COL.dry, Math.max(0, noise(wx / 32, z / 32) - 0.45) * 1.7 + Math.max(0, h - 6) * 0.05);
       lerp3(col, COL.dirt, Math.max(0, noise(wx / 6 + 50, z / 6) - 0.68) * 2.2);
       lerp3(col, COL.rock, smooth(0.25, 0.7, sl));
       lerp3(col, COL.mud, (1 - smooth(1.2, 3.6, creekDist(wx, z))) * 0.85);

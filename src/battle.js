@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { Unit, RADIUS } from './unit.js';
 import { U } from './rig.js';
 import { Brain, Squad, Commander } from './ai.js';
-import { PROPS, propModel, coverSpots } from './props.js';
+import { PROPS, PropBatch, coverSpots } from './props.js';
 import { Nav } from './nav.js';
 import { projectileModel, WEAPONS } from './weapons.js';
 import { hostile, TEAMS } from './factions.js';
@@ -120,6 +120,7 @@ export class Battle {
     this.reinforce = true;
     this.stats = { shots: 0, kills: 0 };
     this.decor = []; // scenery the map adds (trees)
+    this.batch = new PropBatch(scene);
     this.nav = new Nav(HALF);
     this.edge = EDGE;
     this.propVer = 0;
@@ -202,12 +203,11 @@ export class Battle {
 
   spawnProp(type, x, z, yaw = 0) {
     const def = PROPS[type];
-    const g = propModel(type);
+    const g = new THREE.Group(); // transform only; drawn by the batch
     g.rotation.y = yaw;
-    this.scene.add(g);
     const p = { type, def, group: g, hp: def.hp, alive: true, box: { x, z, yaw, hx: def.hx, hz: def.hz, h: def.h, y0: 0 }, cover: [] };
     this.seat(p);
-    g.traverse((o) => { o.userData.prop = p; });
+    if (!def.noModel) { this.batch.add(p); this.batch.sync(p); }
     this.props.push(p);
     this.propGrid.insertBox(p, p.box);
     this.propVer++;
@@ -222,6 +222,7 @@ export class Battle {
     for (const [cx, cz] of corners(b, 0)) y = Math.min(y, height(cx, cz));
     b.y0 = y - 0.04;
     p.group.position.set(b.x, b.y0, b.z);
+    if (p.slot != null) this.batch.sync(p);
   }
 
   // cover spots for this prop and its neighbours, minus any that ended up inside another prop
@@ -259,7 +260,7 @@ export class Battle {
   removeProp(p) {
     p.alive = false;
     for (const s of p.cover) if (s.owner?.brain?.cover === s) s.owner.brain.releaseCover();
-    this.scene.remove(p.group);
+    this.batch.drop(p);
     if (this.clearing) return;
     this.props = this.props.filter((q) => q !== p);
     this.rebuildPropGrid();
@@ -297,6 +298,7 @@ export class Battle {
     this.points = [];
     for (const d of this.decor) this.scene.remove(d);
     this.decor = [];
+    this.batch.clear();
   }
 
   // ---------- queries ----------
@@ -425,7 +427,7 @@ export class Battle {
     this.fx.tracer(from.clone().addScaledVector(dir, 0.15), end, def.id === 'mg' ? 0.02 : 0.014);
     this.suppress(shooter, from, end);
     if (hit.unit) this.damageUnit(hit.unit, def.damage, shooter, 'bullet', dir);
-    else if (hit.prop) { this.damageProp(hit.prop, def.damage * 0.15, shooter); this.fx.impact(end, hit.normal, hit.prop.type === 'wall' || hit.prop.type === 'drum' || hit.prop.type === 'trap' ? 'metal' : 'dust'); }
+    else if (hit.prop) { this.damageProp(hit.prop, def.damage * 0.15, shooter); this.fx.impact(end, hit.normal, hit.prop.type === 'wall' || hit.prop.type === 'drum' || hit.prop.type === 'trap' ? 'metalhole' : 'dust'); }
     else if (hit.ground) this.fx.impact(end, hit.normal, 'dust');
   }
 
@@ -453,6 +455,7 @@ export class Battle {
     this.fx.gore.hit(c, dir, dmg, kind, u);
     u.lastHit = { dir: dir ? dir.clone() : null, dmg, kind, t: u.t };
     u.hurt(dmg, from, this, kind);
+    if (u.alive && dir && (kind === 'bullet' || kind === 'plasma') && this.fx.gore.level) u.impulse(dir.clone().setY(0).normalize().multiplyScalar(Math.min(2.4, dmg / 35)));
     if (from && from === this.player) this.onHitMarker?.(!u.alive);
     if (u.isPlayer) this.onPlayerHurt?.(dmg, from);
     if (u.squad && from?.pos) u.squad.know(from, from.pos, true);
@@ -637,7 +640,7 @@ export class Battle {
   // a medic gets a fallen soldier back on their feet
   revive(u) {
     u.alive = true; u.rag = null; u.hp = 45; u.deadT = 0; u.vel.set(0, 0, 0); u.suppression = 0; u.burn = 0; u.flinch = 0;
-    u.wound = 0; u.lost = 0;
+    u.wound = 0; u.lost = 0; u.wounds = null;
     u.onRevive?.();
     this.events.push({ type: 'revive', unit: u });
   }
@@ -648,7 +651,7 @@ export class Battle {
     this.fx.impact(c, UP, 'metal');
     const k = u.lastHit?.kind;
     if (k === 'blast' || k === 'fire' || k === 'plasma' || u.burn > 0) this.fx.smoulder(() => (u.rag ? u.rag.body.pos.clone() : u.center()), k === 'fire' || u.burn > 0 ? 5 : 3);
-    this.fx.gore.death(u, k);
+    this.fx.gore.death(u, k, this);
     this.events.push({ type: 'death', unit: u, from });
     this.stats.kills++;
     u.brain?.releaseCover();
