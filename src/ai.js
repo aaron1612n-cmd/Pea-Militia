@@ -503,7 +503,10 @@ export class Brain {
     if (Math.hypot(c.wx, c.wz) < 0.06) c.wx = c.wz = 0;
     wl = Math.hypot(c.wx, c.wz);
     // sprint when far from the squad and nobody is shooting
-    c.sprint = !this.seen && !sq.inContact() && gd > 10;
+    // run when there's ground to cover: advancing, flanking, falling back, or caught in the open
+    // (the unit itself stops sprinting the moment it needs to shoot or runs out of stamina)
+    const open = !this.cover || gd > 3;
+    c.sprint = open && ((gd > 7 && (!this.seen || sq.retreating || u.suppression > 0.25)) || gd > 16 || (sq.retreating && gd > 3));
     c.speed = 1;
 
     // stuck on something: step sideways, away from the way we were pushing
