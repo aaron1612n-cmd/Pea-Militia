@@ -56,6 +56,13 @@ async function flaky(name, run) {
   check(name, r.ok, r.detail);
 }
 const flakes = [];
+// Screenshots are artifacts, not assertions: a slow software-GL frame must not abort the suite.
+// Try twice with a long timeout; on failure log it and move on (the checks themselves still run).
+async function shot(page, path) {
+  for (let i = 0; i < 2; i++) {
+    try { await page.screenshot({ path, timeout: 180000 }); return; } catch (e) { console.log(`SHOT   ${path} attempt ${i + 1} failed: ${String(e.message).split('\n')[0]}`); }
+  }
+}
 
 // ---------------- soldier model checks (run in page) ----------------
 const modelChecks = () => {
