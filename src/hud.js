@@ -57,6 +57,16 @@ export class Hud {
       g.globalAlpha = 0.85 * (1 - d / 55) * (u.squad === player.squad ? 1 : 0.7);
       g.beginPath(); g.moveTo(x - s, y - s); g.lineTo(x + s, y - s); g.lineTo(x, y + s * 0.4); g.closePath(); g.fill();
     }
+    for (const v of battle.vehicles) {
+      if (!v.alive || v.team !== player.team || v === player.vehicle) continue;
+      const d = Math.hypot(v.pos.x - player.pos.x, v.pos.z - player.pos.z);
+      if (d > 90 || d < 4) continue;
+      V.set(v.pos.x, v.pos.y + 3.2, v.pos.z).project(camera);
+      if (V.z > 1 || Math.abs(V.x) > 1 || Math.abs(V.y) > 1) continue;
+      const x = (V.x * 0.5 + 0.5) * W, y = (-V.y * 0.5 + 0.5) * H, s = 9 * dpr;
+      g.globalAlpha = 0.9;
+      g.beginPath(); g.moveTo(x - s, y - s); g.lineTo(x + s, y - s); g.lineTo(x, y + s * 0.6); g.closePath(); g.fill();
+    }
     g.globalAlpha = 1;
   }
 
@@ -119,7 +129,8 @@ export class Hud {
       this.stam.classList.toggle('full', st >= 1);
       this.stam.classList.toggle('winded', !!player.winded);
     }
-    const hp = Math.max(0, Math.round(player.hp));
+    const veh = player.vehicle;
+    const hp = Math.max(0, Math.round(veh ? veh.hp01 * 100 : player.hp));
     if (hp !== this.last.hp) {
       this.last.hp = hp;
       this.hp.style.width = `${hp}%`;
@@ -127,9 +138,9 @@ export class Hud {
       this.hpNum.textContent = hp;
     }
     // weapon
-    const w = player.weapon, def = w.def;
+    const w = veh ? veh.hudWeapon() : player.weapon, def = w.def;
     const ammo = def.heat ? `${Math.round(w.heat * 100)}%` : `${w.mag}${w.reserve === Infinity ? '' : ` / ${w.reserve}`}`;
-    const label = player.reloadT > 0 ? 'Reloading' : def.name;
+    const label = veh ? def.name : player.reloadT > 0 ? 'Reloading' : def.name;
     if (ammo !== this.last.ammo) { this.ammo.textContent = ammo; this.last.ammo = ammo; }
     if (label !== this.last.label) { this.wname.textContent = label; this.last.label = label; }
     this.heatBar.hidden = !def.heat;
@@ -211,6 +222,18 @@ export class Hud {
       if (u.team !== player.team && u.t - u.lastShot > 1.5 && !(battle.time < (u.spottedUntil || 0))) continue;
       c.fillStyle = TEAMS[u.team].ui;
       c.fillRect(x - 3, z - 3, 6, 6);
+    }
+    for (const v of battle.vehicles) {
+      if (!v.alive || v === player.vehicle) continue;
+      if (v.team !== player.team && v.t - v.lastShot > 2 && !(battle.time < (v.spottedUntil || 0))) continue;
+      c.save();
+      c.translate(X(v.pos.x), Z(v.pos.z));
+      c.rotate(-v.yaw + Math.PI);
+      c.fillStyle = TEAMS[v.team].ui;
+      c.fillRect(-4, -7, 8, 14);
+      c.fillStyle = '#101316';
+      c.fillRect(-1, -7, 2, 6);
+      c.restore();
     }
     c.restore();
     // you, at the centre

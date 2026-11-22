@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { U } from './rig.js';
 import { HALF } from './world.js';
+import { height } from './terrain.js';
 
 const V = () => new THREE.Vector3();
 
@@ -103,6 +104,7 @@ export class PlayerCam {
       this.setFov(55, dt);
       return;
     }
+    if (unit.vehicle) { this.updateVehicle(dt, unit.vehicle, snap); return; }
     const k = 1 - Math.exp(-12 * dt);
     this.blend += ((this.mode === '1p' ? 1 : 0) - this.blend) * (snap ? 1 : Math.min(1, k * 1.2));
     const eye = unit.eye(V());
@@ -155,6 +157,36 @@ export class PlayerCam {
     }
     const base = THREE.MathUtils.lerp(this.fov, this.fpFov, this.blend);
     this.setFov(THREE.MathUtils.lerp(base, base * 0.6, this.ads), dt);
+  }
+
+  // chase camera: well back and above the machine, free to look round it while the turret follows
+  updateVehicle(dt, v, snap) {
+    const cam = this.camera;
+    this.blend += (0 - this.blend) * (snap ? 1 : 0.3);
+    const eye = V().set(v.pos.x, v.pos.y + v.def.camHeight * 0.6, v.pos.z);
+    if (snap) this.focus.copy(eye);
+    else this.focus.lerp(eye, 1 - Math.exp(-16 * dt));
+    const f = this.forward(V());
+    const d = v.def.camDist * (1 - this.ads * 0.35);
+    const pivot = this.focus.clone().add(V().set(0, 0.8, 0));
+    let tp = pivot.clone().addScaledVector(f, -d);
+    if (this.collide) {
+      const dir = V().subVectors(tp, pivot);
+      const len = dir.length();
+      dir.divideScalar(len);
+      const t = this.collide(pivot, dir, len + 0.25);
+      if (t < len + 0.25) tp = pivot.clone().addScaledVector(dir, Math.max(1.5, t - 0.25));
+    }
+    tp.y = Math.max(tp.y, height(tp.x, tp.z) + 0.6);
+    this.pos.copy(tp);
+    cam.position.copy(tp);
+    cam.lookAt(tp.clone().add(f));
+    if (this.shake > 0.001) {
+      const s = this.shake * 0.02;
+      cam.rotation.x += (Math.random() - 0.5) * s;
+      cam.rotation.y += (Math.random() - 0.5) * s;
+    }
+    this.setFov(72 + Math.min(8, Math.abs(v.speed) * 0.7), dt);
   }
 
   setFov(goal, dt) {

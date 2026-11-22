@@ -409,6 +409,11 @@ export class Brain {
       if (d2 > SIGHT * SIGHT) continue;
       c.push({ e, d2 });
     }
+    for (const v of w.vehicles) {
+      if (!v.alive || !hostile(v.team, u.team)) continue;
+      const d2 = (v.pos.x - u.pos.x) ** 2 + (v.pos.z - u.pos.z) ** 2;
+      if (d2 <= SIGHT * SIGHT) c.push({ e: v, d2 });
+    }
     c.sort((a, b) => a.d2 - b.d2);
     let best = null, bs = Infinity, bestSeen = false;
     const tc = V();
@@ -428,6 +433,7 @@ export class Brain {
       if (e.hp < 40) sc -= 7; // finish the wounded
       if (e.isPlayer) sc -= 2;
       if (d > def.range * 1.1) sc += 40;
+      if (e.isVehicle) sc += def.id === 'launcher' || def.id === 'grenade' ? -30 : 45; // only the heavy weapons hurt it
       if (sc < bs) { bs = sc; best = e; bestSeen = noticed; }
     }
     if (best !== this.target) {

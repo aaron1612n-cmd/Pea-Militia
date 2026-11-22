@@ -19,17 +19,22 @@ const ICON = {
   bunker: '<path d="M3 19V9h18v10zM6 12h4M14 12h4M2 9h20"/>',
   move: '<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>',
   delete: '<path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/>',
+  tank: '<path d="M3 16h18l-1.5 3h-15zM6 16v-3h9l2 3M9 13v-3h4M13 11h7"/>',
   command: '<path d="M6 21V4M6 4h11l-3 4 3 4H6"/>',
 };
 const UNIT_ITEMS = [...Object.entries(KINDS).map(([k, v]) => ({ id: k, name: v.name, icon: 'unit', kind: 'unit' })),
   { id: 'squad', name: 'Squad ×6', icon: 'squad', kind: 'group', n: 6 }, { id: 'platoon', name: 'Platoon ×24', icon: 'platoon', kind: 'group', n: 24 }];
+const VEHICLE_ITEMS = [
+  { id: 'tank', name: 'Iron Wagon', icon: 'tank', kind: 'vehicle', crew: true },
+  { id: 'tankEmpty', name: 'Tank (empty)', icon: 'tank', kind: 'vehicle', crew: false },
+];
 const COVER_ITEMS = Object.entries(PROPS).map(([k, v]) => ({ id: k, name: v.name, icon: k, kind: 'prop' }));
 const TOOL_ITEMS = [
   { id: 'move', name: 'Move', icon: 'move', kind: 'tool', hint: 'Click a soldier or cover, then click where it goes.' },
   { id: 'delete', name: 'Delete', icon: 'delete', kind: 'tool', hint: 'Click soldiers or cover to remove them.' },
   { id: 'command', name: 'Command', icon: 'command', kind: 'tool', hint: 'Click a soldier to pick their squad, then click to send it there.' },
 ];
-const TABS = [['units', 'Units', UNIT_ITEMS], ['cover', 'Cover', COVER_ITEMS], ['tools', 'Tools', TOOL_ITEMS]];
+const TABS = [['units', 'Units', UNIT_ITEMS], ['vehicles', 'Vehicles', VEHICLE_ITEMS], ['cover', 'Cover', COVER_ITEMS], ['tools', 'Tools', TOOL_ITEMS]];
 
 export class Sandbox {
   constructor({ getBattle, input, cam, camera, scene, audio, onToggle }) {
@@ -90,7 +95,7 @@ export class Sandbox {
     const T = [
       ['freeze', 'Pause AI', b.aiFrozen], ['slow', 'Slow motion', b.timeScale < 1], ['god', 'God mode', b.god],
       ...(b.settings.mode === 'battle' ? [['reinforce', 'Reinforcements', b.reinforce]] : []),
-      ['clearUnits', 'Clear soldiers', null], ['clearCover', 'Clear cover', null],
+      ['clearUnits', 'Clear soldiers', null], ['clearVehicles', 'Clear vehicles', null], ['clearCover', 'Clear cover', null],
     ];
     this.togglesEl.innerHTML = T.map(([id, name, on]) => `<button type="button" data-t="${id}" ${on === null ? 'class="act"' : `aria-pressed="${!!on}"`}>${name}</button>`).join('');
     this.togglesEl.onclick = (e) => { const el = e.target.closest('[data-t]'); if (el) this.toggleWorld(el.dataset.t); };
@@ -103,6 +108,7 @@ export class Sandbox {
     else if (id === 'god') b.god = !b.god;
     else if (id === 'reinforce') b.reinforce = !b.reinforce;
     else if (id === 'clearUnits') b.clearUnits();
+    else if (id === 'clearVehicles') { for (const v of [...b.vehicles]) { if (v.seats[0]?.isPlayer) continue; b.removeVehicle(v); } }
     else if (id === 'clearCover') { for (const p of [...b.props]) b.removeProp(p); }
     this.audio.play('clink', null, 0.5);
     this.buildToggles();
@@ -130,7 +136,7 @@ export class Sandbox {
     const it = this.tool;
     const touch = this.input.touch;
     let h = touch ? 'Pick a tool, then tap the field. Drag to pan.' : 'Pick a tool, then click the field. Drag to pan, wheel to zoom, right-drag to turn.';
-    if (it?.kind === 'unit' || it?.kind === 'group') h = `${touch ? 'Tap' : 'Click'} to place ${it.name.toLowerCase()} for ${TEAMS[this.team].name}.`;
+    if (it?.kind === 'unit' || it?.kind === 'group' || it?.kind === 'vehicle') h = `${touch ? 'Tap' : 'Click'} to place ${it.name.toLowerCase()} for ${TEAMS[this.team].name}.`;
     else if (it?.kind === 'prop') h = `${touch ? 'Tap' : 'Click'} to place. ${touch ? '' : 'R turns it.'}`;
     else if (it?.hint) h = this.picked ? `${touch ? 'Tap' : 'Click'} where it goes.` : it.hint;
     this.hintEl.textContent = h;
@@ -197,10 +203,13 @@ export class Sandbox {
         const at = p.clone().add(new THREE.Vector3(Math.sin(face + Math.PI / 2) * (r - (rows - 1) / 2) * 7, 0, Math.cos(face + Math.PI / 2) * (r - (rows - 1) / 2) * 7));
         b.spawnSquad(this.team, at, Array.from({ length: Math.min(6, it.n - r * 6) }, (_, i) => mix[(i + r) % mix.length]), face);
       }
+    } else if (it.kind === 'vehicle') {
+      b.addVehicle('tank', this.team, p.x, p.z, face, { crew: it.crew });
     } else if (it.kind === 'prop') {
       b.spawnProp(it.id, p.x, p.z, this.yaw);
     } else if (it.id === 'delete') {
-      if (h.unit && h.unit !== b.player) b.removeUnit(h.unit);
+      if (h.vehicle) b.removeVehicle(h.vehicle);
+      else if (h.unit && h.unit !== b.player) b.removeUnit(h.unit);
       else if (h.prop && !h.prop.def.fixed) b.removeProp(h.prop);
       else {
         // nearest soldier to the click, within a couple of metres

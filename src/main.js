@@ -63,7 +63,7 @@ const crowd = new Crowd(scene, 700);
 const hud = new Hud();
 const input = new Input(canvas, {
   stick: $('stick'), knob: $('knob'), jumpBtn: $('jump'), fireBtn: $('fire'),
-  buttons: { next: $('swap'), view: $('viewBtn') },
+  buttons: { next: $('swap'), view: $('viewBtn'), use: $('useBtn') },
 });
 
 let battle = new Battle(scene, fx, audio);
@@ -213,6 +213,8 @@ function startBattle(s) {
         battle.spawnSquad(t.id, at, Array.from({ length: m }, (_, i) => SQUAD_MIX[t.id][(i + k) % SQUAD_MIX[t.id].length]), f);
       }
       t.tickets = tickets;
+      battle.spawnTeamVehicle(t, true, 0);
+      if (t.id === settings.playerTeam) battle.spawnTeamVehicle(t, false, 1); // one for you to climb into
     }
   }
   battle.onHitMarker = (kill) => { hud.hit(kill); if (kill) audio.play('ping', null, 0.4); };
@@ -295,6 +297,8 @@ input.onChange = () => {
   showStep();
 };
 let wasLocked = false;
+let vehPrompt = false;
+const useBtn = $('useBtn');
 
 const sandbox = new Sandbox({
   getBattle: () => battle, input, cam, camera, scene, audio,
@@ -367,7 +371,8 @@ function handle(actions) {
   for (const a of actions) {
     if (a.type === 'free') { toggleFree(); continue; }
     if (a.type === 'menu') { if (state === 'play') sandbox.toggle(); continue; }
-    if (a.type === 'view') { if (cam.mode !== 'over' && cam.mode !== 'free') { cam.mode = cam.mode === '1p' ? '3p' : '1p'; document.documentElement.dataset.view = cam.mode; } continue; }
+    if (a.type === 'use') { useVehicle(); continue; }
+    if (a.type === 'view') { if (player.vehicle) continue; if (cam.mode !== 'over' && cam.mode !== 'free') { cam.mode = cam.mode === '1p' ? '3p' : '1p'; document.documentElement.dataset.view = cam.mode; } continue; }
     if (!player.alive || sandbox.open || cam.mode === 'free') continue;
     if (a.type === 'slot') player.setWeapon(a.n);
     else if (a.type === 'next') player.cycleWeapon(1);
@@ -388,6 +393,55 @@ function handle(actions) {
     player.setWeapon(quickThrow);
     quickThrow = -1;
   }
+}
+
+// ---------------- vehicles ----------------
+function nearestVehicle() {
+  let best = null, bd = 6.5;
+  for (const v of battle.vehicles) {
+    if (!v.alive || v.team !== player.team || v.seats[0]) continue;
+    const d = Math.hypot(v.pos.x - player.pos.x, v.pos.z - player.pos.z) - v.def.hx;
+    if (d < bd) { bd = d; best = v; }
+  }
+  return best;
+}
+function useVehicle() {
+  if (state !== 'play' || !player.alive || sandbox.open || cam.mode === 'free') return;
+  const cur = player.vehicle;
+  if (cur) {
+    cur.ctrl.throttle = cur.ctrl.steer = 0; cur.ctrl.fire = cur.ctrl.fire2 = false; cur.ctrl.brake = true;
+    cur.eject(0, battle);
+    player.facing = player.aimYaw = cur.yaw;
+    cam.mode = settings.view; cam.blend = settings.view === '1p' ? 1 : 0;
+    document.documentElement.dataset.view = cam.mode;
+    snap = true;
+    hud.say('On foot', 1);
+    return;
+  }
+  const v = nearestVehicle();
+  if (!v) return;
+  // a friendly crew steps out and carries on as infantry
+  for (const u of v.crew) battle.spawnUnit(v.team, 'rifleman', new THREE.Vector3(v.pos.x + Math.cos(v.yaw) * (v.def.hx + 1.4), 0, v.pos.z - Math.sin(v.yaw) * (v.def.hx + 1.4)), { yaw: v.yaw });
+  v.crew.length = 0; v.brain = null;
+  v.board(player, 0);
+  player.vehicle = v;
+  player.ctrl.fire = false; player.ctrl.wx = player.ctrl.wz = 0;
+  cam.mode = '3p'; cam.blend = 0; cam.yaw = v.yaw + Math.PI; cam.pitch = -0.12;
+  document.documentElement.dataset.view = '3p';
+  snap = true;
+  hud.say(input.touch ? `${v.def.name} · stick drives · ◎ fires` : `${v.def.name} · WASD · click fires · X leaves`, 3);
+}
+function driveVehicle(inp) {
+  const v = player.vehicle, c = v.ctrl;
+  const building = sandbox.open;
+  c.throttle = building ? 0 : inp.move.y;
+  c.steer = building ? 0 : inp.move.x;
+  c.brake = !building && inp.jumpHeld;
+  c.fire = !building && inp.fire;
+  c.fire2 = !building && (inp.aim || adsToggle);
+  c.aimAt = building ? null : aimPoint.clone();
+  player.pos.copy(v.pos);
+  player.facing = v.yaw;
 }
 
 const aimPoint = new THREE.Vector3();
@@ -439,6 +493,7 @@ function updatePlayer(dt, inp) {
     else hud.say(`Redeploying ${Math.max(0, Math.ceil(4 - player.respawnT))}`, 0.3);
     return;
   }
+  if (player.vehicle) { driveVehicle(inp); return; }
   const building = sandbox.open;
   const mv = building ? { x: 0, y: 0 } : inp.move;
   const fx = -Math.sin(cam.yaw), fz = -Math.cos(cam.yaw);
@@ -486,7 +541,7 @@ function drawUnits() {
   crowd.begin();
   const fp = state !== 'menu' && player && cam.mode === '1p' && cam.blend > 0.6;
   for (const u of battle.units) {
-    if (u.removed) continue;
+    if (u.removed || u.vehicle) continue;
     if (u === player && fp) {
       if (!u.alive) continue;
       crowd.add(vm.identity, vm.pose, u.team, { body: false, weapon: u.weapon.id });
@@ -561,7 +616,16 @@ function frame(_t, fixedDt) {
     }
     cam.update(dt, player, snap);
     snap = false;
-    const fpOn = cam.mode === '1p' && cam.blend > 0.6 && player.alive;
+    const fpOn = cam.mode === '1p' && cam.blend > 0.6 && player.alive && !player.vehicle;
+    // the "get in / get out" button
+    {
+      const show = state === 'play' && player.alive && !sandbox.open && cam.mode !== 'free' && (!!player.vehicle || !!nearestVehicle());
+      if (useBtn.hidden === show) useBtn.hidden = !show;
+      if (show) {
+        const text = player.vehicle ? 'X · Leave' : input.touch ? '' : `X · Get in ${nearestVehicle().def.name}`;
+        if (!input.touch && prompt.textContent !== text && tut.done) { prompt.textContent = text; prompt.classList.add('on'); vehPrompt = true; }
+      } else if (vehPrompt) { vehPrompt = false; showStep(); }
+    }
     if (fpOn) {
       vm.update(dt, camera, player, cam.ads, lastLook);
       player.muzzleOverride = vm.pose.muzzle;
