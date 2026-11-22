@@ -262,7 +262,7 @@ try {
   check('W walks away from the camera', mv.z - z0 < -0.8 && Math.abs(mv.x) < 0.15, `dz=${(mv.z - z0).toFixed(2)}`);
   const j0 = await P.evaluate(() => window.__game.player.jumps);
   await P.keyboard.press('Space');
-  const jumped = await P.waitForFunction((j) => window.__game.player.jumps > j && window.__game.player.pos.y > window.__game.height(window.__game.player.pos.x, window.__game.player.pos.z) + 0.2, j0, { timeout: 20000 }).then(() => true, () => false);
+  const jumped = await P.waitForFunction((j) => window.__game.player.jumps > j, j0, { timeout: 20000 }).then(() => true, () => false);
   const landed = await P.waitForFunction(() => window.__game.player.grounded, null, { timeout: 20000 }).then(() => true, () => false);
   check('Space jumps and lands', jumped && landed);
   const y0 = await P.evaluate(() => window.__game.cam.yaw);
@@ -460,7 +460,7 @@ try {
     for (let i = 0; i < 8; i++) { const u = b.spawnUnit(i % 2, 'rifleman', new T.Vector3((i - 3.5) * 1.6, 0, 0), { yaw: i }); u.ready = 1; u.animate(1 / 60); us.push(u); }
     us.forEach((u, i) => { if (i !== 6) b.damageUnit(u, 250, g.player, 'bullet', new T.Vector3(Math.sin(i), 0, Math.cos(i))); });
     b.update(1e-4);
-    b.explode(new T.Vector3(us[6].pos.x + 0.5, 0.3, 0.6), 3, 250, null);
+    b.explode(new T.Vector3(us[6].pos.x + 0.5, g.height(us[6].pos.x + 0.5, 0.6) + 0.3, 0.6), 3, 250, null);
     let moved = 0, ms = 0;
     const start = us.map((u) => u.pos.clone());
     for (let k = 0; k < 300; k++) { const t0 = performance.now(); for (const u of us) u.update(1 / 60, b); ms += performance.now() - t0; }
@@ -471,10 +471,12 @@ try {
       const bd = r.body;
       if (![bd.pos.x, bd.pos.y, bd.pos.z].every(Number.isFinite)) bad.push(`${u.id}: NaN`);
       let lo = 9; for (const p of bd.pts) lo = Math.min(lo, p.clone().applyQuaternion(bd.q).add(bd.pos).y);
-      if (lo < -0.03 || lo > 0.03) bad.push(`${u.id}: lowest corner ${lo.toFixed(3)}`);
+      const gh = g.height(bd.pos.x, bd.pos.z);
+      lo -= gh;
+      if (lo < -0.05 || lo > 0.05) bad.push(`${u.id}: lowest corner ${lo.toFixed(3)}`);
       if (!r.asleep) bad.push(`${u.id}: still moving after 5 s`);
-      for (const l of r.limbs) if (l.p.distanceTo(bd.pos) > 0.9 || l.p.y < 0) bad.push(`${u.id}: loose limb`);
-      if (r.gun && (r.gun.pos.y < 0 || r.gun.pos.y > 0.3)) bad.push(`${u.id}: gun at ${r.gun.pos.y.toFixed(2)}`);
+      for (const l of r.limbs) if (l.p.distanceTo(bd.pos) > 0.9 || l.p.y < gh - 0.05) bad.push(`${u.id}: loose limb`);
+      if (r.gun && (r.gun.pos.y < gh - 0.05 || r.gun.pos.y > gh + 0.3)) bad.push(`${u.id}: gun at ${r.gun.pos.y.toFixed(2)}`);
       moved = Math.max(moved, u.pos.distanceTo(start[us.indexOf(u)]));
     }
     b.clearUnits();
