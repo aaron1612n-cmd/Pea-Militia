@@ -228,3 +228,4 @@ html[data-input='touch'] .prompt { bottom: auto; top: 30%; }
   .setup { gap: 8px; grid-template-columns: 1fr 1fr; }
   .deploy { grid-column: 1 / -1; }
 }
+html[data-palette='open'] .touchpad, html[data-palette='open'] .prompt { display: none !important; }
