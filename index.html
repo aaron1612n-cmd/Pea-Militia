@@ -2,7 +2,7 @@
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
     <meta name="theme-color" content="#101316" />
     <title>Steel Meridian</title>
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
@@ -20,6 +20,7 @@
         <header class="menu-head">
           <h1 class="title">Steel Meridian</h1>
           <p class="sub">Combined-arms field battle</p>
+          <button id="optBtn" class="opt-btn" type="button" aria-expanded="false" aria-controls="setup">Options <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 15l6-6 6 6" /></svg></button>
         </header>
         <form id="setup" class="setup" autocomplete="off">
           <fieldset class="field">
@@ -27,6 +28,7 @@
             <div class="seg" role="radiogroup">
               <label><input type="radio" name="mode" value="battle" checked /><span>Battle</span></label>
               <label><input type="radio" name="mode" value="sandbox" /><span>Sandbox</span></label>
+              <label><input type="radio" name="mode" value="free" /><span>Free cam</span></label>
             </div>
           </fieldset>
           <fieldset class="field">
@@ -53,16 +55,16 @@
             </div>
           </fieldset>
           <fieldset class="field">
-            <legend>View</legend>
+            <legend>Camera</legend>
             <div class="seg" role="radiogroup">
-              <label><input type="radio" name="view" value="3p" checked /><span>Third person</span></label>
-              <label><input type="radio" name="view" value="1p" /><span>First person</span></label>
+              <label><input type="radio" name="view" value="3p" checked /><span>Third</span></label>
+              <label><input type="radio" name="view" value="1p" /><span>First</span></label>
             </div>
           </fieldset>
           <button id="deploy" class="deploy" type="submit">Deploy</button>
         </form>
         <p class="keys mouse-only">WASD move · Mouse aim · Click fire · Right-click sights · V view · B sandbox · Esc pause</p>
-        <p class="keys touch-only">Left thumb move · Right thumb aim · Buttons fire, jump, view</p>
+        <p class="keys touch-only">Left thumb move, push past the edge to run · Right thumb aim</p>
       </div>
     </section>
 
@@ -71,11 +73,14 @@
       <div class="topbar">
         <div id="tickets" class="tickets"></div>
         <div id="points" class="points"></div>
+        <div class="compass" aria-hidden="true"><div id="compass"></div><i></i></div>
       </div>
+      <canvas id="marks" class="marks" aria-hidden="true"></canvas>
+      <div id="supp" class="supp" aria-hidden="true"></div>
       <canvas id="radar" class="radar" width="300" height="300" aria-hidden="true"></canvas>
       <ol id="feed" class="feed" aria-live="polite"></ol>
       <div class="vitals">
-        <span class="label">HP</span><div class="hp"><i id="hpbar"></i></div><b id="hpnum" class="num">100</b>
+        <span class="label">HP</span><div class="hp"><i id="hpbar"></i><s id="stambar"></s></div><b id="hpnum" class="num">100</b>
       </div>
       <div class="gun">
         <div class="gun-row"><span id="wname" class="wname"></span><b id="ammo" class="num"></b></div>
@@ -94,6 +99,7 @@
     <aside id="palette" class="palette" hidden aria-label="Sandbox tools">
       <div class="pal-head">
         <h2>Sandbox</h2>
+        <button id="palMore" class="icon-btn pal-more" type="button" aria-label="More tools" aria-expanded="false"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01" /></svg></button>
         <button id="palClose" class="icon-btn" type="button" aria-label="Close sandbox">
           <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M6 6l12 12M18 6L6 18" /></svg>
         </button>
@@ -111,10 +117,11 @@
         <h2>Paused</h2>
         <div class="sheet-actions">
           <button id="resume" class="deploy" type="button">Resume</button>
+          <button id="pauseFree" class="ghost" type="button">Free camera</button>
           <button id="restart" class="ghost" type="button">Restart</button>
           <button id="toMenu" class="ghost" type="button">Setup</button>
         </div>
-        <p class="keys mouse-only">V view · Shift sprint · C crouch · R reload · G grenade · 1–7 weapons · M mute · H controls</p>
+        <p class="keys mouse-only">Shift sprint · C crouch · Z prone · Q/E lean · R reload · G grenade · 1–7 or wheel weapons · V view · M mute</p>
       </div>
     </section>
     <section id="end" class="sheet" hidden aria-label="Battle over">
@@ -140,6 +147,7 @@
     </div>
     <div id="corner" class="corner" hidden>
       <button id="sbxBtn" class="icon-btn" type="button" aria-label="Sandbox tools" title="Sandbox (B)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM17 14v6M14 17h6" /></svg></button>
+      <button id="freeBtn" class="icon-btn" type="button" aria-label="Free camera" title="Free camera (F)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 8h4l2-3h6l2 3h4v11H3zM12 11a3.5 3.5 0 100 7 3.5 3.5 0 000-7z" /></svg></button>
       <button id="pauseBtn" class="icon-btn" type="button" aria-label="Pause" title="Pause (Esc)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M8 5v14M16 5v14" /></svg></button>
     </div>
     <script type="module" src="/src/main.js"></script>

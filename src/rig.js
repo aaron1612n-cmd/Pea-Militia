@@ -13,7 +13,7 @@ export const U = {
   PACK: [0.3, 0.32, 0.12], PACK_Y: 0.6,
   EYE: 0.86,
   RADIUS: 0.3, // ground collision radius
-  WEAPON_SCALE: 0.85,
+  WEAPON_SCALE: 0.92,
   KNEEL_DROP: 0.13,
 };
 U.BODY_Y = U.LIFT + U.H / 2;
@@ -22,7 +22,7 @@ U.TOP = U.LIFT + U.H;
 // Per-weapon hold: where the support hand goes along the gun, and how far out from the body
 // the gun rides. Filled in from the weapon models' bounds by setWeaponBounds().
 export const HOLD = {};
-export function setWeaponBounds(id, box, muzzle) {
+export function setWeaponBounds(id, box, muzzle, sight = box.max.y) {
   const s = U.WEAPON_SCALE;
   const half = Math.max(Math.abs(box.min.x), Math.abs(box.max.x)) * s;
   HOLD[id] = {
@@ -31,6 +31,8 @@ export function setWeaponBounds(id, box, muzzle) {
     foreY: Math.min(-0.03, box.min.y * s * 0.35),
     muzzle: new THREE.Vector3(...muzzle).multiplyScalar(s),
     oneHand: id === 'grenade',
+    top: box.max.y * s,
+    sight: sight * s,
     // gun bounds in its own (scaled) frame, for the dropped-gun physics
     half: new THREE.Vector3().subVectors(box.max, box.min).multiplyScalar(s / 2),
     mid: new THREE.Vector3().addVectors(box.max, box.min).multiplyScalar(s / 2),
@@ -82,7 +84,7 @@ function footAt(p, stride) {
 // s: { t, walk, cycle, stride, mx, mz (local move dir), air, rise, land, kneel, aimPitch, twist,
 //      ready (0 lowered .. 1 shouldered), recoil, reload (-1 or 0..1), throw (-1 or 0..1),
 //      flinch, ads (0..1, first person centre), fp (first person view), dead (-1 or 0..1 topple), weapon, sprint }
-export function pose(s, out = makePose()) {
+function poseCore(s, out) {
   const t = s.t || 0, walk = s.walk || 0, kneel = s.kneel || 0, air = s.air || 0;
   const mx = s.mx ?? 0, mz = s.mz ?? 1;
   const cyc = s.cycle || 0;
@@ -203,5 +205,44 @@ export function pose(s, out = makePose()) {
   out.hands[1].multiplyMatrices(out.weapon, compose(M, 0, -0.045, -0.01));
   const fz = lerp(h.fore, 0.1, rk), fy = lerp(h.foreY, -0.1, rk);
   out.hands[0].multiplyMatrices(out.weapon, compose(M, 0, fy, fz));
+  return out;
+}
+
+// Posture on top of the stance: lean (Q/E) rolls the upper body about the hips; prone lays the
+// body face down along the facing, feet behind, and carries the gun forward at ground level.
+const R = new THREE.Matrix4();
+const R2 = new THREE.Matrix4();
+const G = new THREE.Vector3();
+export const PRONE = { PIVOT: U.D / 2 + 0.01, BACK: 0.46, GUN_Y: 0.3, ANGLE: Math.PI / 2 * 0.94 };
+export function pose(s, out = makePose()) {
+  poseCore(s, out);
+  const lean = s.lean || 0, prone = s.prone || 0;
+  if (Math.abs(lean) < 0.001 && prone < 0.001) return out;
+  const upper = [out.body, out.visor, out.pack];
+  const held = [out.weapon, out.hands[0], out.hands[1]];
+  if (Math.abs(lean) > 0.001) {
+    // roll about the forward axis through the hips; +lean tips toward the right (-x)
+    const py = U.LIFT + 0.15;
+    R.makeTranslation(0, py, 0).multiply(R2.makeRotationZ(lean * 0.32)).multiply(M.makeTranslation(0, -py, 0));
+    for (const m of upper) m.premultiply(R);
+    for (const m of held) m.premultiply(R);
+    out.muzzle.applyMatrix4(R);
+  }
+  if (prone > 0.001) {
+    const k = smooth(0, 1, prone);
+    const th = PRONE.ANGLE * k;
+    const P0 = PRONE.PIVOT * k + (U.LIFT) * (1 - k);
+    // rotate about the x axis through (0, P0, 0), then slide back so the body centre stays put
+    R.makeTranslation(0, P0 + 0.05 * Math.sin(Math.PI * k) , -PRONE.BACK * k).multiply(R2.makeRotationX(th)).multiply(M.makeTranslation(0, -P0, 0));
+    for (const m of upper) m.premultiply(R);
+    for (const f of out.feet) { f.premultiply(R); f.elements[13] -= 0.03 * k * k * k; } // toes rest on the ground
+    // the gun keeps its aim; it just moves to the front of the prone body, low to the ground
+    G.setFromMatrixPosition(out.weapon);
+    const gz = G.clone().applyMatrix4(R).z + 0.12 * k;
+    T.set(0, lerp(G.y, PRONE.GUN_Y, k) - G.y, gz - G.z);
+    R.makeTranslation(T.x, T.y, T.z);
+    for (const m of held) m.premultiply(R);
+    out.muzzle.applyMatrix4(R);
+  }
   return out;
 }

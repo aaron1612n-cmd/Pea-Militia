@@ -49,7 +49,7 @@ export class Input {
           this.placeStick(e.clientX, e.clientY);
         } else if (this.lookId === null) {
           this.lookId = e.pointerId;
-          this.lookAt = { x: e.clientX, y: e.clientY };
+          this.lookAt = { x: e.clientX, y: e.clientY }; this.lookT = e.timeStamp;
           this.lookTap = { x: e.clientX, y: e.clientY, moved: 0 };
         }
         this.capture(e.pointerId);
@@ -75,12 +75,18 @@ export class Input {
         let x = e.clientX - this.stick.ox, y = e.clientY - this.stick.oy;
         const l = Math.hypot(x, y), R = this.radius;
         this.stick.moved = Math.max(this.stick.moved, l);
+        this.stick.over = l / R;
         if (l > R) { x *= R / l; y *= R / l; }
         this.stick.x = x / R; this.stick.y = y / R;
         this.knobEl.style.transform = `translate(${x}px, ${y}px)`;
       } else if (e.pointerId === this.lookId) {
         if (this.lookTap) this.lookTap.moved += Math.hypot(e.clientX - this.lookAt.x, e.clientY - this.lookAt.y);
-        const k = 4.2 / Math.max(320, Math.min(innerWidth, innerHeight));
+        let k = 4.2 / Math.max(320, Math.min(innerWidth, innerHeight));
+        // response curve: slow drags are fine aim, quick swipes turn fast
+        const now = e.timeStamp, dist = Math.hypot(e.clientX - this.lookAt.x, e.clientY - this.lookAt.y);
+        const v = dist / Math.max(4, now - (this.lookT || now - 16));
+        this.lookT = now;
+        k *= Math.min(1.35, 0.42 + v * 0.55);
         if (this.mode === 'build') {
           this.pan.dx += e.clientX - this.lookAt.x;
           this.pan.dy += e.clientY - this.lookAt.y;
@@ -140,12 +146,14 @@ export class Input {
     });
 
     const GAME = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
-    const KEYS = { KeyR: 'reload', KeyG: 'grenade', KeyB: 'menu', KeyV: 'view', KeyQ: 'prev', KeyE: 'next' };
+    const KEYS = { KeyR: 'reload', KeyG: 'grenade', KeyB: 'menu', KeyV: 'view', KeyF: 'free' };
     addEventListener('keydown', (e) => {
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
       if (GAME.has(e.code)) e.preventDefault();
       if (e.code === 'Space' && !e.repeat) this.jumpQueued = true;
       if (!e.repeat && KEYS[e.code]) this.actions.push({ type: KEYS[e.code] });
+      if (!e.repeat && e.code === 'KeyZ') this.prone = !this.prone;
+      if (!e.repeat && (e.code === 'KeyC' || e.code === 'ControlLeft' || e.code === 'Space')) this.prone = false;
       if (!e.repeat && /^Digit[1-9]$/.test(e.code)) this.actions.push({ type: 'slot', n: +e.code.slice(5) - 1 });
       this.keys.add(e.code);
       if (this.touch && GAME.has(e.code)) this.setTouch(false);
@@ -159,8 +167,8 @@ export class Input {
       if (Math.abs(this.wheel) > 40) { this.actions.push({ type: this.wheel > 0 ? 'next' : 'prev' }); this.wheel = 0; }
     }, { passive: false });
 
-    const jump = (e) => { e.preventDefault(); e.stopPropagation(); this.jumpQueued = true; jumpBtn.classList.add('down'); };
-    const up = () => jumpBtn.classList.remove('down');
+    const jump = (e) => { e.preventDefault(); e.stopPropagation(); this.jumpQueued = true; this.jumpTouch = true; jumpBtn.classList.add('down'); };
+    const up = () => { this.jumpTouch = false; jumpBtn.classList.remove('down'); };
     jumpBtn.addEventListener('pointerdown', jump);
     jumpBtn.addEventListener('pointerup', up);
     jumpBtn.addEventListener('pointercancel', up);
@@ -222,10 +230,13 @@ export class Input {
     if (l > 1) { x /= l; y /= l; }
     const play = this.mode === 'play';
     const out = {
-      move: { x, y }, look: { ...this.look }, jump: this.jumpQueued,
+      move: { x, y }, look: { ...this.look }, jump: this.jumpQueued, jumpHeld: k.has('Space') || this.jumpTouch,
       fire: play && ((this.fire && this.locked) || this.fireTouch || this.firePulse), aim: play && this.aim && this.locked,
-      sprint: k.has('ShiftLeft') || k.has('ShiftRight'),
+      // phones: drag the stick well past its rim, forward, to run
+      sprint: k.has('ShiftLeft') || k.has('ShiftRight') || !!(this.stick && this.stick.over > 1.35 && this.stick.y < -0.5),
       crouch: k.has('KeyC') || k.has('ControlLeft') || this.crouchToggle,
+      prone: !!this.prone,
+      lean: (k.has('KeyE') ? 1 : 0) - (k.has('KeyQ') ? 1 : 0),
       actions: this.actions,
       pan: { ...this.pan }, zoom: this.zoom,
     };

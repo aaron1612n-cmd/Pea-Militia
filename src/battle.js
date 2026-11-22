@@ -21,12 +21,13 @@ export const KINDS = {
   flamer: { name: 'Flamer', loadout: ['flame', 'grenade'] },
   mortar: { name: 'Mortar', loadout: ['launcher'] },
   coil: { name: 'Coil gunner', loadout: ['plasma', 'grenade'] },
+  medic: { name: 'Medic', loadout: ['smg'] },
 };
 // squad mixes, one per army
 export const SQUAD_MIX = [
-  ['rifleman', 'gunner', 'assault', 'rifleman', 'mortar', 'assault', 'rifleman', 'coil'],
-  ['rifleman', 'gunner', 'gunner', 'assault', 'rifleman', 'flamer', 'rifleman', 'mortar'],
-  ['coil', 'flamer', 'rifleman', 'coil', 'assault', 'rifleman', 'gunner', 'coil'],
+  ['rifleman', 'gunner', 'assault', 'rifleman', 'medic', 'assault', 'rifleman', 'coil', 'mortar'],
+  ['rifleman', 'gunner', 'gunner', 'assault', 'rifleman', 'medic', 'flamer', 'rifleman', 'mortar'],
+  ['coil', 'flamer', 'rifleman', 'medic', 'coil', 'assault', 'rifleman', 'gunner', 'coil'],
 ];
 export const SQUAD_SIZE = 6;
 
@@ -617,6 +618,13 @@ export class Battle {
     } else {
       this.explode(hit.point.clone().addScaledVector(hit.normal || UP, 0.15), def.radius, def.damage, p.owner, def.pierce);
     }
+  }
+
+  // a medic gets a fallen soldier back on their feet
+  revive(u) {
+    u.alive = true; u.rag = null; u.hp = 45; u.deadT = 0; u.vel.set(0, 0, 0); u.suppression = 0; u.burn = 0; u.flinch = 0;
+    u.onRevive?.();
+    this.events.push({ type: 'revive', unit: u });
   }
 
   onDeath(u, from) {
