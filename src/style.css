@@ -300,6 +300,8 @@ input[type='range']::-moz-range-thumb { width: 24px; height: 24px; border-radius
   .deploy { order: 9; grid-column: 1 / -1; min-height: 42px; position: sticky; bottom: 0; box-shadow: 0 -8px 12px rgba(16, 19, 22, 0.9); }
   .keys { display: none; }
 }
+.menu-frame::before, .sheet-box::before { top: -1px; left: -1px; border-top-width: 2px; border-left-width: 2px; }
+.menu-frame::after, .sheet-box::after { bottom: -1px; right: -1px; border-bottom-width: 2px; border-right-width: 2px; }
 
 @media (min-width: 641px) and (max-height: 820px) {
   .menu-frame { padding: 18px 20px 16px; max-height: calc(100vh - 24px); display: flex; flex-direction: column; }

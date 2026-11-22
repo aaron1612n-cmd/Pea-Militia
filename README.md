@@ -1,6 +1,6 @@
-# Pea Militia
+# Steel Meridian
 
-A browser game about a pea and its militia. Live at https://pea-militia.avadlabs.workers.dev
+A browser game about a combined-arms field battle. Live at https://pea-militia.avadlabs.workers.dev
 
 ## Develop
 
