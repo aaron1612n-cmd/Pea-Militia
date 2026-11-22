@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { U, setWeaponBounds } from './rig.js';
+import { U, setWeaponBounds, solveLegs } from './rig.js';
+import { GEAR, MARKS, KIND_IDS, kindKey, LIMB_GEO } from './gear.js';
 import { WEAPONS, weaponParts } from './weapons.js';
 import { TEAMS } from './factions.js';
 
@@ -17,6 +18,8 @@ export const PART_GEO = {
 // the foot's sole sits at its local origin's -half height; nothing to shift
 
 const WQ = new THREE.Quaternion();
+const UI_COL = TEAMS.map((t) => new THREE.Color(t.ui));
+const TROUSER = TEAMS.map((t) => new THREE.Color(t.trim).multiplyScalar(1.15));
 const WOUND = new THREE.Color('#5a1212');
 const BODY_COL = TEAMS.map((t) => new THREE.Color(t.body));
 const TRIM_COL = TEAMS.map((t) => new THREE.Color(t.trim));
@@ -42,6 +45,16 @@ export class Crowd {
     this.pack = mk(PART_GEO.pack, std({ color: '#ffffff', roughness: 0.7, metalness: 0.1 }), cap, true);
     this.foot = mk(PART_GEO.foot, std({ color: '#ffffff', roughness: 0.75, metalness: 0.05 }), cap * 2, true);
     this.hand = mk(PART_GEO.hand, std({ color: '#ffffff', roughness: 0.7, metalness: 0.05 }), cap * 2, true);
+    // class kit (instance colour = army accent), fixed-colour marks, and the legs
+    const gearMat = std({ color: '#ffffff', roughness: 0.65, metalness: 0.1, vertexColors: true });
+    const markMat = std({ color: '#ffffff', roughness: 0.5, metalness: 0.05, vertexColors: true, emissive: '#ffffff', emissiveIntensity: 0.18 });
+    this.gear = {}; this.marks = {}; this.gn = {}; this.mn = {};
+    for (const k of KIND_IDS) {
+      this.gear[k] = mk(GEAR[k], gearMat, cap, true); this.gear[k].name = `crowd-gear-${k}`;
+      if (MARKS[k]) { this.marks[k] = mk(MARKS[k], markMat, cap, false); this.marks[k].name = `crowd-mark-${k}`; }
+    }
+    this.leg = mk(LIMB_GEO.leg, std({ color: '#ffffff', roughness: 0.8, metalness: 0.03 }), cap * 4, true);
+    this.nl = 0;
     this.visor.name = 'crowd-visor'; this.body.name = 'crowd-body';
     // weapons: one instanced mesh per (weapon, material)
     this.weapons = {};
@@ -60,14 +73,15 @@ export class Crowd {
     this.wound = mk(new THREE.BoxGeometry(1, 1, 1), std({ color: '#ffffff', roughness: 0.2, metalness: 0 }), cap * 6, true);
     this.wound.castShadow = false;
     this.nw = 0;
-    this.n = 0; this.nf = 0; this.nh = 0;
+    this.n = 0; this.nf = 0; this.nh = 0; this.nl = 0;
     this.wn = {};
     this.tmp = new THREE.Matrix4();
   }
 
   begin() {
-    this.n = this.nf = this.nh = this.nw = 0;
+    this.n = this.nf = this.nh = this.nw = this.nl = 0;
     for (const id in this.weapons) this.wn[id] = 0;
+    for (const k of KIND_IDS) this.gn[k] = this.mn[k] = 0;
   }
 
   // world: the unit's world matrix; p: pose() output (unit-local); opts: { body: false } hides
@@ -95,6 +109,23 @@ export class Crowd {
       this.pack.setMatrixAt(i, t.multiplyMatrices(world, p.pack));
       this.pack.instanceColor.setXYZ(i, PACK_COL[team].r, PACK_COL[team].g, PACK_COL[team].b);
       const lost = opts.lost || 0;
+      if (!opts.far) {
+        const kk = kindKey(opts.kind), gi = this.gn[kk]++;
+        this.gear[kk].setMatrixAt(gi, t.multiplyMatrices(world, p.body));
+        const ac = UI_COL[team];
+        this.gear[kk].instanceColor.setXYZ(gi, ac.r, ac.g, ac.b);
+        if (this.marks[kk]) this.marks[kk].setMatrixAt(this.mn[kk]++, t);
+        solveLegs(p);
+        for (let k = 0; k < 2; k++) {
+          if (lost & (4 << k) || this.nl + 2 > this.cap * 4) continue; // a torn-off foot takes its leg with it
+          for (let s2 = 0; s2 < 2; s2++) {
+            const j = this.nl++;
+            this.leg.setMatrixAt(j, t.multiplyMatrices(world, p.legs[k][s2]));
+            const c = s2 ? DARK : TROUSER[team];
+            this.leg.instanceColor.setXYZ(j, c.r, c.g, c.b);
+          }
+        }
+      }
       for (let k = 0; k < p.feet.length; k++) {
         const f = p.feet[k];
         if (lost & (4 << k)) continue;
@@ -130,7 +161,8 @@ export class Crowd {
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
     };
     fin(this.body, this.n); fin(this.visor, this.n); fin(this.pack, this.n);
-    fin(this.foot, this.nf); fin(this.hand, this.nh); fin(this.wound, this.nw);
+    fin(this.foot, this.nf); fin(this.hand, this.nh); fin(this.wound, this.nw); fin(this.leg, this.nl);
+    for (const k of KIND_IDS) { fin(this.gear[k], this.gn[k]); if (this.marks[k]) fin(this.marks[k], this.mn[k]); }
     for (const id in this.weapons) for (const m of this.weapons[id]) fin(m, this.wn[id]);
   }
 }

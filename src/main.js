@@ -5,7 +5,7 @@ import { height, updateGround } from './terrain.js';
 import { Input } from './input.js';
 import { PlayerCam } from './camera.js';
 import { Unit } from './unit.js';
-import { U, pose, makePose, HOLD } from './rig.js';
+import { U, pose, makePose, HOLD, solveLegs } from './rig.js';
 import { Crowd } from './crowd.js';
 import { Battle, SQUAD_MIX, SQUAD_SIZE, KINDS } from './battle.js';
 import { buildMap } from './map.js';
@@ -481,6 +481,7 @@ function respawnPlayer() {
 
 // ---------------- render: everyone through the instanced crowd ----------------
 const viewPose = makePose();
+const LOD_FAR = 70; // beyond this, soldiers draw as the plain block, hands, feet, arms and weapon
 function drawUnits() {
   crowd.begin();
   const fp = state !== 'menu' && player && cam.mode === '1p' && cam.blend > 0.6;
@@ -491,7 +492,7 @@ function drawUnits() {
       crowd.add(vm.identity, vm.pose, u.team, { body: false, weapon: u.weapon.id });
       continue;
     }
-    crowd.add(u.world, u.poseOut, u.team, { weapon: u.weapon.id, wound: u.wound, lost: u.lost, wounds: u.wounds });
+    crowd.add(u.world, u.poseOut, u.team, { weapon: u.weapon.id, wound: u.wound, lost: u.lost, wounds: u.wounds, kind: u.kind, far: u.pos.distanceToSquared(camera.position) > LOD_FAR * LOD_FAR });
   }
   crowd.end();
 }
@@ -596,7 +597,7 @@ if (params.has('play')) startBattle({ mode: params.get('play') || 'battle' });
 
 // Test hooks for the check suite.
 window.__game = { maxSpeed: MAX_SPEED,
-  THREE, scene, camera, renderer, cam, input, crowd, fx, SLOTS, U, pose, makePose, HOLD, HALF, weaponModel,
+  THREE, scene, camera, renderer, cam, input, crowd, fx, SLOTS, U, pose, makePose, solveLegs, HOLD, HALF, weaponModel,
   height, get battle() { return battle; }, get player() { return player; }, get state() { return state; },
   sandbox, start: startBattle, openMenu, pause,
   freeze(on = true) { frozen = on; },
