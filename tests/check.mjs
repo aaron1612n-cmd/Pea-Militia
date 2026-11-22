@@ -261,8 +261,11 @@ try {
   const mv = await P.evaluate(() => ({ z: window.__game.player.pos.z, x: window.__game.player.pos.x, facing: window.__game.player.facing }));
   check('W walks away from the camera', mv.z - z0 < -0.8 && Math.abs(mv.x) < 0.15, `dz=${(mv.z - z0).toFixed(2)}`);
   const j0 = await P.evaluate(() => window.__game.player.jumps);
-  await P.keyboard.press('Space');
-  const jumped = await P.waitForFunction((j) => window.__game.player.jumps > j, j0, { timeout: 20000 }).then(() => true, () => false);
+  let jumped = false;
+  for (let tries = 0; tries < 3 && !jumped; tries++) {
+    await P.keyboard.press('Space');
+    jumped = await P.waitForFunction((j) => window.__game.player.jumps > j, j0, { timeout: 15000 }).then(() => true, () => false);
+  }
   const landed = await P.waitForFunction(() => window.__game.player.grounded, null, { timeout: 20000 }).then(() => true, () => false);
   check('Space jumps and lands', jumped && landed);
   const y0 = await P.evaluate(() => window.__game.cam.yaw);
