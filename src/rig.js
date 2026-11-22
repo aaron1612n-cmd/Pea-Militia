@@ -225,9 +225,9 @@ export function pose(s, out = makePose()) {
     const th = PRONE.ANGLE * k;
     const P0 = PRONE.PIVOT * k + (U.LIFT) * (1 - k);
     // rotate about the x axis through (0, P0, 0), then slide back so the body centre stays put
-    R.makeTranslation(0, P0 + 0.05 * Math.sin(Math.PI * k) - 0.03 * k * k * k, -PRONE.BACK * k).multiply(R2.makeRotationX(th)).multiply(M.makeTranslation(0, -P0, 0));
+    R.makeTranslation(0, P0 + 0.05 * Math.sin(Math.PI * k) , -PRONE.BACK * k).multiply(R2.makeRotationX(th)).multiply(M.makeTranslation(0, -P0, 0));
     for (const m of upper) m.premultiply(R);
-    for (const f of out.feet) f.premultiply(R);
+    for (const f of out.feet) { f.premultiply(R); f.elements[13] -= 0.03 * k * k * k; } // toes rest on the ground
     // the gun keeps its aim; it just moves to the front of the prone body, low to the ground
     G.setFromMatrixPosition(out.weapon);
     const gz = G.clone().applyMatrix4(R).z + 0.12 * k;
