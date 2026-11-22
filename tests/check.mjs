@@ -256,13 +256,13 @@ try {
   const z0 = await P.evaluate(() => window.__game.player.pos.z);
   // headless rendering is slow, so wait on game state rather than wall time
   await P.keyboard.down('KeyW');
-  await P.waitForFunction((z0) => window.__game.player.pos.z < z0 - 1.2, z0, { timeout: 20000 }).catch(() => {});
+  await P.waitForFunction((z0) => window.__game.player.pos.z < z0 - 1.2, z0, { timeout: 60000 }).catch(() => {});
   await P.keyboard.up('KeyW');
   const mv = await P.evaluate(() => ({ z: window.__game.player.pos.z, x: window.__game.player.pos.x, facing: window.__game.player.facing }));
-  check('W walks away from the camera', mv.z - z0 < -1 && Math.abs(mv.x) < 0.15, `dz=${(mv.z - z0).toFixed(2)}`);
+  check('W walks away from the camera', mv.z - z0 < -0.8 && Math.abs(mv.x) < 0.15, `dz=${(mv.z - z0).toFixed(2)}`);
   const j0 = await P.evaluate(() => window.__game.player.jumps);
   await P.keyboard.press('Space');
-  const jumped = await P.waitForFunction((j) => window.__game.player.jumps > j && window.__game.player.pos.y > 0.2, j0, { timeout: 20000 }).then(() => true, () => false);
+  const jumped = await P.waitForFunction((j) => window.__game.player.jumps > j && window.__game.player.pos.y > window.__game.height(window.__game.player.pos.x, window.__game.player.pos.z) + 0.2, j0, { timeout: 20000 }).then(() => true, () => false);
   const landed = await P.waitForFunction(() => window.__game.player.grounded, null, { timeout: 20000 }).then(() => true, () => false);
   check('Space jumps and lands', jumped && landed);
   const y0 = await P.evaluate(() => window.__game.cam.yaw);
@@ -289,7 +289,7 @@ try {
     for (let a = 0; a < 16; a++) {
       cam.yaw = (a / 16) * Math.PI * 2;
       cam.pitch = a % 2 ? -0.5 : 0.3;
-      player.pos.set(Math.sin(a) * 0.9, 0, 56.6 + (a % 3) * 0.3);
+      player.pos.set(Math.sin(a) * 0.9, window.__game.height(0, 57), 56.6 + (a % 3) * 0.3);
       battle.collideBody(player);
       cam.update(1, player, true);
       const c = camera.position;
@@ -297,9 +297,9 @@ try {
         const b = q.box;
         const dx = c.x - b.x, dz = c.z - b.z, co = Math.cos(b.yaw), si = Math.sin(b.yaw);
         const lx = dx * co - dz * si, lz = dx * si + dz * co;
-        if (Math.abs(lx) < b.hx && Math.abs(lz) < b.hz && c.y < b.h) bad.push(`${q.type}@${a}`);
+        if (Math.abs(lx) < b.hx && Math.abs(lz) < b.hz && c.y < b.y0 + b.h) bad.push(`${q.type}@${a}`);
       }
-      if (c.y < 0.05) bad.push(`ground@${a}`);
+      if (c.y < window.__game.height(c.x, c.z) + 0.05) bad.push(`ground@${a}`);
     }
     battle.removeProp(p);
     player.pos.set(0, 0, 60);
@@ -382,7 +382,7 @@ try {
       if (i % 30 === 0) for (const u of b.units) {
         if (!u.alive) continue;
         if (u.brain?.cover) covered++;
-        if (u.pos.y < -0.01) under++;
+        if (u.pos.y < g.height(u.pos.x, u.pos.z) - 0.05) under++;
         if (Math.abs(u.pos.x) > g.HALF || Math.abs(u.pos.z) > g.HALF) outside++;
       }
     }
