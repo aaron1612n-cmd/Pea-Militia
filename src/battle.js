@@ -4,6 +4,8 @@ import { U } from './rig.js';
 import { Brain, Squad, Commander } from './ai.js';
 import { PROPS, PropBatch, coverSpots } from './props.js';
 import { Nav } from './nav.js';
+import { Vehicle } from './vehicles.js';
+import { VehicleBrain } from './vehicleai.js';
 import { projectileModel, WEAPONS } from './weapons.js';
 import { hostile, TEAMS } from './factions.js';
 import { HALF, pointMarker } from './world.js';
@@ -121,6 +123,8 @@ export class Battle {
     this.stats = { shots: 0, kills: 0 };
     this.decor = []; // scenery the map adds (trees)
     this.batch = new PropBatch(scene);
+    this.vehicles = [];
+    this.vehicleSpawns = [];
     this.nav = new Nav(HALF);
     this.edge = EDGE;
     this.propVer = 0;
@@ -299,6 +303,7 @@ export class Battle {
     for (const d of this.decor) this.scene.remove(d);
     this.decor = [];
     this.batch.clear();
+    for (const v of [...this.vehicles]) this.removeVehicle(v);
   }
 
   // ---------- queries ----------
@@ -333,8 +338,16 @@ export class Battle {
   raycast(o, d, maxT, { ignore = null, units = true } = {}) {
     let best = { t: maxT, point: null };
     if (units) {
+      for (const v of this.vehicles) {
+        if (v === ignore?.vehicle || v === ignore || (v.deadT > 40)) continue;
+        const cx = v.pos.x - o.x, cz = v.pos.z - o.z;
+        const along = cx * d.x + (v.pos.y + 1 - o.y) * d.y + cz * d.z;
+        if (along < -6 || along > best.t + 6) continue;
+        const h = rayBox(o, d, best.t, v.hitBox());
+        if (h && h.t < best.t) best = { t: h.t, vehicle: v, normal: h.n };
+      }
       for (const u of this.units) {
-        if (!u.alive || u === ignore) continue;
+        if (!u.alive || u === ignore || u.vehicle) continue;
         // cheap reject: distance from the body centre to the ray
         const cx = u.pos.x - o.x, cy = u.pos.y + 0.55 - o.y, cz = u.pos.z - o.z;
         const along = cx * d.x + cy * d.y + cz * d.z;
@@ -353,7 +366,7 @@ export class Battle {
     const tg = rayTerrain(o, d, best.t);
     if (tg >= 0 && tg < best.t) best = { t: tg, ground: true, normal: normalAt(o.x + d.x * tg, o.z + d.z * tg) };
     best.point = o.clone().addScaledVector(d, best.t);
-    best.hit = !!(best.unit || best.prop || best.ground);
+    best.hit = !!(best.unit || best.prop || best.ground || best.vehicle);
     return best;
   }
 
@@ -426,7 +439,8 @@ export class Battle {
     const end = hit.point;
     this.fx.tracer(from.clone().addScaledVector(dir, 0.15), end, def.id === 'mg' ? 0.02 : 0.014);
     this.suppress(shooter, from, end);
-    if (hit.unit) this.damageUnit(hit.unit, def.damage, shooter, 'bullet', dir);
+    if (hit.vehicle) { hit.vehicle.hit(def.damage, 'bullet', shooter, this); this.fx.impact(end, hit.normal, 'metal'); }
+    else if (hit.unit) this.damageUnit(hit.unit, def.damage, shooter, 'bullet', dir);
     else if (hit.prop) { this.damageProp(hit.prop, def.damage * 0.15, shooter); this.fx.impact(end, hit.normal, hit.prop.type === 'wall' || hit.prop.type === 'drum' || hit.prop.type === 'trap' ? 'metalhole' : 'dust'); }
     else if (hit.ground) this.fx.impact(end, hit.normal, 'dust');
   }
@@ -563,6 +577,15 @@ export class Battle {
       if (u.alive) this.damageUnit(u, dmg * k, owner, 'blast', push.clone().normalize());
       if (!(u.isPlayer && this.god)) u.impulse(push);
     }
+    for (const v of this.vehicles) {
+      if (!v.alive) continue;
+      const dx = Math.abs(pos.x - v.pos.x), dz = Math.abs(pos.z - v.pos.z);
+      const d = Math.hypot(Math.max(0, dx - v.def.hx), Math.max(0, dz - v.def.hz));
+      if (d < r && pos.y < v.pos.y + v.def.h + 1.5) {
+        if (team >= 0 && v.team === team && owner?.vehicle !== v) continue; // no friendly blast damage
+        v.hit(dmg * Math.pow(1 - d / r, 0.7), 'blast', owner, this);
+      }
+    }
     for (const p of [...this.propGrid.near(pos.x, pos.z, r + 2, this.tmpB)]) {
       const d = Math.hypot(p.box.x - pos.x, p.box.z - pos.z) - Math.max(p.box.hx, p.box.hz) * 0.6;
       if (d < r) this.damageProp(p, dmg * 1.2 * (1 - Math.max(0, d) / r), owner);
@@ -623,6 +646,7 @@ export class Battle {
     if (p.type === 'plasma') {
       this.fx.plasmaBurst(hit.point, def.radius);
       this.audio.play('zap', hit.point, 0.7);
+      if (hit.vehicle) hit.vehicle.hit(def.damage, 'plasma', p.owner, this);
       if (hit.unit) this.damageUnit(hit.unit, def.damage, p.owner, 'plasma', dir);
       if (hit.prop) this.damageProp(hit.prop, def.damage * 0.5, p.owner);
       const c = V();
@@ -658,6 +682,54 @@ export class Battle {
     this.onKill?.(u, from);
   }
 
+  // ---------- vehicles ----------
+  addVehicle(kind, team, x, z, yaw = 0, { crew = false } = {}) {
+    const v = new Vehicle(kind, team, x, z, yaw);
+    this.scene.add(v.group);
+    this.vehicles.push(v);
+    if (crew) {
+      const u = new Unit({ team, loadout: ['rifle'], kind: 'rifleman' });
+      u.vehicle = v; u.seat = 0; u.pos.copy(v.pos);
+      v.crew.push(u);
+      v.brain = new VehicleBrain(v, this);
+    }
+    return v;
+  }
+  removeVehicle(v) {
+    v.dispose(this.scene);
+    this.vehicles = this.vehicles.filter((q) => q !== v);
+    for (const u of v.seats) if (u && u.vehicle === v) { u.vehicle = null; }
+  }
+  // wrecks burn out and vanish; destroyed tanks are replaced at the base after a while
+  updateVehicles(dt) {
+    for (const v of [...this.vehicles]) {
+      if (!v.alive && v.deadT > 50) this.removeVehicle(v);
+      // keep seated soldiers with their vehicle
+      for (const u of v.seats) if (u) { u.pos.copy(v.pos); u.vel.set(0, 0, 0); }
+    }
+    for (const t of this.teams) {
+      if (t.vehicleT > 0) {
+        t.vehicleT -= dt;
+        if (t.vehicleT <= 0 && this.settings.mode === 'battle' && this.reinforce) this.spawnTeamVehicle(t);
+      }
+    }
+  }
+  spawnTeamVehicle(t, crew = true, slot = 0) {
+    const f = Math.atan2(-t.base.x, -t.base.z);
+    const side = Math.cos(f) * (slot ? -1 : 1), sz = -Math.sin(f) * (slot ? -1 : 1);
+    const at = { x: t.base.x + side * 12 + Math.sin(f) * 6, z: t.base.z + sz * 12 + Math.cos(f) * 6 };
+    const v = this.addVehicle('tank', t.id, at.x, at.z, f, { crew });
+    v.fromBase = true;
+    return v;
+  }
+  onVehicleDestroyed(v) {
+    const t = this.teams[v.team];
+    if (!t) return;
+    if (this.settings.mode === 'battle') t.tickets = Math.max(0, t.tickets - 4);
+    if (v.fromBase) t.vehicleT = 50;
+    this.events.push({ type: 'vehicle', vehicle: v });
+  }
+
   // ---------- control points and reinforcements ----------
   updatePoints(dt) {
     const n = this.teams.length;
@@ -667,6 +739,7 @@ export class Battle {
         if (!u.alive) continue;
         if ((u.pos.x - p.pos.x) ** 2 + (u.pos.z - p.pos.z) ** 2 < p.r * p.r) p.counts[u.team]++;
       }
+      for (const v of this.vehicles) if (v.alive && v.occupied && (v.pos.x - p.pos.x) ** 2 + (v.pos.z - p.pos.z) ** 2 < p.r * p.r) p.counts[v.team] += 2;
       let top = -1, topN = 0, second = 0;
       for (let t = 0; t < n; t++) {
         if (p.counts[t] > topN) { second = topN; topN = p.counts[t]; top = t; } else if (p.counts[t] > second) second = p.counts[t];
@@ -762,14 +835,17 @@ export class Battle {
     this.time += dt;
     // spatial grid for this frame
     this.unitGrid.clear();
-    for (const u of this.units) if (u.alive) this.unitGrid.insert(u, u.pos.x, u.pos.z);
+    for (const u of this.units) if (u.alive && !u.vehicle) this.unitGrid.insert(u, u.pos.x, u.pos.z);
     this.navBudget = 3; // routes worked out per tick, so a crowd re-routing at once doesn't stall a frame
     if (!this.aiFrozen) {
       for (const c of this.commanders) c.update(dt);
       for (const s of this.squads) s.update(dt);
-      for (const u of this.units) if (u !== this.player && u.brain && u.alive) u.brain.update(dt);
+      for (const u of this.units) if (u !== this.player && u.brain && u.alive && !u.vehicle) u.brain.update(dt);
+      for (const v of this.vehicles) v.brain?.update(dt);
     }
-    for (const u of this.units) if (u !== this.player) {
+    for (const v of this.vehicles) v.update(dt, this);
+    this.updateVehicles(dt);
+    for (const u of this.units) if (u !== this.player && !u.vehicle) {
       if (this.aiFrozen && u.alive) { u.animate(0); continue; }
       u.update(dt, this);
     }
