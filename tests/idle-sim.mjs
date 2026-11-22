@@ -8,6 +8,19 @@ export const idleSim = () => {
     g.freeze(true);
     const b = g.battle;
     b.god = true;
+    // every AI shot: is the line from the real muzzle to the aim point clear of props and ground?
+    const shots = { n: 0, blocked: 0, intoGround: 0 };
+    const discharge = b.discharge.bind(b);
+    b.discharge = (sh, def) => {
+      const a = sh.ctrl.aimAt;
+      if (!sh.isPlayer && a && !def.gravity && def.kind !== 'throw') {
+        shots.n++;
+        const m = sh.muzzle();
+        if (!b.los(m, a)) shots.blocked++;
+        if (a.y < g.height(a.x, a.z) - 0.02) shots.intoGround++;
+      }
+      return discharge(sh, def);
+    };
     const st = new Map();
     const worst = { free: 0, fight: 0 }, total = { free: 0, fight: 0 };
     let samples = 0, clumps = 0, fightSamples = 0, flanks = 0, overwatch = 0, defilade = 0;
@@ -23,7 +36,7 @@ export const idleSim = () => {
         s.last.copy(u.pos);
         const br = u.brain, sq = u.squad;
         const inCover = br.cover && Math.hypot(br.cover.x - u.pos.x, br.cover.z - u.pos.z) < 1.2;
-        const hold = sq.holding && sq.objective && Math.hypot(sq.objective.pos.x - u.pos.x, sq.objective.pos.z - u.pos.z) < sq.objective.r * 1.3;
+        const hold = sq.holding && sq.objective && Math.hypot(sq.objective.pos.x - u.pos.x, sq.objective.pos.z - u.pos.z) < sq.objective.r * 2;
         const kind = br.seen || sq.inContact() ? 'fight' : 'free';
         samples++;
         if (kind === 'fight') {
@@ -37,12 +50,12 @@ export const idleSim = () => {
         const idle = moved < 0.15 && !inCover && !br.mission && !hold && !u.busy && !(kind === 'fight' && u.kneelK > 0.5 && br.seen);
         if (idle) {
           s.t += 0.5; total[kind] += 0.5;
-          if (s.t > worst[kind]) { worst[kind] = s.t; who = { kind: u.kind, at: [Math.round(u.pos.x), Math.round(u.pos.z)], t: Math.round(b.time), seen: br.seen }; }
+          if (s.t > worst[kind]) { worst[kind] = s.t; who = { prone: +u.proneK.toFixed(2), kneel: +u.kneelK.toFixed(2), vel: +Math.hypot(u.vel.x, u.vel.z).toFixed(2), gd: br.goal && +Math.hypot(br.goal.x - u.pos.x, br.goal.z - u.pos.z).toFixed(1), stall: br.stallT, lead: sq.leader === u, ret: sq.retreating, anchorD: +Math.hypot(sq.anchor.x - u.pos.x, sq.anchor.z - u.pos.z).toFixed(1), obj: sq.objective?.name, own: sq.objective?.owner, holding: sq.holding, hasCover: !!br.cover, med: !!br.mission, kind: u.kind, at: [Math.round(u.pos.x), Math.round(u.pos.z)], t: Math.round(b.time), seen: br.seen }; }
         } else s.t = 0;
       }
       for (const q of b.squads) if (q.waypoint && q.pinT === 0) flanks++;
     }
     Math.random = real;
     g.freeze(false);
-    return { worstFree: worst.free, worstFight: worst.fight, idleShare: +((total.free + total.fight) / 0.5 / samples).toFixed(3), clumpShare: +(clumps / Math.max(1, fightSamples)).toFixed(3), overwatchShare: +(overwatch / Math.max(1, fightSamples)).toFixed(3), defilade, who, alive: b.counts() };
+    return { shots, worstFree: worst.free, worstFight: worst.fight, idleShare: +((total.free + total.fight) / 0.5 / samples).toFixed(3), clumpShare: +(clumps / Math.max(1, fightSamples)).toFixed(3), overwatchShare: +(overwatch / Math.max(1, fightSamples)).toFixed(3), defilade, who, alive: b.counts() };
   };

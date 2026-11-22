@@ -475,6 +475,7 @@ try {
   check('AI: nobody stands about in the open for long, even in a fight (under 15 s)', idle.worstFight <= 15, JSON.stringify(idle));
   check('AI: idle time is a small share of all soldier time (under 6%)', idle.idleShare < 0.06, `idle=${idle.idleShare}`);
   check('AI: soldiers spread out in a fight (not in a tight clump more than half the time)', idle.clumpShare < 0.5, `clump=${idle.clumpShare}`);
+  check('AI: no shot fired through crates, walls or the ground (muzzle line clear)', idle.shots.n > 300 && idle.shots.blocked <= idle.shots.n * 0.005 && idle.shots.intoGround === 0, JSON.stringify(idle.shots));
   check('AI: bounding overwatch in use (a good share of fighters hold while others move)', idle.overwatchShare > 0.15, `overwatch=${idle.overwatchShare}`);
   // battle overview render
   await P.evaluate(() => {

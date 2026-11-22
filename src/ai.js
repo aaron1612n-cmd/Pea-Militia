@@ -353,6 +353,9 @@ export class Brain {
     this.lastPos = unit.pos.clone();
     this.stuckT = 0;
     this.defT = 0;
+    this.clear = true;
+    this.clearT = 0;
+    this.blockT = 0;
     this.overwatch = false;
     this.stallT = 0; // how long we've wanted to move and haven't
     this.path = null;
@@ -504,6 +507,14 @@ export class Brain {
     }
     this.goal.y = 0;
 
+    // can see them but can't shoot them (crate, wall, crest in the way): give up this spot
+    if (this.seen && this.blockT > 1.2 && !this.sidestep) {
+      if (this.cover) { this.badCover = this.cover; this.badUntil = w.time + 10; this.releaseCover(); }
+      const to = this.target.pos, dx = to.x - u.pos.x, dz = to.z - u.pos.z, l = Math.hypot(dx, dz) || 1;
+      this.strafe *= -1;
+      this.sidestep = { x: u.pos.x - (dz / l) * 4 * this.strafe + (dx / l) * 1.5, z: u.pos.z + (dx / l) * 4 * this.strafe + (dz / l) * 1.5, t: w.time + 2 };
+      this.blockT = 0;
+    }
     // grenades: at a cluster, or at someone dug in behind cover
     this.nadeT -= 0.35;
     const g = u.weapons.findIndex((x) => x.id === 'grenade');
@@ -515,12 +526,32 @@ export class Brain {
         const dug = this.target.kneelK > 0.5 || this.target.brain?.cover;
         let friends = 0;
         for (const f of w.nearUnits(this.target.pos.x, this.target.pos.z, 4)) if (f.alive && f.team === u.team) friends++;
-        if ((cluster >= 3 || dug) && !friends && Math.random() < 0.55) {
+        const lob = u.eye(V()); lob.y += 1.2;
+        const landing = this.target.pos.clone(); landing.y += 0.4;
+        if ((cluster >= 3 || dug) && !friends && w.los(lob, landing) && Math.random() < 0.55) {
           this.nade = { slot: g, back: u.wi, at: this.target.pos.clone() };
           this.nadeT = rand(10, 18);
         } else this.nadeT = rand(1.5, 4);
       }
     }
+  }
+
+  // can a round fired from the real muzzle reach the aim point? Props and ground in the way
+  // (the same test the bullets get) mean no; lobbed shells are checked along their arc
+  shotClear(aim, def) {
+    const w = this.w, m = this.u.muzzle(V());
+    if (!def.gravity) return w.los(m, aim);
+    const d = Math.hypot(aim.x - m.x, aim.z - m.z) || 1;
+    const th = 0.5 * Math.asin(Math.min(1, (def.gravity * d) / (def.speed * def.speed)));
+    const T = d / (def.speed * Math.cos(th)), vy = def.speed * Math.sin(th);
+    const a = m.clone(), b = V();
+    for (let i = 1; i <= 6; i++) {
+      const t = (T * i) / 6;
+      b.set(m.x + ((aim.x - m.x) * i) / 6, m.y + vy * t - 0.5 * def.gravity * t * t, m.z + ((aim.z - m.z) * i) / 6);
+      if (i < 6 && !w.los(a, b)) return false;
+      a.copy(b);
+    }
+    return true;
   }
 
   // ground cover: a spot where a soldier lying or kneeling is hidden from the threat but can
@@ -600,7 +631,8 @@ export class Brain {
 
   findCover(around, threat, range) {
     const w = this.w, u = this.u;
-    let best = null, bs = Infinity;
+    let best = null;
+    const cands = [];
     for (const p of w.propGrid.near(around.x, around.z, range, [])) {
       for (const s of p.cover) {
         if (s.owner && s.owner !== u && s.owner.alive) continue;
@@ -615,8 +647,15 @@ export class Brain {
         if (tl < 4) continue;
         const travel = Math.hypot(s.x - u.pos.x, s.z - u.pos.z);
         const sc = d + travel * 0.5 - facing * 3 + (s.high ? -0.5 : 0);
-        if (sc < bs) { bs = sc; best = s; }
+        cands.push({ s, sc });
       }
+    }
+    cands.sort((a, b) => a.sc - b.sc);
+    const tgt = V().set(threat.x, (threat.y || 0) + 0.9, threat.z), from = V();
+    for (let i = 0; i < Math.min(4, cands.length); i++) {
+      const s = cands[i].s, fx = s.high ? s.px : s.x, fz = s.high ? s.pz : s.z;
+      from.set(fx, height(fx, fz) + (s.high ? 1.35 : 0.85), fz);
+      if (w.los(from, tgt)) { best = s; break; }
     }
     if (best && !best.dist2) best.dist2 = function (p) { return (this.x - p.x) ** 2 + (this.z - p.z) ** 2; };
     return best;
@@ -663,8 +702,8 @@ export class Brain {
     const moved = this.lastPos.distanceTo(u.pos);
     this.lastPos.copy(u.pos);
     this.stuckT = 0;
-    const wants = gd > 1.5 && wl > 0.3 && !u.busy;
-    if (wants && moved < 0.2) this.stallT += 0.5; else { this.stallT = 0; return; }
+    const wants = gd > 1.5 && wl > 0.5 && !u.busy;
+    if (wants && moved < 0.4) this.stallT += 0.5; else { this.stallT = 0; return; }
     if (this.stallT >= 1) this.repath = true;
     if (this.stallT >= 2.5 && this.stallT < 3) {
       const side = Math.random() < 0.5 ? -1 : 1, l = wl || 1;
@@ -697,7 +736,7 @@ export class Brain {
     // spacing from squadmates
     // in the open under threat, spread out so one burst or blast can't take a clump
     const sp = !this.cover && (this.seen || sq.inContact()) ? 3.8 : 2.8;
-    if (this.stallT < 3) for (const m of w.nearUnits(u.pos.x, u.pos.z, sp + 0.2)) {
+    if (this.stallT < 2) for (const m of w.nearUnits(u.pos.x, u.pos.z, sp + 0.2)) {
       if (m === u || !m.alive || m.team !== u.team) continue;
       const dx = u.pos.x - m.pos.x, dz = u.pos.z - m.pos.z, d = Math.hypot(dx, dz);
       if (d > 0.01 && d < sp) { wx += (dx / d) * (sp - d) * 0.5; wz += (dz / d) * (sp - d) * 0.5; }
@@ -759,6 +798,7 @@ export class Brain {
       if (this.err.length() < floor) this.err.setLength(floor);
       if (Math.hypot(t.vel.x, t.vel.z) > 1) this.err.x += rand(-1, 1) * dt * 0.6;
       const aim = t.center(V()).add(this.err);
+      aim.y = Math.max(aim.y, height(aim.x, aim.z) + 0.15); // never aim into the ground
       // lead slow projectiles
       if (def.kind === 'projectile' && def.speed) aim.addScaledVector(t.vel, (d / def.speed) * 0.8);
       if (def.gravity) {
@@ -767,11 +807,14 @@ export class Brain {
         aim.y = u.eye(V()).y + Math.tan(th) * d + (t.pos.y - u.pos.y);
       }
       c.aimAt = aim;
+      this.clearT -= dt;
+      if (this.clearT <= 0) { this.clearT = 0.12; this.clear = this.shotClear(aim, def); }
+      this.blockT = this.clear ? 0 : this.blockT + dt;
       this.lastAim = aim; this.lastAimT = w.time;
       const inRange = d < def.range * (def.kind === 'flame' ? 1 : 0.95);
       // bursts with pauses; low cover means kneeling between bursts
       let fire = false;
-      if (this.react <= 0 && inRange && !this.blocked && sup < 0.85) {
+      if (this.react <= 0 && inRange && !this.blocked && this.clear && sup < 0.85) {
         if (this.pause > 0) this.pause -= dt;
         else {
           fire = true;
@@ -783,14 +826,15 @@ export class Brain {
           }
         }
       }
+      if (fire && !this.shotClear(aim, def)) { fire = false; this.clear = false; }
       // mortar: lob only at longer range
       if (def.id === 'launcher' && d < 9) fire = false;
       c.fire = fire;
-      c.kneel = (inCover && !this.cover.high) || (!this.cover && (def.id === 'mg' || def.id === 'rifle' || def.id === 'launcher') && wl < 0.3) || sup > 0.6;
+      c.kneel = (inCover && !this.cover.high) || (!this.cover && (def.id === 'mg' || def.id === 'rifle' || def.id === 'launcher') && wl < 0.3) || (sup > 0.6 && gd < 3);
       if (inCover && !this.cover.high && sup > 0.6) c.fire = false;
       // caught in the open under heavy fire, or a gunner settling in: go prone for a while
       if (!this.cover && (sup > 0.8 || (def.id === 'mg' && wl < 0.2 && this.seenT > 1.5))) this.proneUntil = w.time + rand(2, 4);
-      c.prone = w.time < (this.proneUntil || 0) && !sq.retreating;
+      c.prone = w.time < (this.proneUntil || 0) && !sq.retreating && gd < 3; // crawling a long way is lingering
     } else {
       this.react = Math.max(this.react, 0.15);
       c.fire = false;
@@ -799,8 +843,8 @@ export class Brain {
       if (def.id === 'mg' && ct && w.time - ct.t < 4 && u.weapon.mag > 8 && !u.busy) {
         const dd = Math.hypot(ct.pos.x - u.pos.x, ct.pos.z - u.pos.z);
         if (dd > 6 && dd < def.range * 0.9) {
-          c.aimAt = ct.pos.clone().setY(U.BODY_Y + ct.pos.y);
-          c.fire = Math.floor(w.time * 2.4 + u.id) % 3 !== 2 && !w.friendlyInLine(u, u.muzzle(V()), c.aimAt);
+          c.aimAt = ct.pos.clone().setY(Math.max(U.BODY_Y + ct.pos.y, height(ct.pos.x, ct.pos.z) + 0.15));
+          c.fire = Math.floor(w.time * 2.4 + u.id) % 3 !== 2 && w.los(u.muzzle(V()), c.aimAt) && !w.friendlyInLine(u, u.muzzle(V()), c.aimAt);
           c.kneel = !this.cover?.high;
           return;
         }
@@ -809,8 +853,8 @@ export class Brain {
       // look where trouble was, or where we're going
       const look = sq.contact && w.time - sq.contact.t < 8 ? sq.contact.pos : sq.holding && gd < 1 ? sq.watch : null;
       // keep the gun on the last spot for a moment after losing sight, instead of snapping away
-      if (this.lastAim && w.time - this.lastAimT < 1.2) c.aimAt = this.lastAim;
-      else c.aimAt = look ? look.clone().setY(U.BODY_Y + look.y) : null;
+      if (this.lastAim && w.time - this.lastAimT < 1.2) c.aimAt = this.lastAim.setY(Math.max(this.lastAim.y, height(this.lastAim.x, this.lastAim.z) + 0.15));
+      else c.aimAt = look ? look.clone().setY(Math.max(U.BODY_Y + look.y, height(look.x, look.z) + 0.15)) : null;
       c.kneel = !!(inCover && sq.inContact());
       if (u.weapon.mag < u.weapon.def.mag * 0.5 && !u.busy) c.reload = true;
     }
