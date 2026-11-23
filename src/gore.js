@@ -4,6 +4,7 @@ import { height, normalAt } from './terrain.js';
 import { canvasTex, decalMesh, stamp } from './effects.js';
 import { TEAMS } from './factions.js';
 import { U } from './rig.js';
+import { onShell, HALF } from './wounds.js';
 
 // Stylised gore, three levels (0 off, 1 low, 2 full), remembered in localStorage.
 //  - spray: streaks of blood that arc, fall and splat where they land, plus a red mist
@@ -197,26 +198,28 @@ export class Gore {
     for (let i = 0; i < n; i++) this.fx.norm.emit({ pos, vel: vel.clone().add(this.fx.dir(0.8)), life: 0.5 + Math.random() * 0.4, size: [size * 0.4, size * (0.9 + Math.random() * 0.6)], color: BLOOD, alpha: [alpha, 0], drag: 2.5, grav: 1.5 });
   }
 
-  // ---- wounds on the body (drawn by crowd.js) ----
-  wound(u, d, s, exit, hole = false) {
+  // ---- wounds on the body (drawn by crowd.js, wrapped onto the shell by wounds.js) ----
+  // kind: 'splash' (blood soaked in), 'hole' (small bullet hole), 'exit' (ragged blow-out).
+  // Entry sits on the side the shot came from, exit on the far side. Depth dents the shell.
+  wound(u, d, s, exit, kind = 'splash', depth = 0) {
     const w = u.wounds || (u.wounds = []);
-    // direction from the unit's frame: entry on the side the shot came from, exit opposite
     const sx = (exit ? 1 : -1) * d.x, sz = (exit ? 1 : -1) * d.z;
     const c = Math.cos(u.facing), sn = Math.sin(u.facing);
     const lx = sx * c - sz * sn, lz = sx * sn + sz * c; // into the unit's local frame
     const xFace = Math.abs(lx) / (U.W / 2) > Math.abs(lz) / (U.D / 2);
-    const y = this.rnd(U.H * 0.36), side = Math.random() * 2 - 1;
-    const px = xFace ? Math.sign(lx || 1) * (U.W / 2 + 0.006) : side * U.W * 0.38;
-    const pz = xFace ? side * U.D * 0.36 : Math.sign(lz || 1) * (U.D / 2 + 0.006);
+    const y = this.rnd(U.H * 0.34), side = Math.random() * 2 - 1;
+    const nx = xFace ? Math.sign(lx || 1) : 0, nz = xFace ? 0 : Math.sign(lz || 1);
+    const q = onShell(xFace ? nx * U.W / 2 : side * HALF[0] * 1.1, y, xFace ? side * HALF[2] * 1.2 : nz * U.D / 2, {});
+    const rec = (sa, sb, tile, dent, dd, extra) => { const r = { x: q.x, y: q.y, z: q.z, nx, nz, sa, sb, tile, sh: Math.random(), dent, dd }; if (extra) Object.assign(r, extra); w.push(r); return r; };
     const big = s * (exit ? 1.4 : 1);
-    const rec = (ox, oy, sa, sb, sh, extra) => { const r = xFace ? { x: px, y: y + oy, z: pz, a: 0.012, b: sa, c: sb, sh } : { x: px + ox, y: y + oy, z: pz, a: sa, b: sb, c: 0.012, sh }; Object.assign(r, extra); w.push(r); return r; };
-    if (hole) { rec(0, 0, 0.03, 0.03, 0, { hole: true }); }
+    if (kind === 'hole') rec(0.08, 0.08, 1, depth, depth);
+    else if (kind === 'exit') rec(big * 2.4 + 0.1, big * 2.4 + 0.1, 3, -depth, -depth);
     else {
-      rec(0, 0, big, big * 0.9, Math.random());
-      // the wound keeps bleeding: a thin run that creeps down the shell
-      if (this.level === 2 && this.runs.length < 160) { const r = xFace ? rec(0, -big * 0.5, big * 0.5, big * 0.2, Math.random()) : rec(0, -big * 0.5, big * 0.2, big * 0.5, Math.random()); r.top = r.y + big * 0.5; r.len = big * 0.5; r.max = 0.3 + Math.random() * 0.45; r.v = 0.03 + Math.random() * 0.04; this.runs.push(r); }
+      rec(big * 2 + 0.06, big * 2 + 0.06, 0, 0, depth);
+      // the wound keeps bleeding: a thin run that creeps down the shell, following its curves
+      if (this.level === 2 && this.runs.length < 160) { const r = rec(0.05, big * 0.4, 2, 0, 0); r.top = r.y - 0.02; r.len = big * 0.4; r.max = 0.3 + Math.random() * 0.5; r.v = 0.03 + Math.random() * 0.04; r.y = r.top - r.len / 2; this.runs.push(r); }
     }
-    while (w.length > (this.level === 2 ? 18 : 8)) { const o = w.shift(); if (o.max) { const k = this.runs.indexOf(o); if (k >= 0) this.runs.splice(k, 1); } }
+    while (w.length > (this.level === 2 ? 20 : 8)) { const o = w.shift(); if (o.max) { const k = this.runs.indexOf(o); if (k >= 0) this.runs.splice(k, 1); } }
   }
 
   // ---- hits ----
@@ -230,7 +233,8 @@ export class Gore {
     if (blast) {
       this.spray(pos, UP, 10 + dmg / 10, 2, 8, 1.6, 0.04);
       this.mist(pos, UP.clone().multiplyScalar(1.5), 1.3, 4, 0.55);
-      for (let i = 0; i < (L === 2 ? 4 : 2); i++) this.wound(u, this.v.set(this.rnd(), 0, this.rnd()), 0.1 + Math.random() * 0.1, false);
+      for (let i = 0; i < (L === 2 ? 4 : 2); i++) this.wound(u, this.v.set(this.rnd(), 0, this.rnd()), 0.07 + Math.random() * 0.08, i & 1, i & 1 ? 'exit' : 'splash', 0.025 + Math.random() * 0.02);
+      this.bits(pos, UP, 6, 5);
       this.splat(pos.x + this.rnd(1.4), pos.z + this.rnd(1.4), 0.45 + Math.random() * 0.4);
       return;
     }
@@ -238,7 +242,8 @@ export class Gore {
       // cauterised: a little blood, a puff of smoke
       this.spray(pos, back, 3, 1, 3, 0.8, 0.025);
       this.fx.smoke(pos, UP.clone().multiplyScalar(0.6), 0.25, 0.4);
-      this.wound(u, d, 0.12, false);
+      this.wound(u, d, 0.1, false, 'hole', 0.03);
+      this.bits(pos, back, 1, 2);
       return;
     }
     // bullets: heavier rounds put more through the unit and out the far side
@@ -246,14 +251,27 @@ export class Gore {
     this.spray(pos, back, 2 + heavy * 2, 1, 3.5, 0.9, 0.025);              // entry: a small puff back at the shooter
     this.spray(pos, d, 3 + heavy * 6, 3, 8 + heavy * 3, 0.45, 0.035);      // exit: a fan thrown out the far side
     this.mist(pos, d.clone().multiplyScalar(2), 0.35 + heavy * 0.4, 1 + (heavy > 0.8 ? 1 : 0), 0.45);
-    this.wound(u, d, 0.07 + heavy * 0.04, false);
-    this.wound(u, d, 0, false, true);
-    if (dmg >= 18) this.wound(u, d, 0, true, true);
-    if (dmg >= 18) this.wound(u, d, 0.1 + heavy * 0.05, true);
+    // the round dents the shell going in, and sometimes tears out the far side
+    const depth = 0.012 + heavy * 0.01;
+    this.wound(u, d, 0.05 + heavy * 0.03, false, 'splash', depth);
+    this.wound(u, d, 0, false, 'hole', depth + 0.006);
+    if (dmg >= 18 && Math.random() < 0.45 + heavy * 0.25) {
+      this.wound(u, d, 0.07 + heavy * 0.04, true, 'exit', depth * 2);
+      this.bits(pos, d, 2 + Math.round(heavy * 2), 4 + heavy * 2); // chips of shell and flesh out the back
+    } else this.bits(pos, back, 1, 2.5);
     if (Math.random() < 0.35 + heavy * 0.2) {
       const k = 0.8 + Math.random() * (1 + heavy), x = pos.x + d.x * k, z = pos.z + d.z * k;
       if (heavy > 0.7) this.streaks.add(x, z, 0.5 + heavy * 0.5, 0, Math.atan2(d.x, d.z) + Math.PI);
       else this.splat(x, z, 0.25 + Math.random() * 0.3 + heavy * 0.12);
+    }
+  }
+
+  // small chips of shell and flesh knocked loose by a hit (full gore only)
+  bits(pos, dir, n, speed) {
+    if (this.level < 2) return;
+    for (let i = 0; i < n; i++) {
+      const sz = 0.03 + Math.random() * 0.05;
+      this.addGib(pos, this.v.set(0, 0, 0), [sz, sz * 0.7, sz * 1.2], i % 3 === 0 ? SHELL[(Math.random() * SHELL.length) | 0] : CHUNK[i % 3], speed, dir);
     }
   }
 
@@ -270,14 +288,14 @@ export class Gore {
     // blood lands on the soldiers standing close by
     if (world && (kind === 'blast' || dmg >= 30)) {
       const near = world.nearUnits(u.pos.x, u.pos.z, kind === 'blast' ? 3 : 1.6).slice();
-      for (const o of near) if (o !== u && o.alive) { const dx = o.pos.x - u.pos.x, dz = o.pos.z - u.pos.z; o.wound = Math.min(1, (o.wound || 0) + 0.12); this.wound(o, this.v.set(-dx, 0, -dz), 0.08 + Math.random() * 0.06, false); }
+      for (const o of near) if (o !== u && o.alive) { const dx = o.pos.x - u.pos.x, dz = o.pos.z - u.pos.z; o.wound = Math.min(1, (o.wound || 0) + 0.12); this.wound(o, this.v.set(-dx, 0, -dz), 0.06 + Math.random() * 0.05, false, 'splash', 0); }
     }
     if (L < 2 || !rag) return;
     const blast = kind === 'blast', plasma = kind === 'plasma';
     const heavy = dmg >= 45;
     let limbs = blast ? 1 + Math.floor(Math.random() * 3) : plasma ? 1 + Math.floor(Math.random() * 2) : heavy ? (Math.random() < 0.45 ? 1 : 0) : Math.random() < 0.04 ? 1 : 0;
     let shells = blast ? 2 + Math.floor(Math.random() * 3) : plasma ? 1 : heavy && Math.random() < 0.4 ? 1 : 0;
-    let chunks = blast ? 7 + Math.floor(Math.random() * 5) : plasma ? 4 : limbs || shells ? 2 + Math.floor(Math.random() * 3) : 0;
+    let chunks = blast ? 7 + Math.floor(Math.random() * 5) : plasma ? 4 : 2 + Math.floor(Math.random() * 3) + Math.floor(dmg / 30);
     const sp = blast ? 6 : plasma ? 4 : 3;
     u.lost = u.lost || 0;
     const order = [0, 1, 2, 3].sort(() => Math.random() - 0.5);
@@ -292,12 +310,13 @@ export class Gore {
     for (let k = 0; k < chunks; k++) { const s = 0.05 + Math.random() * 0.08; this.addGib(c, rag.body.v, [s, s * 0.75, s * 1.15], CHUNK[k % 3], sp * 1.2); }
   }
 
-  addGib(p, base, size, color, speed) {
+  addGib(p, base, size, color, speed, dir) {
     const g = {
       p: p.clone(), v: new THREE.Vector3(this.rnd(), 0.7 + Math.random() * 0.9, this.rnd()).multiplyScalar(speed * (0.5 + Math.random() * 0.7)).addScaledVector(base, 0.5),
       q: new THREE.Quaternion().random(), w: new THREE.Vector3(this.rnd(11), this.rnd(11), this.rnd(11)),
       size: size.slice(), slot: this.gi % GIB_MAX, asleep: false, trail: 0.9, drip: 0,
     };
+    if (dir) { g.v.multiplyScalar(0.45).addScaledVector(dir, speed * (0.6 + Math.random() * 0.6)); }
     this.gibMesh.instanceColor.setXYZ(g.slot, color.r, color.g, color.b);
     this.gibMesh.instanceColor.needsUpdate = true;
     this.gibs[g.slot] = g;
@@ -381,7 +400,7 @@ export class Gore {
       const r = this.runs[i];
       if (r.len >= r.max) { this.runs.splice(i, 1); continue; }
       r.len += r.v * dt;
-      r.b = r.len;
+      r.sb = r.len;
       r.y = r.top - r.len / 2;
     }
     for (const d of this.sets) d.update(dt);

@@ -109,8 +109,8 @@ for (const sx of [-1, 1]) for (const sy of [-1, 1]) BODY_PTS.push(new THREE.Vect
 
 // where the limbs hang from, in the body's frame
 const ANCHOR = [
-  { at: new THREE.Vector3(0.26, 0.12, 0.04), len: 0.34, r: U.HAND[1] / 2 }, // left hand (+x)
-  { at: new THREE.Vector3(-0.26, 0.12, 0.04), len: 0.34, r: U.HAND[1] / 2 },
+  { at: new THREE.Vector3(0.27, 0.0, 0.04), len: 0.07, r: U.HAND[1] / 2 }, // left hand (+x)
+  { at: new THREE.Vector3(-0.27, 0.0, 0.04), len: 0.07, r: U.HAND[1] / 2 },
   { at: new THREE.Vector3(-U.FOOT_X, -U.H / 2 - 0.04, 0.02), len: 0.14, r: U.FOOT[1] / 2 }, // right foot
   { at: new THREE.Vector3(U.FOOT_X, -U.H / 2 - 0.04, 0.02), len: 0.14, r: U.FOOT[1] / 2 },
 ];

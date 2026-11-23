@@ -180,7 +180,7 @@ function poseCore(s, out) {
   out.showWeapon = dead < 0;
   if (dead >= 0) {
     const k = smooth(0, 1, dead);
-    for (let i = 0; i < 2; i++) compose(out.hands[i], (i ? 1 : -1) * lerp(0.36, 0.42, k), lerp(0.55, U.HAND[1] / 2, k), lerp(0.1, -0.35, k), 0, 0, 0);
+    for (let i = 0; i < 2; i++) compose(out.hands[i], (i ? 1 : -1) * lerp(0.36, 0.3, k), lerp(0.55, U.HAND[1] / 2, k), lerp(0.1, -0.1, k), 0, 0, 0);
     out.weapon.copy(out.hands[1]);
     return out;
   }
