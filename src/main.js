@@ -21,6 +21,7 @@ import { ViewModel } from './viewmodel.js';
 import { Cockpit } from './cockpit.js';
 import { MAX_SPEED } from './unit.js';
 import { Wheel, ORDERS, issue as issueOrder, tick as tickOrders } from './orders.js';
+import { CALLINS, ORDER, RANGE, Reticle, CallinBar } from './callins.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('scene');
@@ -263,6 +264,7 @@ function startBattle(s) {
   $('corner').hidden = false;
   state = 'play';
   snap = true;
+  cancelCallin();
   sandbox.build();
   if (settings.mode === 'sandbox') { sandbox.toggle(true); hud.say('Sandbox', 1.6); }
   else hud.say('Take the points', 2.4);
@@ -397,6 +399,57 @@ function tutorialTick() {
   }
 }
 
+// ---------------- call-ins: Y or the buttons pick one, aim, fire to call it ----------------
+const reticle = new Reticle(scene);
+const ciBar = new CallinBar($('callins'), (i) => pickCallin(i));
+const ci = { sel: -1, fireHeld: false, aimHeld: false };
+const MIN_DIST = { strike: 30, barrage: 26, supply: 0 };
+function callinOk() { return state === 'play' && player && player.alive && !sandbox.open && cam.mode !== 'free'; }
+function cancelCallin() { ci.sel = -1; reticle.hide(); }
+function pickCallin(i) {
+  if (!callinOk()) return;
+  if (i === ci.sel || i < 0 || i >= ORDER.length) { cancelCallin(); return; }
+  const k = ORDER[i], left = battle.callins.left(player.team, k);
+  if (left > 0) { hud.say(`${CALLINS[k].name} ready in ${Math.ceil(left)}s`, 1.4); return; }
+  ci.sel = i; ci.fireHeld = true; ci.aimHeld = true;
+  hud.say(`${CALLINS[k].name} · aim, then ${input.touch ? 'press ◎' : 'click'} · ${input.touch ? 'tap again' : 'right-click'} cancels`, 3);
+}
+function cycleCallin() {
+  // Y steps through the ready ones, then off
+  for (let n = ci.sel + 1; n < ORDER.length; n++) if (battle.callins.ready(player.team, ORDER[n])) { pickCallin(n); return; }
+  if (ci.sel >= 0) cancelCallin(); else hud.say('Call-ins are recharging', 1.2);
+}
+function callinTarget() {
+  const k = ORDER[ci.sel];
+  const dist = Math.hypot(aimPoint.x - player.pos.x, aimPoint.z - player.pos.z);
+  const why = dist > RANGE ? 'Out of range' : dist < MIN_DIST[k] ? 'Too close to you' : '';
+  return { k, why };
+}
+function confirmCallin() {
+  const { k, why } = callinTarget();
+  if (why) { hud.say(why, 1.2); return; }
+  const yaw = cam.yaw;
+  if (battle.callins.call(player.team, k, aimPoint, { x: -Math.sin(yaw), z: -Math.cos(yaw) }, player)) {
+    hud.say(`${CALLINS[k].name} inbound`, 1.8);
+    hud.log(`${CALLINS[k].name} called`, true);
+  }
+  cancelCallin();
+}
+// runs before the player's input is used: while aiming a call-in the fire button belongs to it
+function callinInput(inp) {
+  if (ci.sel >= 0 && !callinOk()) cancelCallin();
+  if (ci.sel < 0) return;
+  const fireEdge = inp.fire && !ci.fireHeld, aimEdge = inp.aim && !ci.aimHeld;
+  ci.fireHeld = inp.fire; ci.aimHeld = inp.aim;
+  inp.fire = false; inp.aim = false;
+  if (aimEdge) { cancelCallin(); return; }
+  if (fireEdge) confirmCallin();
+}
+function callinVisuals() {
+  if (state === 'play' && player) ciBar.update(battle, player.team, ci.sel);
+  if (ci.sel >= 0 && callinOk()) { const { k, why } = callinTarget(); reticle.show(k, aimPoint, cam.yaw + Math.PI, !why); } else reticle.hide();
+}
+
 // ---------------- player control ----------------
 function handle(actions) {
   for (const a of actions) {
@@ -409,6 +462,7 @@ function handle(actions) {
       continue;
     }
     if (wheel.open) { if (a.type === 'slot') wheel.pick(a.n); continue; }
+    if (a.type === 'callin') { if (callinOk()) cycleCallin(); continue; }
     if (a.type === 'view') { if (player.vehicle) { cam.cockpit = !cam.cockpit; hud.say(cam.cockpit ? 'Cockpit view' : 'Chase view', 1); continue; } if (cam.mode !== 'over' && cam.mode !== 'free') { cam.mode = cam.mode === '1p' ? '3p' : '1p'; document.documentElement.dataset.view = cam.mode; } continue; }
     if (!player.alive || sandbox.open || cam.mode === 'free') continue;
     if (a.type === 'slot') player.setWeapon(a.n);
@@ -643,6 +697,7 @@ function frame(_t, fixedDt) {
           tut.looked += Math.abs(inp.look.dx) + Math.abs(inp.look.dy);
         }
         handle(inp.actions);
+        callinInput(inp);
       }
       const sdt = dt * battle.timeScale;
       if (cam.mode !== 'free') updatePlayer(sdt, inp);
@@ -653,6 +708,8 @@ function frame(_t, fixedDt) {
       cam.shake = Math.max(cam.shake, fx.shake);
       for (const e of battle.events) {
         if (e.type === 'boom') cam.shake = Math.min(1.2, cam.shake + Math.max(0, 1 - e.pos.distanceTo(player.pos) / (e.r * 5)));
+        if (e.type === 'incoming') hud.say(`Incoming ${CALLINS[e.kind].name.toLowerCase()} · take cover`, 2.6);
+        if (e.type === 'resupply') hud.say('Resupplied', 1.4);
         if (e.type === 'capture') {
           hud.log(`${TEAMS[e.team].short} took ${e.point.name}`, e.team === player.team);
           if (e.team === player.team && e.point.pos.distanceTo(player.pos) < 12) hud.say(`${e.point.name} secured`);
@@ -694,6 +751,7 @@ function frame(_t, fixedDt) {
       player.muzzleOverride = vm.pose.muzzle;
     } else player.muzzleOverride = null;
     if (cam.mode !== 'free') updateAim();
+    callinVisuals();
   }
   if (state === 'menu') for (const u of battle.units) u.animate(dt);
   audio.listener.x = camera.position.x; audio.listener.z = camera.position.z; audio.listener.yaw = state === 'menu' ? 0 : cam.yaw;
