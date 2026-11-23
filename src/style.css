@@ -99,7 +99,7 @@ input[type='range']:focus-visible::-webkit-slider-thumb { background: var(--acce
 .tk { display: flex; align-items: center; gap: 6px; padding: 3px 8px; background: var(--glass); border: 1px solid var(--line); }
 .tk i { width: 8px; height: 8px; }
 .tk.lost { opacity: 0.4; text-decoration: line-through; }
-.radar { position: absolute; top: max(12px, env(safe-area-inset-top)); left: var(--pad); width: 150px; height: 150px; background: var(--glass); border: 1px solid var(--line); }
+.radar { pointer-events: auto; cursor: pointer; position: absolute; top: max(12px, env(safe-area-inset-top)); left: var(--pad); width: 150px; height: 150px; background: var(--glass); border: 1px solid var(--line); }
 .feed { position: absolute; top: max(12px, env(safe-area-inset-top)); right: calc(var(--pad) + 96px); margin: 0; padding: 0; list-style: none; display: flex; flex-direction: column; align-items: flex-end; gap: 4px; font-size: 12px; letter-spacing: 0.03em; }
 .feed li { padding: 3px 8px; background: var(--glass); border-left: 2px solid var(--line-2); color: var(--ink); white-space: nowrap; }
 .feed li.me { border-left-color: var(--accent); }
@@ -215,6 +215,7 @@ html[data-input='mouse'] .touchpad { display: none; }
 .tbtn.swap { right: 6px; bottom: 150px; width: 48px; height: 48px; }
 .tbtn.view { right: 60px; bottom: 164px; width: 48px; height: 48px; }
 .tbtn.cmd { right: 6px; bottom: 206px; width: 48px; height: 48px; }
+.tbtn.spot { right: 60px; bottom: 222px; width: 48px; height: 48px; }
 .tbtn.use { right: 120px; bottom: 164px; width: 52px; height: 52px; }
 .tbtn.use[hidden] { display: none; }
 .tbtn.use:not([hidden]) { border-color: var(--accent); color: var(--accent); }
@@ -425,3 +426,7 @@ html[data-free='1'] #pauseFree::after { content: ' (back to soldier)'; }
 .wheel-x { position: absolute; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); width: 44px; height: 44px; font-size: 26px; background: var(--glass); border: 1px solid var(--line-2); border-radius: 10px; }
 @media (prefers-reduced-motion: no-preference) { .wheel:not([hidden]) .wheel-item { animation: wheel-in 0.14s ease-out both; } }
 @keyframes wheel-in { from { opacity: 0; transform: translate(0, 0) scale(0.6); } }
+.bigmap { position: absolute; inset: 0; display: grid; place-content: center; justify-items: center; gap: 8px; background: rgba(10, 12, 14, 0.6); pointer-events: auto; z-index: 5; }
+.bigmap[hidden] { display: none; }
+.bigmap canvas { width: min(86vh, 92vw); height: min(86vh, 92vw); background: var(--glass-2); border: 1px solid var(--line-2); }
+.bigmap p { margin: 0; font-size: 12px; letter-spacing: 0.04em; color: var(--ink); text-align: center; max-width: 92vw; }

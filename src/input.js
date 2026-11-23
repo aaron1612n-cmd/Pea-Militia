@@ -146,11 +146,11 @@ export class Input {
     });
 
     const GAME = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
-    const KEYS = { KeyR: 'reload', KeyG: 'grenade', KeyB: 'menu', KeyV: 'view', KeyF: 'free', KeyX: 'use', KeyY: 'callin' };
+    const KEYS = { KeyR: 'reload', KeyG: 'grenade', KeyB: 'menu', KeyV: 'view', KeyF: 'free', KeyX: 'use', KeyY: 'spot', KeyN: 'map', KeyK: 'callin', Tab: 'map' };
     const WHEEL = 'KeyT';
     addEventListener('keydown', (e) => {
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
-      if (GAME.has(e.code)) e.preventDefault();
+      if (GAME.has(e.code) || e.code === 'Tab') e.preventDefault();
       if (e.code === 'Space' && !e.repeat) this.jumpQueued = true;
       if (!e.repeat && e.code === WHEEL) this.actions.push({ type: 'wheelDown' });
       if (!e.repeat && KEYS[e.code]) this.actions.push({ type: KEYS[e.code] });

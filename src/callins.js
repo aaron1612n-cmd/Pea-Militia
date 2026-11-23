@@ -372,7 +372,7 @@ export class CallinBar {
       const b = document.createElement('button');
       b.type = 'button';
       b.className = 'ci';
-      b.setAttribute('aria-label', `${CALLINS[k].name} (Y cycles call-ins)`);
+      b.setAttribute('aria-label', `${CALLINS[k].name} (K cycles call-ins)`);
       b.title = `${CALLINS[k].name}: ${CALLINS[k].hint}`;
       b.innerHTML = `<svg viewBox="0 0 24 24" aria-hidden="true"><path d="${ICON[k]}" /></svg><i></i><b></b>`;
       b.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); onPick(i); });

@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { U, setWeaponBounds, solveLegs } from './rig.js';
-import { GEAR, MARKS, KIND_IDS, kindKey, LIMB_GEO } from './gear.js';
+import { GEAR, MARKS, KIND_IDS, kindKey, LIMB_GEO, FOOT_DETAIL, HAND_DETAIL } from './gear.js';
 import { WEAPONS, weaponParts } from './weapons.js';
 import { TEAMS } from './factions.js';
 import { makeWoundMesh, makeDentBody, DENT_CAP, MAX_DENTS } from './wounds.js';
@@ -54,6 +54,8 @@ export class Crowd {
       this.gear[k] = mk(GEAR[k], gearMat, cap, true); this.gear[k].name = `crowd-gear-${k}`;
       if (MARKS[k]) { this.marks[k] = mk(MARKS[k], markMat, cap, false); this.marks[k].name = `crowd-mark-${k}`; }
     }
+    this.footD = mk(FOOT_DETAIL, gearMat, cap * 2, false); this.footD.name = 'crowd-boots';
+    this.handD = mk(HAND_DETAIL, gearMat, cap * 2, false); this.handD.name = 'crowd-gloves';
     this.leg = mk(LIMB_GEO.leg, std({ color: '#ffffff', roughness: 0.8, metalness: 0.03 }), cap * 4, true);
     this.nl = 0;
     this.visor.name = 'crowd-visor'; this.body.name = 'crowd-body';
@@ -83,7 +85,7 @@ export class Crowd {
   }
 
   begin() {
-    this.n = this.nf = this.nh = this.nw = this.nl = this.nd = 0;
+    this.n = this.nf = this.nh = this.nw = this.nl = this.nd = this.nfd = this.nhd = 0;
     for (const id in this.weapons) this.wn[id] = 0;
     for (const k of KIND_IDS) this.gn[k] = this.mn[k] = 0;
   }
@@ -151,6 +153,7 @@ export class Crowd {
         if (this.nf >= this.cap * 2) break;
         const j = this.nf++;
         this.foot.setMatrixAt(j, t.multiplyMatrices(world, f));
+        if (!opts.far) this.footD.setMatrixAt(this.nfd++, t);
         this.foot.instanceColor.setXYZ(j, DARK.r, DARK.g, DARK.b);
       }
     }
@@ -160,6 +163,7 @@ export class Crowd {
       if (this.nh >= this.cap * 2) break;
       const j = this.nh++;
       this.hand.setMatrixAt(j, t.multiplyMatrices(world, h));
+      if (!opts.far) this.handD.setMatrixAt(this.nhd++, t);
       this.hand.instanceColor.setXYZ(j, TRIM_COL[team].r, TRIM_COL[team].g, TRIM_COL[team].b);
     }
     if (p.showWeapon && opts.weapon) {
@@ -180,6 +184,7 @@ export class Crowd {
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
     };
     fin(this.body, this.n); fin(this.visor, this.n); fin(this.pack, this.n);
+    fin(this.footD, this.nfd); fin(this.handD, this.nhd);
     fin(this.foot, this.nf); fin(this.hand, this.nh); fin(this.wound, this.nw); fin(this.dentBody, this.nd);
     const wg = this.wound.geometry.attributes, dg = this.dentBody.geometry.attributes;
     wg.aC.needsUpdate = wg.aS.needsUpdate = wg.aN.needsUpdate = true;
