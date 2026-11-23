@@ -16,6 +16,7 @@ import { SLOTS, weaponModel } from './weapons.js';
 import { Sandbox } from './sandbox.js';
 import { TEAMS } from './factions.js';
 import { ViewModel } from './viewmodel.js';
+import { Cockpit } from './cockpit.js';
 import { MAX_SPEED } from './unit.js';
 
 const $ = (id) => document.getElementById(id);
@@ -57,6 +58,9 @@ scene.add(rim);
 
 const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 700);
 const cam = new PlayerCam(camera);
+scene.add(camera); // the cockpit frame rides on the camera
+const cockpit = new Cockpit(camera);
+let cockpitVeh = null;
 const fx = new Effects(scene);
 const audio = new Audio();
 const crowd = new Crowd(scene, 700);
@@ -375,7 +379,7 @@ function handle(actions) {
     if (a.type === 'free') { toggleFree(); continue; }
     if (a.type === 'menu') { if (state === 'play') sandbox.toggle(); continue; }
     if (a.type === 'use') { useVehicle(); continue; }
-    if (a.type === 'view') { if (player.vehicle) continue; if (cam.mode !== 'over' && cam.mode !== 'free') { cam.mode = cam.mode === '1p' ? '3p' : '1p'; document.documentElement.dataset.view = cam.mode; } continue; }
+    if (a.type === 'view') { if (player.vehicle) { cam.cockpit = !cam.cockpit; hud.say(cam.cockpit ? 'Cockpit view' : 'Chase view', 1); continue; } if (cam.mode !== 'over' && cam.mode !== 'free') { cam.mode = cam.mode === '1p' ? '3p' : '1p'; document.documentElement.dataset.view = cam.mode; } continue; }
     if (!player.alive || sandbox.open || cam.mode === 'free') continue;
     if (a.type === 'slot') player.setWeapon(a.n);
     else if (a.type === 'next') player.cycleWeapon(1);
@@ -432,7 +436,7 @@ function useVehicle() {
     v.board(player, 1);
     player.vehicle = v;
     player.ctrl.fire = false; player.ctrl.wx = player.ctrl.wz = 0;
-    cam.mode = '3p'; cam.blend = 0; cam.yaw = v.yaw + Math.PI; cam.pitch = -0.12;
+    cam.mode = '3p'; cam.blend = 0; cam.cockpit = false; cam.yaw = v.yaw + Math.PI; cam.pitch = -0.12;
     document.documentElement.dataset.view = '3p';
     snap = true;
     hud.say(`${v.def.name} · gunner · aim and click · X leaves`, 3);
@@ -444,7 +448,7 @@ function useVehicle() {
   v.board(player, 0);
   player.vehicle = v;
   player.ctrl.fire = false; player.ctrl.wx = player.ctrl.wz = 0;
-  cam.mode = '3p'; cam.blend = 0; cam.yaw = v.yaw + Math.PI; cam.pitch = -0.12;
+  cam.mode = '3p'; cam.blend = 0; cam.cockpit = false; cam.yaw = v.yaw + Math.PI; cam.pitch = -0.12;
   document.documentElement.dataset.view = '3p';
   snap = true;
   hud.say(input.touch ? `${v.def.name} · stick drives · ◎ fires` : `${v.def.name} · ${v.def.hint}`, 3);
@@ -636,6 +640,12 @@ function frame(_t, fixedDt) {
     }
     cam.update(dt, player, snap);
     snap = false;
+    {
+      const pv = player.vehicle, want = pv && cam.cockpit && player.alive && cam.mode !== 'over' && cam.mode !== 'free' ? pv : null;
+      if (cockpitVeh && cockpitVeh !== want) cockpitVeh.setCockpit(false);
+      if (want) { want.setCockpit(true); cockpit.show(want.def.cockpitKind, want.team); cockpit.update(want, camera.aspect); } else cockpit.hide();
+      cockpitVeh = want;
+    }
     const fpOn = cam.mode === '1p' && cam.blend > 0.6 && player.alive && !player.vehicle;
     // the "get in / get out" button
     {
