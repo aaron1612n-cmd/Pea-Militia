@@ -480,13 +480,35 @@ export class Battle {
   damageProp(p, dmg, from) {
     if (!p.alive || p.hp === Infinity) return;
     p.hp -= dmg;
+    const c = new THREE.Vector3(p.box.x, p.box.y0 + p.box.h / 2, p.box.z);
     if (p.hp <= 0) {
-      const c = new THREE.Vector3(p.box.x, p.box.y0 + p.box.h / 2, p.box.z);
-      this.fx.debris(c, p.def.debris, 16);
+      const big = p.box.hx * p.box.hz;
+      this.fx.debris(c, p.def.debris, 16 + Math.min(14, Math.round(big * 6)));
       this.fx.dust(c, 6, 1.2);
       this.audio.play('clank', c);
+      const { x, z, yaw } = p.box, rubble = p.box.h > 0.6 && !p.def.explodes;
       this.removeProp(p);
+      if (rubble) this.spawnProp('rubble', x, z, yaw);
       if (p.def.explodes) this.explode(c.setY(p.box.y0 + 0.5), 3.4, 110, from, 1);
+      return;
+    }
+    // chips fly on every hit; each lost third cracks the prop: darker, lower, and softer cover
+    if (dmg > 8) this.fx.debris(c, p.def.debris, 2);
+    p.maxHp ??= p.hp + dmg;
+    const stage = Math.min(2, Math.floor((1 - p.hp / p.maxHp) * 3));
+    if ((p.stage ?? 0) >= stage) return;
+    p.stage = stage;
+    this.fx.debris(c, p.def.debris, 8);
+    this.fx.dust(c, 4, 0.9);
+    this.audio.play('clank', c);
+    this.batch.shade(p, 1 - stage * 0.18);
+    if (p.box.h > 0.6) {
+      p.box.h *= 0.88;
+      p.sy = (p.sy ?? 1) * 0.88;
+      this.batch.sync(p);
+      for (const s of p.cover) if (s.owner?.brain?.cover === s) s.owner.brain.releaseCover();
+      this.propVer++;
+      this.refreshCover(p);
     }
   }
 

@@ -12,13 +12,14 @@ export const PROPS = {
   drum: { name: 'Fuel drum', hx: 0.27, hz: 0.27, h: 0.62, hp: 50, debris: '#4a4a45', explodes: true },
   wall: { name: 'Steel wall', hx: 1.25, hz: 0.16, h: 1.45, hp: 1800, debris: '#4a4a45' },
   trap: { name: 'Tank trap', hx: 0.55, hz: 0.55, h: 0.85, hp: Infinity, debris: '#3b3e3d', nocover: true },
-  slab: { name: 'Concrete wall', hx: 2.2, hz: 0.22, h: 2.3, hp: Infinity, debris: '#9b9b94', raw: true },
-  bunker: { name: 'Bunker', hx: 1.7, hz: 1.7, h: 2.0, hp: Infinity, debris: '#9b9b94', raw: true },
-  ruin: { name: 'Ruined wall', hx: 2.0, hz: 0.22, h: 2.0, hp: Infinity, debris: '#8d877a', raw: true },
-  ruinLow: { name: 'Broken wall', hx: 1.5, hz: 0.22, h: 0.74, hp: Infinity, debris: '#8d877a', raw: true },
+  slab: { name: 'Concrete wall', hx: 2.2, hz: 0.22, h: 2.3, hp: 1800, debris: '#9b9b94', raw: true },
+  bunker: { name: 'Bunker', hx: 1.7, hz: 1.7, h: 2.0, hp: 4000, debris: '#9b9b94', raw: true },
+  ruin: { name: 'Ruined wall', hx: 2.0, hz: 0.22, h: 2.0, hp: 700, debris: '#8d877a', raw: true },
+  ruinLow: { name: 'Broken wall', hx: 1.5, hz: 0.22, h: 0.74, hp: 450, debris: '#8d877a', raw: true },
   stonewall: { name: 'Field wall', hx: 1.6, hz: 0.27, h: 0.62, hp: 2600, debris: '#7f7a6e', raw: true },
   rock: { name: 'Boulder', hx: 0.85, hz: 0.7, h: 0.95, hp: Infinity, debris: '#77766c', raw: true },
   // tree trunks: colliders only, the trees themselves are drawn in bulk by the map
+  rubble: { name: 'Rubble', hx: 1.1, hz: 0.55, h: 0.26, hp: Infinity, debris: '#8d877a', raw: true, nocover: true, hidden: true },
   tree: { name: 'Tree', hx: 0.2, hz: 0.2, h: 3.2, hp: Infinity, debris: '#4a3b2c', raw: true, noModel: true, fixed: true },
 };
 // The small props were modelled for a shorter soldier; scale them to the current one.
@@ -99,6 +100,12 @@ const BUILD = {
     masonry(k, -1.5, 1.5, 0.44, top, 202);
     k.add(block(3.1, 0.14, 0.52, 0.03, 0.012), STONE[1], { pos: [0, 0.03, 0] });
     for (let i = 0; i < 4; i++) k.add(lump(0.16, 0.1, 0.13, 300 + i), STONE[i % 3], { pos: [-1.2 + i * 0.85, 0.06, 0.36 * (i % 2 ? 1 : -1)] });
+  },
+  rubble(k) {
+    for (let i = 0; i < 9; i++) {
+      const a = i * 2.4;
+      k.add(lump(0.26 - (i % 3) * 0.04, 0.12, 0.2, 500 + i), STONE[i % 3], { pos: [Math.cos(a) * 0.75 * (i / 9 + 0.2), 0.07 + (i % 2) * 0.05, Math.sin(a) * 0.32 * (i / 9 + 0.2)], rot: [0, a, 0] });
+    }
   },
   stonewall(k) {
     // dry-stone field wall: two faces of rough stones, capped with a row on edge
@@ -257,6 +264,8 @@ export class PropBatch {
     this.q = new THREE.Quaternion();
     this.up = new THREE.Vector3(0, 1, 0);
     this.one = new THREE.Vector3();
+    this.white = new THREE.Color(1, 1, 1);
+    this.tint = new THREE.Color();
   }
   _type(type) {
     let t = this.types.get(type);
@@ -270,6 +279,7 @@ export class PropBatch {
     const im = new THREE.InstancedMesh(geometry, material, cap);
     im.count = 0; im.frustumCulled = false; im.castShadow = true; im.receiveShadow = true; im.name = 'props';
     im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    im.setColorAt(0, this.white); im.instanceColor.array.fill(1);
     this.scene.add(im);
     return im;
   }
@@ -281,6 +291,7 @@ export class PropBatch {
       t.parts = t.parts.map((im) => {
         const bigger = this._mesh(im.geometry, im.material, im.instanceMatrix.count * 2);
         bigger.instanceMatrix.array.set(im.instanceMatrix.array);
+        bigger.instanceColor.array.set(im.instanceColor.array);
         this.scene.remove(im); im.dispose();
         return bigger;
       });
@@ -292,14 +303,21 @@ export class PropBatch {
     if (!t) return;
     const s = PROPS[p.type].raw ? 1 : PROP_SCALE;
     this.q.setFromAxisAngle(this.up, p.group.rotation.y);
-    this.m.compose(p.group.position, this.q, this.one.set(s, s, s));
+    this.m.compose(p.group.position, this.q, this.one.set(s, s * (p.sy ?? 1), s));
     for (const im of t.parts) { im.setMatrixAt(p.slot, this.m); im.instanceMatrix.needsUpdate = true; }
+  }
+  // darken a prop as it takes damage (1 = pristine)
+  shade(p, v) {
+    const t = this.types.get(p.type);
+    if (!t || p.slot == null) return;
+    this.tint.setScalar(v);
+    for (const im of t.parts) { im.setColorAt(p.slot, this.tint); im.instanceColor.needsUpdate = true; }
   }
   drop(p) {
     const t = this.types.get(p.type);
     if (!t || p.slot == null) return;
     this.m.makeScale(0, 0, 0);
-    for (const im of t.parts) { im.setMatrixAt(p.slot, this.m); im.instanceMatrix.needsUpdate = true; }
+    for (const im of t.parts) { im.setMatrixAt(p.slot, this.m); im.setColorAt(p.slot, this.white); im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; }
     t.free.push(p.slot);
     p.slot = null;
   }
