@@ -4,6 +4,7 @@ import { U, setWeaponBounds, solveLegs } from './rig.js';
 import { GEAR, MARKS, KIND_IDS, kindKey, LIMB_GEO } from './gear.js';
 import { WEAPONS, weaponParts } from './weapons.js';
 import { TEAMS } from './factions.js';
+import { makeWoundMesh, makeDentBody, DENT_CAP, MAX_DENTS } from './wounds.js';
 
 // Draws every soldier with a handful of instanced meshes (one per body part and per weapon
 // material), so a few hundred units cost a few dozen draw calls.
@@ -17,7 +18,7 @@ export const PART_GEO = {
 };
 // the foot's sole sits at its local origin's -half height; nothing to shift
 
-const WQ = new THREE.Quaternion();
+const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 const UI_COL = TEAMS.map((t) => new THREE.Color(t.ui));
 const TROUSER = TEAMS.map((t) => new THREE.Color(t.trim).multiplyScalar(1.15));
 const WOUND = new THREE.Color('#5a1212');
@@ -69,17 +70,20 @@ export class Crowd {
         return m;
       });
     }
-    // wounds stuck to the shell: thin wet-red slabs, drawn at each body's local spots
-    this.wound = mk(new THREE.BoxGeometry(1, 1, 1), std({ color: '#ffffff', roughness: 0.2, metalness: 0 }), cap * 6, true);
-    this.wound.castShadow = false;
+    // wounds wrap the shell (see wounds.js); soldiers with dents draw a finer, dentable body
+    this.wound = makeWoundMesh(cap * 6);
+    scene.add(this.wound);
     this.nw = 0;
+    this.dentBody = makeDentBody(DENT_CAP, this.body.material);
+    scene.add(this.dentBody);
+    this.nd = 0;
     this.n = 0; this.nf = 0; this.nh = 0; this.nl = 0;
     this.wn = {};
     this.tmp = new THREE.Matrix4();
   }
 
   begin() {
-    this.n = this.nf = this.nh = this.nw = this.nl = 0;
+    this.n = this.nf = this.nh = this.nw = this.nl = this.nd = 0;
     for (const id in this.weapons) this.wn[id] = 0;
     for (const k of KIND_IDS) this.gn[k] = this.mn[k] = 0;
   }
@@ -90,19 +94,34 @@ export class Crowd {
     const t = this.tmp;
     if (opts.body !== false && this.n < this.cap) {
       const i = this.n++;
-      this.body.setMatrixAt(i, t.multiplyMatrices(world, p.body));
+      const bm = t.multiplyMatrices(world, p.body);
       const w = opts.wound || 0, bc = BODY_COL[team];
-      if (w > 0) this.body.instanceColor.setXYZ(i, bc.r + (WOUND.r - bc.r) * w * 0.5, bc.g + (WOUND.g - bc.g) * w * 0.5, bc.b + (WOUND.b - bc.b) * w * 0.5);
-      else this.body.instanceColor.setXYZ(i, bc.r, bc.g, bc.b);
-      if (opts.wounds) {
-        const bm = t.multiplyMatrices(world, p.body), wm = this.wm || (this.wm = new THREE.Matrix4()), ws = this.ws || (this.ws = new THREE.Vector3()), wp = this.wp || (this.wp = new THREE.Vector3());
-        for (const w of opts.wounds) {
+      const cr = bc.r + (WOUND.r - bc.r) * w * 0.5, cg = bc.g + (WOUND.g - bc.g) * w * 0.5, cb = bc.b + (WOUND.b - bc.b) * w * 0.5;
+      const ws = opts.wounds;
+      let dents = 0;
+      if (ws && !opts.far && this.nd < DENT_CAP) for (let k = ws.length - 1; k >= 0 && dents < MAX_DENTS; k--) if (ws[k].dent) dents++;
+      if (dents) {
+        // the plain body steps aside for the dented one (same slot, collapsed)
+        const d = this.nd++, g = this.dentBody.geometry;
+        this.dentBody.setMatrixAt(d, bm);
+        this.dentBody.instanceColor.setXYZ(d, cr, cg, cb);
+        let k2 = 0;
+        for (let k = ws.length - 1; k >= 0 && k2 < MAX_DENTS; k--) if (ws[k].dent) { g.attributes[`aD${k2++}`].setXYZW(d, ws[k].x, ws[k].y, ws[k].z, ws[k].dent); }
+        for (; k2 < MAX_DENTS; k2++) g.attributes[`aD${k2}`].setXYZW(d, 0, 0, 0, 0);
+        this.body.setMatrixAt(i, ZERO);
+      } else {
+        this.body.setMatrixAt(i, bm);
+      }
+      this.body.instanceColor.setXYZ(i, cr, cg, cb);
+      if (ws) {
+        const aC = this.wound.geometry.attributes.aC, aS = this.wound.geometry.attributes.aS, aN = this.wound.geometry.attributes.aN;
+        for (const w of ws) {
           if (this.nw >= this.cap * 6) break;
           const j = this.nw++;
-          this.wound.setMatrixAt(j, wm.compose(wp.set(w.x, w.y, w.z), WQ, ws.set(w.a, w.b, w.c)).premultiply(bm));
-          const k = 0.75 + w.sh * 0.5;
-          if (w.hole) this.wound.instanceColor.setXYZ(j, 0.03, 0.005, 0.005);
-          else this.wound.instanceColor.setXYZ(j, 0.42 * k, 0.04 * k, 0.04 * k);
+          this.wound.setMatrixAt(j, bm);
+          aC.setXYZW(j, w.x, w.y, w.z, w.tile);
+          aS.setXYZW(j, w.sa, w.sb, 0.75 + w.sh * 0.5, w.dd || 0);
+          aN.setXYZ(j, w.nx, 0, w.nz);
         }
       }
       this.visor.setMatrixAt(i, t.multiplyMatrices(world, p.visor));
@@ -161,7 +180,11 @@ export class Crowd {
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
     };
     fin(this.body, this.n); fin(this.visor, this.n); fin(this.pack, this.n);
-    fin(this.foot, this.nf); fin(this.hand, this.nh); fin(this.wound, this.nw); fin(this.leg, this.nl);
+    fin(this.foot, this.nf); fin(this.hand, this.nh); fin(this.wound, this.nw); fin(this.dentBody, this.nd);
+    const wg = this.wound.geometry.attributes, dg = this.dentBody.geometry.attributes;
+    wg.aC.needsUpdate = wg.aS.needsUpdate = wg.aN.needsUpdate = true;
+    for (let k = 0; k < MAX_DENTS; k++) dg[`aD${k}`].needsUpdate = true;
+     fin(this.leg, this.nl);
     for (const k of KIND_IDS) { fin(this.gear[k], this.gn[k]); if (this.marks[k]) fin(this.marks[k], this.mn[k]); }
     for (const id in this.weapons) for (const m of this.weapons[id]) fin(m, this.wn[id]);
   }
