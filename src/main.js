@@ -7,7 +7,7 @@ import { PlayerCam } from './camera.js';
 import { Unit } from './unit.js';
 import { U, pose, makePose, HOLD, solveLegs } from './rig.js';
 import { Crowd } from './crowd.js';
-import { Battle, SQUAD_MIX, SQUAD_SIZE, KINDS } from './battle.js';
+import { Battle, SQUAD_MIX, SQUAD_SIZE, KINDS, HOLD_WIN } from './battle.js';
 import { buildMap } from './map.js';
 import { Effects } from './effects.js';
 import { Audio } from './audio.js';
@@ -681,6 +681,8 @@ function endBattle() {
   const won = battle.result.winner === player.team;
   $('endTitle').textContent = won ? 'Victory' : battle.result.winner < 0 ? 'Draw' : 'Defeat';
   const mins = Math.floor(battle.time / 60), secs = Math.floor(battle.time % 60);
+  $('endWhy').textContent = battle.result.why === 'points' ? 'Every point held' : battle.result.winner < 0 ? '' : 'Enemy out of tickets';
+  $('endBoard').innerHTML = '<tr><th></th><th>Kills</th><th>Lost</th><th>Points</th><th>Left</th></tr>' + battle.teams.map((t) => `<tr${t.id === player.team ? ' class="me"' : ''}><td><i style="background:${TEAMS[t.id].ui}"></i>${TEAMS[t.id].short}</td><td>${t.kills}</td><td>${t.losses}</td><td>${t.caps}</td><td>${t.tickets + t.alive}</td></tr>`).join('');
   $('endStats').textContent = `${player.kills} kills · ${battle.stats.kills} fallen · ${mins}:${String(secs).padStart(2, '0')}`;
   $('end').hidden = false;
   if (document.pointerLockElement) document.exitPointerLock();
