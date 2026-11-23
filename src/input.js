@@ -146,10 +146,10 @@ export class Input {
     });
 
     const GAME = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
-    const KEYS = { KeyR: 'reload', KeyG: 'grenade', KeyB: 'menu', KeyV: 'view', KeyF: 'free', KeyX: 'use' };
+    const KEYS = { KeyR: 'reload', KeyG: 'grenade', KeyB: 'menu', KeyV: 'view', KeyF: 'free', KeyX: 'use', KeyT: 'spot', KeyN: 'map', Tab: 'map' };
     addEventListener('keydown', (e) => {
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
-      if (GAME.has(e.code)) e.preventDefault();
+      if (GAME.has(e.code) || e.code === 'Tab') e.preventDefault();
       if (e.code === 'Space' && !e.repeat) this.jumpQueued = true;
       if (!e.repeat && KEYS[e.code]) this.actions.push({ type: KEYS[e.code] });
       if (!e.repeat && e.code === 'KeyZ') this.prone = !this.prone;
