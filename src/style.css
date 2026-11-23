@@ -180,6 +180,14 @@ html[data-palette='open'] .gun, html[data-palette='open'] .feed { display: none;
 .sheet-actions { display: grid; gap: 8px; }
 .end-stats { margin: -6px 0 18px; color: var(--mute); font-family: var(--head); letter-spacing: 0.05em; }
 
+.end-why { margin: -8px 0 14px; color: var(--mute); font-size: 13px; }
+.board { width: 100%; margin: 0 0 14px; border-collapse: collapse; font: 500 14px var(--head); }
+.board th { padding: 4px; color: var(--mute); font-weight: 500; font-size: 11px; letter-spacing: 0.08em; text-transform: uppercase; }
+.board td { padding: 6px 4px; border-top: 1px solid rgba(255, 255, 255, 0.12); text-align: center; }
+.board td:first-child { text-align: left; }
+.board i { display: inline-block; width: 10px; height: 10px; margin-right: 8px; }
+.board tr.me td { color: var(--ink); font-weight: 700; }
+
 /* ---------------- corner + touch ---------------- */
 .corner { position: fixed; top: max(12px, env(safe-area-inset-top)); right: var(--pad); display: flex; gap: 6px; }
 html[data-palette='open'] .corner { display: none; }

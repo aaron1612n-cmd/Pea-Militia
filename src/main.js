@@ -1,13 +1,15 @@
 import * as THREE from 'three';
 import './style.css';
 import { createSky, HALF } from './world.js';
+import { Atmosphere } from './atmosphere.js';
+import { setSight } from './ai.js';
 import { height, updateGround } from './terrain.js';
 import { Input } from './input.js';
 import { PlayerCam } from './camera.js';
 import { Unit } from './unit.js';
 import { U, pose, makePose, HOLD, solveLegs } from './rig.js';
 import { Crowd } from './crowd.js';
-import { Battle, SQUAD_MIX, SQUAD_SIZE, KINDS } from './battle.js';
+import { Battle, SQUAD_MIX, SQUAD_SIZE, KINDS, HOLD_WIN } from './battle.js';
 import { buildMap } from './map.js';
 import { Effects } from './effects.js';
 import { Audio } from './audio.js';
@@ -43,8 +45,9 @@ sky.material.uniforms.low.value.set('#b6ad9c');
 scene.add(sky);
 
 // Overcast light: neutral sky fill, one cool key whose shadow box follows the camera.
-scene.add(new THREE.HemisphereLight('#d9dde2', '#5e554a', 1.05));
-const SUN = new THREE.Vector3(42, 40, 26); // lower sun: longer shadows, more shape on the blocks
+const hemi = new THREE.HemisphereLight('#d9dde2', '#5e554a', 1.05);
+scene.add(hemi);
+const SUN = new THREE.Vector3(42, 40, 26); // overwritten each frame by the day cycle // lower sun: longer shadows, more shape on the blocks
 const sun = new THREE.DirectionalLight('#ffe2bd', 2.7);
 sun.castShadow = true;
 sun.shadow.mapSize.set(testing ? 1024 : 2048, testing ? 1024 : 2048);
@@ -56,6 +59,9 @@ scene.add(sun, sun.target);
 const rim = new THREE.DirectionalLight('#aebfd0', 0.6);
 rim.position.set(-5, 3, -6);
 scene.add(rim);
+const atmo = new Atmosphere({ scene, sky, hemi, sun, rim, renderer, reduced });
+let sightSet = 0;
+atmo.onThunder = () => audio.play('boom', null, 0.35);
 
 const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 700);
 const cam = new PlayerCam(camera);
@@ -147,6 +153,7 @@ form.addEventListener('submit', (e) => {
     tickets: +form.tickets.value, view: form.view.value, playerTeam: +(form.querySelector('[name=side]:checked')?.value ?? 0),
   };
   fx.gore.setLevel(+form.gore.value);
+  atmo.set({ time: form.time.value === 'cycle' ? 12 : form.time.value, cycle: form.time.value === 'cycle', weather: form.weather.value });
   audio.init();
   if (!input.touch) input.requestLock();
   if (!reduced) {
@@ -692,6 +699,9 @@ function frame(_t, fixedDt) {
   audio.listener.x = camera.position.x; audio.listener.z = camera.position.z; audio.listener.yaw = state === 'menu' ? 0 : cam.yaw;
   // shadows follow what the camera is looking at
   const look = state === 'menu' ? new THREE.Vector3() : cam.mode === 'over' ? new THREE.Vector3(cam.over.x, 0, cam.over.z) : cam.mode === 'free' ? cam.fr.clone().add(cam.forward().setY(0).normalize().multiplyScalar(22)).setY(0) : player.pos.clone().add(cam.forward().setY(0).multiplyScalar(12));
+  atmo.update(dt, camera);
+  SUN.copy(atmo.sunDir);
+  if (Math.abs(atmo.sight - sightSet) > 0.02) { sightSet = atmo.sight; setSight(sightSet); }
   sun.position.copy(look).add(SUN);
   sun.target.position.copy(look);
   if (state !== 'menu' && player) { hud.update(dt, player, battle, cam); if (cam.mode !== 'over' && cam.mode !== 'free') hud.drawMarks(player, battle, camera); }
@@ -707,6 +717,8 @@ function endBattle() {
   const won = battle.result.winner === player.team;
   $('endTitle').textContent = won ? 'Victory' : battle.result.winner < 0 ? 'Draw' : 'Defeat';
   const mins = Math.floor(battle.time / 60), secs = Math.floor(battle.time % 60);
+  $('endWhy').textContent = battle.result.why === 'points' ? 'Every point held' : battle.result.winner < 0 ? '' : 'Enemy out of tickets';
+  $('endBoard').innerHTML = '<tr><th></th><th>Kills</th><th>Lost</th><th>Points</th><th>Left</th></tr>' + battle.teams.map((t) => `<tr${t.id === player.team ? ' class="me"' : ''}><td><i style="background:${TEAMS[t.id].ui}"></i>${TEAMS[t.id].short}</td><td>${t.kills}</td><td>${t.losses}</td><td>${t.caps}</td><td>${t.tickets + t.alive}</td></tr>`).join('');
   $('endStats').textContent = `${player.kills} kills · ${battle.stats.kills} fallen · ${mins}:${String(secs).padStart(2, '0')}`;
   $('end').hidden = false;
   if (document.pointerLockElement) document.exitPointerLock();
@@ -719,7 +731,7 @@ if (params.has('play')) startBattle({ mode: params.get('play') || 'battle' });
 window.__game = { maxSpeed: MAX_SPEED,
   THREE, scene, camera, renderer, cam, input, crowd, fx, SLOTS, U, pose, makePose, solveLegs, HOLD, HALF, weaponModel,
   height, get battle() { return battle; }, get player() { return player; }, get state() { return state; },
-  sandbox, start: startBattle, openMenu, pause,
+  sandbox, atmo, start: startBattle, openMenu, pause,
   freeze(on = true) { frozen = on; },
   // render one frame now (for screenshots while frozen)
   render() { drawUnits(); updateGround(camera); renderer.render(scene, camera); },
