@@ -227,6 +227,19 @@ export class Audio {
       case 'ping':
         this.tone(d, { dur: 0.09, type: 'triangle', f: 2400, f2: 1700, peak: 0.25 });
         break;
+      case 'whistle':
+        this.tone(d, { dur: 1.5, type: 'sine', f: 2400, f2: 700, peak: 0.1, attack: 0.3 });
+        this.noiseBurst(d, { dur: 1.5, type: 'bandpass', f: 3000, f2: 900, q: 5, peak: 0.12, attack: 0.4 });
+        break;
+      case 'jet':
+        this.noiseBurst(d, { dur: 3, type: 'bandpass', f: 500, f2: 250, q: 0.8, peak: 0.7, attack: 1.1 });
+        this.tone(d, { dur: 3, type: 'sawtooth', f: 190, f2: 90, peak: 0.12, attack: 1.2 });
+        break;
+      case 'radio':
+        this.tone(d, { dur: 0.08, type: 'square', f: 1500, peak: 0.07 });
+        this.tone(d, { t: 0.14, dur: 0.08, type: 'square', f: 1100, peak: 0.07 });
+        this.noiseBurst(d, { t: 0.28, dur: 0.25, type: 'bandpass', f: 1800, q: 1.5, peak: 0.08 });
+        break;
       case 'clank':
         this.tone(d, { dur: 0.15, type: 'square', f: 220, f2: 140, peak: 0.12 });
         this.noiseBurst(d, { dur: 0.12, type: 'bandpass', f: 1600, q: 3, peak: 0.2 });

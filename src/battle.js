@@ -6,6 +6,7 @@ import { PROPS, PropBatch, coverSpots } from './props.js';
 import { Nav } from './nav.js';
 import { Vehicle } from './vehicles.js';
 import { VehicleBrain } from './vehicleai.js';
+import { CallIns } from './callins.js';
 import { projectileModel, WEAPONS } from './weapons.js';
 import { hostile, TEAMS } from './factions.js';
 import { HALF, pointMarker } from './world.js';
@@ -129,6 +130,7 @@ export class Battle {
     this.edge = EDGE;
     this.propVer = 0;
     this.navBudget = 0;
+    this.callins = new CallIns(this);
   }
 
   // a walking route, or null when there is none (grid rebuilt when props changed)
@@ -145,6 +147,7 @@ export class Battle {
       id: i, tickets: this.settings.tickets, base: baseAt(i, n), spawnT: 0, alive: 0, lost: false,
     }));
     this.commanders = this.teams.map((t) => new Commander(this, t.id));
+    this.callins.reset(n);
     this.result = null;
   }
 
@@ -304,6 +307,7 @@ export class Battle {
     this.decor = [];
     this.batch.clear();
     for (const v of [...this.vehicles]) this.removeVehicle(v);
+    this.callins.dispose();
   }
 
   // ---------- queries ----------
@@ -865,6 +869,7 @@ export class Battle {
       }
     }
     this.updateProjectiles(dt);
+    this.callins.update(dt);
     this.updatePoints(dt);
     this.updateTeams(dt);
     for (const u of [...this.units]) if (!u.alive && u !== this.player && u.deadT > 14) this.removeUnit(u);
