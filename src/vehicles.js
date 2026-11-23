@@ -160,6 +160,21 @@ function tankParts(team) {
   for (const s of [-1, 1]) {
     hull.add(profile(roundRect(TRACK.z0 + 0.05, 0.02, TRACK.z1 - 0.05, TRACK.h - 0.04, LOOP_R - 0.04), TRACK.w - 0.06, 0.02, 2), C.rubber, { pos: [s * TRACK.x, 0, 0] });
   }
+  // side skirts with rivet rows, spare track links, grab handles, hull number plate, headlight guards
+  for (const s of [-1, 1]) {
+    hull.add(block(0.04, 0.3, 3.6, 0.01, 0.006), paint, { pos: [s * 1.33, 0.7, 0.2] });
+    for (let i = 0; i < 12; i++) hull.add(new THREE.SphereGeometry(0.02, 5, 4), C.steel, { pos: [s * 1.36, 0.82, -1.5 + i * 0.3] });
+    for (let i = 0; i < 4; i++) hull.add(block(0.04, 0.05, 0.3, 0.005, 0.003), C.dark, { pos: [s * 1.36, 0.58, -1.2 + i * 0.8] }); // skirt hinges
+    hull.add(pipe([[s * 0.5, 1.12, 2.05], [s * 0.5, 1.22, 2.05], [s * 0.7, 1.22, 2.05], [s * 0.7, 1.12, 2.05]], 0.012, 8, 5), C.steel); // grab handle
+    hull.add(block(0.2, 0.2, 0.05, 0.02, 0.01), C.steel, { pos: [s * 0.8, 1.0, 2.2] }); // lamp guard
+  }
+  for (let i = 0; i < 9; i++) hull.add(block(0.5, 0.04, 0.1, 0.01, 0.006), C.iron, { pos: [0.0, 0.84 + i * 0.012, 2.5 - 0.0], rot: [-0.45, 0, 0] }); // spare track links on the nose
+  hull.add(block(0.5, 0.18, 0.025, 0.01, 0.006), trim, { pos: [0, 0.85, 2.58], rot: [-0.45, 0, 0] }); // hull number plate
+  for (let i = 0; i < 3; i++) hull.add(block(0.045, 0.1, 0.012, 0.004, 0.002), C.canvas, { pos: [-0.12 + i * 0.12, 0.85, 2.6], rot: [-0.45, 0, 0] });
+  hull.add(block(1.5, 0.04, 0.04, 0.01, 0.006), C.steel, { pos: [0, 1.1, -2.42] }); // rear bumper rail
+  hull.add(block(0.24, 0.14, 0.4, 0.02, 0.01), C.iron, { pos: [0.9, 1.0, -0.2] }); // tool box on the right fender
+  hull.add(cyl(0.05, 0.9, 8), C.wood, { pos: [-1.0, 1.0, 0.4], rot: [Math.PI / 2, 0, 0] }); // shovel handle
+  hull.add(block(0.14, 0.02, 0.22, 0.01, 0.005), C.steel, { pos: [-1.0, 1.0, 0.95] });
   // glowing engine vents at the back and cold-teal lamps on the nose
   for (const s of [-1, 1]) glowH.push([block(0.42, 0.06, 0.04, 0.01, 0.004), [s * 0.5, 0.7, -2.5]]);
   for (const s of [-1, 1]) glowH.push([bolt(0.07), [s * 0.8, 1.0, 2.08], [-0.7, 0, 0]]);
@@ -183,6 +198,15 @@ function tankParts(team) {
   // rivets round the turret ring
   for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2; turret.add(new THREE.SphereGeometry(0.03, 6, 4), C.steel, { pos: [Math.sin(a) * 1.02, 0.2, Math.cos(a) * 1.02] }); }
 
+  // turret detail: weld seams, commander's periscopes, searchlight, side hatches and mantlet bolts
+  for (const s of [-1, 1]) {
+    turret.add(block(0.04, 0.34, 1.3, 0.01, 0.006), C.dark, { pos: [s * 0.94, 0.36, 0.1] }); // cheek seam
+    turret.add(block(0.3, 0.04, 0.3, 0.02, 0.01), C.steel, { pos: [s * 0.9, 0.5, -0.4], rot: [0, 0, s * 0.35] }); // side hatch
+  }
+  for (let i = 0; i < 4; i++) turret.add(new THREE.SphereGeometry(0.025, 5, 4), C.steel, { pos: [-0.3 + i * 0.2, 0.56, 1.3] });
+  for (const a of [0, 1.57, 3.14, 4.71]) turret.add(block(0.06, 0.07, 0.04, 0.01, 0.005), C.dark, { pos: [0.38 + Math.cos(a) * 0.3, 0.77, -0.3 + Math.sin(a) * 0.3] }); // periscopes
+  turret.add(cyl(0.09, 0.12, 10), C.steel, { pos: [-0.5, 0.78, 0.05] }); // searchlight
+  turret.add(cyl(0.07, 0.02, 10), C.brass, { pos: [-0.5, 0.78, 0.12], rot: [Math.PI / 2, 0, 0] });
   // gun: barrel pivots at the mantlet (z = 0), muzzle at z = 3
   barrel.add(rod(0.075, 0.0, 2.95, 12), C.steel);
   barrel.add(turned([[0.12, 0.06], [0.13, 0.12], [0.13, 0.7], [0.12, 0.76]], 14), C.dark); // recoil sleeve
@@ -335,6 +359,23 @@ function jeepParts(team) {
   // exhaust, aerial, mudflaps
   body.add(pipe([[-0.9, 0.55, -1.2], [-1.0, 0.5, -0.2], [-1.0, 0.5, 0.5]], 0.045, 10, 6), C.copper);
   body.add(pipe([[0.85, 1.1, -1.7], [0.85, 2.1, -1.74], [0.8, 2.9, -1.7]], 0.012, 6, 5), C.dark);
+  // jeep detail: door seams and handles, mirrors, rivets, license plate, headlamp cages, tow hitch, tool kit
+  for (const s of [-1, 1]) {
+    body.add(block(0.03, 0.4, 0.04, 0.005, 0.003), C.dark, { pos: [s * 0.9, 0.82, -0.2] }); // door seam
+    body.add(block(0.03, 0.4, 0.04, 0.005, 0.003), C.dark, { pos: [s * 0.9, 0.82, -1.3] });
+    body.add(block(0.03, 0.04, 0.16, 0.005, 0.003), C.steel, { pos: [s * 0.93, 0.95, -0.7] }); // handle
+    for (let i = 0; i < 6; i++) body.add(new THREE.SphereGeometry(0.018, 5, 4), C.steel, { pos: [s * 0.93, 0.62, -1.5 + i * 0.28] });
+    body.add(pipe([[s * 0.86, 1.15, 0.4], [s * 1.05, 1.3, 0.45], [s * 1.12, 1.3, 0.45]], 0.012, 8, 5), C.steel); // mirror arm
+    body.add(block(0.04, 0.14, 0.1, 0.01, 0.005), C.dark, { pos: [s * 1.14, 1.3, 0.45] });
+    body.add(ring(0.12, 0.012, 12), C.steel, { pos: [s * 0.62, 0.92, 2.1] }); // lamp cage
+    body.add(block(0.08, 0.3, 0.3, 0.02, 0.01), C.steel, { pos: [s * 0.35, 0.3, -1.95] }); // tow bracket
+  }
+  body.add(block(0.4, 0.12, 0.02, 0.01, 0.005), C.gauge ?? '#e6e0cc', { pos: [0, 0.5, -1.98] }); // plate
+  body.add(block(0.5, 0.2, 0.3, 0.03, 0.015), C.wood, { pos: [0.5, 0.64, -1.3] }); // crate under the rear seat line
+  body.add(cyl(0.07, 0.3, 10), C.steel, { pos: [0.0, 0.46, -2.0] }); // tow ball
+  for (const x of [-0.3, 0, 0.3]) body.add(block(0.18, 0.04, 0.04, 0.01, 0.005), C.dark, { pos: [x, 1.07, 0.1] }); // dash gauges
+  body.add(block(0.5, 0.05, 0.3, 0.02, 0.01), trim, { pos: [0, 1.09, 1.5], rot: [-0.3, 0, 0] }); // bonnet stripe
+  body.add(block(0.5, 0.02, 0.02, 0.01, 0.004), C.canvas, { pos: [0.0, 1.1, 1.95], rot: [0, 0, 0] });
   // pintle ring and mount (rotates with the gun)
   mount.add(cyl(0.38, 0.1, 18), C.dark, { pos: [0, 0, 0] });
   mount.add(block(0.5, 0.36, 0.14, 0.03, 0.015), C.steel, { pos: [0, 0.3, 0] });
@@ -429,6 +470,20 @@ function skiffParts(team) {
   // prow, bumper and the stripe
   body.add(block(0.8, 0.1, 0.5, 0.03, 0.015), C.steel, { pos: [0, 0.2, 1.95] });
   body.add(block(0.2, 0.04, 1.3, 0.01, 0.005), trim, { pos: [0, 0.8, 0.9], rot: [-0.18, 0, 0] });
+  // skiff detail: rivet seam, hull plates, rudders, fuel pods, radiator slats, running lamps, grab rails, intake scoops
+  for (let i = 0; i < 10; i++) for (const s of [-1, 1]) body.add(new THREE.SphereGeometry(0.017, 5, 4), C.steel, { pos: [s * 0.5, 0.36, -1.5 + i * 0.32] });
+  for (let i = 0; i < 5; i++) body.add(block(0.5, 0.03, 0.05, 0.008, 0.004), C.dark, { pos: [0, 0.72, -1.05 + i * 0.1], rot: [-0.05, 0, 0] }); // radiator slats
+  for (const s of [-1, 1]) {
+    body.add(pipe([[s * 0.5, 0.78, 0.0], [s * 0.58, 0.95, 0.1], [s * 0.58, 0.95, -0.5], [s * 0.5, 0.78, -0.6]], 0.016, 14, 5), C.steel); // grab rail
+    body.add(block(0.3, 0.1, 0.4, 0.03, 0.015), C.canvas, { pos: [s * 0.45, 0.52, 0.9], rot: [0, 0, s * 0.2] }); // storage pod
+    body.add(block(0.04, 0.14, 0.5, 0.01, 0.005), trim, { pos: [s * 0.95, 0.52, -1.95], rot: [0, s * 0.2, 0] }); // rudder
+    body.add(block(0.3, 0.12, 0.04, 0.01, 0.005), C.dark, { pos: [s * 0.88, 0.4, 1.1] }); // intake scoop
+    glow.push([bolt(0.05), [s * 0.9, 0.62, 1.4]]);
+    body.add(ring(0.38, 0.02, 14), C.steel, { pos: [s * 0.88, 0.4, 1.12], rot: [0, Math.PI / 2, 0] });
+  }
+  body.add(block(0.5, 0.05, 0.5, 0.02, 0.01), C.dark, { pos: [0, 0.18, 0.2] }); // belly skid plate
+  body.add(rod(0.02, 0, 0.4, 6), C.dark, { pos: [0, 1.0, 0.7], rot: [-0.3, 0, 0] }); // windscreen frame
+  body.add(rod(0.01, 0, 1.0, 6), C.dark, { pos: [0.3, 1.0, -1.7], rot: [-1.4, 0, 0] }); // aerial
   // lift fan housings under the hull (the fans spin as their own meshes)
   for (const z of [1.0, -1.0]) { body.add(cyl(0.5, 0.1, 18), C.dark, { pos: [0, 0.1, z] }); glow.push([cyl(0.38, 0.02, 14), [0, 0.04, z]]); }
   for (let b = 0; b < 3; b++) fan.add(block(0.78, 0.015, 0.14, 0.005, 0.003), C.iron, { rot: [0, (b / 3) * Math.PI, 0] });
@@ -503,6 +558,21 @@ function striderParts(team) {
   // belly pipes, tool boxes
   for (const s of [-1, 1]) hull.add(block(0.4, 0.34, 0.6, 0.04, 0.02), C.canvas, { pos: [s * 1.12, 0.2, -0.5] });
   hull.add(pipe([[-0.9, 0.1, 0.5], [-0.3, -0.12, 0.6], [0.3, -0.12, 0.6], [0.9, 0.1, 0.5]], 0.045, 12, 6), C.copper);
+  // strider detail: armour plate seams and rivets, ladder, hatches, running lights, exhaust louvres, hydraulic lines
+  for (const s of [-1, 1]) {
+    for (let i = 0; i < 6; i++) hull.add(new THREE.SphereGeometry(0.03, 5, 4), C.steel, { pos: [s * 1.2, 0.5 + i * 0.12, 0.8] });
+    hull.add(block(0.04, 0.9, 0.04, 0.01, 0.006), C.dark, { pos: [s * 1.17, 0.75, 0.3] }); // armour seam
+    hull.add(block(0.04, 0.9, 0.04, 0.01, 0.006), C.dark, { pos: [s * 1.1, 0.75, -0.6] });
+    for (let i = 0; i < 5; i++) hull.add(block(0.04, 0.05, 0.2, 0.01, 0.005), C.dark, { pos: [s * 1.06, 0.45 + i * 0.1, -0.2] }); // louvres
+    hull.add(pipe([[s * 0.95, 0.1, 0.2], [s * 1.12, 0.0, 0.0], [s * 1.2, 0.0, -0.4]], 0.03, 10, 6), C.copper); // hydraulic line
+    hull.add(block(0.05, 0.9, 0.04, 0.01, 0.006), C.steel, { pos: [s * 0.2, 0.7, -1.55] }); // rear ladder rail
+  }
+  for (let i = 0; i < 7; i++) hull.add(block(0.4, 0.03, 0.03, 0.006, 0.003), C.steel, { pos: [0, 0.35 + i * 0.13, -1.55] }); // ladder rungs
+  hull.add(block(0.4, 0.04, 0.4, 0.03, 0.01), C.dark, { pos: [0, 1.5, 0.25] }); // roof hatch
+  hull.add(block(1.2, 0.1, 0.06, 0.015, 0.008), trim, { pos: [0, 0.2, 1.3] }); // lower chin plate
+  for (let i = 0; i < 5; i++) hull.add(new THREE.SphereGeometry(0.03, 5, 4), C.steel, { pos: [-0.4 + i * 0.2, 0.22, 1.32] });
+  hull.add(block(0.9, 0.04, 0.04, 0.01, 0.005), C.brass, { pos: [0, 1.3, -0.45] }); // manifold bar
+  for (const s of [-1, 1]) glow.push([bolt(0.05), [s * 1.15, 0.9, 0.9], [0, 0, -Math.PI / 2 * s]]);
   // turret: a squat drum, a cheek for the cannon, the mortar tube racked on the left
   turret.add(cyl(0.62, 0.3, 22), C.steel, { pos: [0, 0.1, 0] });
   turret.add(profile([[-0.7, 0.2], [0.7, 0.2], [0.55, 0.62], [-0.5, 0.7]], 1.3, 0.05, 2), paint, { pos: [0, 0.1, 0] });
