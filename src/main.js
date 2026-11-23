@@ -742,6 +742,7 @@ function frame(_t, fixedDt) {
   if (skipDraw) return;
   drawUnits();
   updateGround(camera);
+  sky.position.copy(camera.position); // the dome rides with the eye so no part falls past the far plane
   renderer.render(scene, camera);
 }
 renderer.setAnimationLoop(frame);
@@ -768,7 +769,7 @@ window.__game = { maxSpeed: MAX_SPEED,
   sandbox, atmo, start: startBattle, openMenu, pause,
   freeze(on = true) { frozen = on; },
   // render one frame now (for screenshots while frozen)
-  render() { drawUnits(); updateGround(camera); renderer.render(scene, camera); },
+  render() { drawUnits(); updateGround(camera); sky.position.copy(camera.position); renderer.render(scene, camera); },
   view(pos, target) { cam.frozen = true; camera.position.set(...pos); camera.lookAt(...target); sun.position.set(target[0], 0, target[2]).add(SUN); sun.target.position.set(...target); },
   unfreezeCam() { cam.frozen = false; },
   // Deterministic fast-forward for the check suite: run n frames of fixed dt, independent of how
