@@ -147,10 +147,12 @@ export class Input {
 
     const GAME = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
     const KEYS = { KeyR: 'reload', KeyG: 'grenade', KeyB: 'menu', KeyV: 'view', KeyF: 'free', KeyX: 'use' };
+    const WHEEL = 'KeyT';
     addEventListener('keydown', (e) => {
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
       if (GAME.has(e.code)) e.preventDefault();
       if (e.code === 'Space' && !e.repeat) this.jumpQueued = true;
+      if (!e.repeat && e.code === WHEEL) this.actions.push({ type: 'wheelDown' });
       if (!e.repeat && KEYS[e.code]) this.actions.push({ type: KEYS[e.code] });
       if (!e.repeat && e.code === 'KeyZ') this.prone = !this.prone;
       if (!e.repeat && (e.code === 'KeyC' || e.code === 'ControlLeft' || e.code === 'Space')) this.prone = false;
@@ -158,7 +160,7 @@ export class Input {
       this.keys.add(e.code);
       if (this.touch && GAME.has(e.code)) this.setTouch(false);
     });
-    addEventListener('keyup', (e) => this.keys.delete(e.code));
+    addEventListener('keyup', (e) => { this.keys.delete(e.code); if (e.code === WHEEL) this.actions.push({ type: 'wheelUp' }); });
     addEventListener('blur', () => { this.keys.clear(); this.fire = false; this.aim = false; });
     c.addEventListener('wheel', (e) => {
       e.preventDefault();
