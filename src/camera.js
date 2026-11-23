@@ -23,6 +23,7 @@ export class PlayerCam {
     this.lift = 0.32;
     this.blend = 0; // 0 = 3p, 1 = 1p (smooth switch)
     this.roll = 0;
+    this.cockpit = false; // vehicle first person
     this.fpFov = 84;
     this.pos = V();
     this.focus = V();
@@ -159,16 +160,39 @@ export class PlayerCam {
     this.setFov(THREE.MathUtils.lerp(base, base * 0.6, this.ads), dt);
   }
 
-  // chase camera: well back and above the machine, free to look round it while the turret follows
+  // Chase camera: high and over the right shoulder, so the hull sits low in the frame and the
+  // crosshair looks past it. Cockpit mode sits at the driver's eyes instead.
   updateVehicle(dt, v, snap) {
     const cam = this.camera;
     this.blend += (0 - this.blend) * (snap ? 1 : 0.3);
-    const eye = V().set(v.pos.x, v.pos.y + v.def.camHeight * 0.6, v.pos.z);
+    const f = this.forward(V());
+    if (this.cockpit) {
+      const eye = v.cockpitEye(V());
+      this.focus.copy(eye);
+      this.pos.copy(eye);
+      cam.position.copy(eye);
+      cam.lookAt(eye.clone().add(f));
+      cam.rotateZ(-v.roll * 0.6 * Math.cos(this.yaw - v.yaw));
+      if (this.shake > 0.001) {
+        const s = this.shake * 0.02;
+        cam.rotation.x += (Math.random() - 0.5) * s;
+        cam.rotation.y += (Math.random() - 0.5) * s;
+      }
+      this.setFov(82 - this.ads * 25 + Math.min(8, Math.abs(v.speed) * 0.5), dt);
+      return;
+    }
+    const d0 = v.def;
+    const eye = V().set(v.pos.x, v.pos.y + (d0.camUp ?? d0.camHeight * 1.5), v.pos.z);
     if (snap) this.focus.copy(eye);
     else this.focus.lerp(eye, 1 - Math.exp(-16 * dt));
-    const f = this.forward(V());
-    const d = v.def.camDist * (1 - this.ads * 0.35);
-    const pivot = this.focus.clone().add(V().set(0, 0.8, 0));
+    const right = V().set(Math.cos(this.yaw), 0, -Math.sin(this.yaw));
+    const d = d0.camDist * (1 - this.ads * 0.35);
+    let side = d0.camSide ?? 1;
+    if (this.collide) {
+      const t = this.collide(this.focus, right, side + 0.3);
+      if (t < side + 0.3) side = Math.max(0, t - 0.3);
+    }
+    const pivot = this.focus.clone().addScaledVector(right, side);
     let tp = pivot.clone().addScaledVector(f, -d);
     if (this.collide) {
       const dir = V().subVectors(tp, pivot);

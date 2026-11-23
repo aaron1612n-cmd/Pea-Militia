@@ -19,7 +19,7 @@ export const VEHICLES = {
     hp: 560, armor: { bullet: 0.035, blast: 0.5, plasma: 0.6, flame: 0.1 },
     maxSpeed: 7.2, maxRev: 3.2, accel: 3.4, brake: 9, turn: 1.15, maxSlope: 0.62,
     hint: 'WASD drive · click fires the cannon · right-click MG · X leaves',
-  mass: 30, camDist: 9.5, camHeight: 2.6, steamAt: [0.5, 2.1, -1.9], step: 0.28, crush: true, runover: 400,
+  mass: 30, camDist: 9.5, camHeight: 2.6, camUp: 4.4, camSide: 1.5, cockpit: [0, 2.0, 0.1], cockpitKind: 'tank', steamAt: [0.5, 2.1, -1.9], step: 0.28, crush: true, runover: 400,
     turret: { rate: 1.25, pitchRate: 0.8, pitchMin: -0.14, pitchMax: 0.42, pivot: [0, 1.08, -0.15] },
     weapons: [
       { id: 'cannon', name: 'Tank gun', ai: 'heavy', kind: 'projectile', proj: 'shell', damage: 230, radius: 3.8, speed: 78, gravity: 3, interval: 2.3, spread: 0.004, sound: 'cannon', mag: 1, reserve: Infinity, range: 220, burst: [1, 1], vehicleGun: true },
@@ -33,7 +33,7 @@ VEHICLES.jeep = {
   hx: 1.0, hz: 1.95, h: 1.45,
   hp: 240, armor: { bullet: 0.45, blast: 1.0, plasma: 1.0, flame: 0.3 },
   maxSpeed: 16, maxRev: 5.5, accel: 7, brake: 12, turn: 1.7, maxSlope: 0.85,
-  mass: 4, camDist: 7.2, camHeight: 2.1, steamAt: [0.55, 1.45, -1.75], step: 0.25, crush: false, runover: 160,
+  mass: 4, camDist: 7.2, camHeight: 2.1, camUp: 3.1, camSide: 0.9, cockpit: [-0.4, 1.5, -0.2], cockpitKind: 'jeep', steamAt: [0.55, 1.45, -1.75], step: 0.25, crush: false, runover: 160,
   hint: 'WASD drive · click fires the MG · X leaves',
   turret: { rate: 3.4, pitchRate: 2.4, pitchMin: -0.3, pitchMax: 0.6, pivot: [0, 1.25, -0.75] },
   weapons: [
@@ -46,7 +46,7 @@ VEHICLES.hover = {
   hx: 0.95, hz: 1.9, h: 1.15, hoverH: 1.0,
   hp: 150, armor: { bullet: 0.55, blast: 1.2, plasma: 0.8, flame: 0.4 },
   maxSpeed: 21, maxRev: 6, accel: 9, brake: 8, turn: 2.1, maxSlope: 1.5,
-  mass: 1, camDist: 7.4, camHeight: 1.9, steamAt: [0, 1.15, -1.55], step: 1.1, crush: false, runover: 0,
+  mass: 1, camDist: 7.4, camHeight: 1.9, camUp: 2.7, camSide: 0.8, cockpit: [0, 1.3, -0.1], cockpitKind: 'hover', steamAt: [0, 1.15, -1.55], step: 1.1, crush: false, runover: 0,
   hint: 'WASD fly low · click fires the coil guns · Space brakes · X leaves',
   turret: { rate: 3.2, pitchRate: 2.2, pitchMin: -0.3, pitchMax: 0.45, yawLimit: 0.55, pivot: [0, 0.42, 1.2] },
   weapons: [
@@ -59,7 +59,7 @@ VEHICLES.walker = {
   hx: 1.5, hz: 1.5, h: 2.3, lift: 2.5, eyeH: 4.6, // hit box starts above the legs
   hp: 700, armor: { bullet: 0.07, blast: 0.55, plasma: 0.6, flame: 0.15 },
   maxSpeed: 6.2, maxRev: 2.6, accel: 2.8, brake: 7, turn: 1.0, maxSlope: 0.95, tilt: 0.3,
-  mass: 40, camDist: 12, camHeight: 5.2, steamAt: [-0.5, 4.3, -1.3], step: 1.3, crush: true, crushH: 2.2, runover: 0,
+  mass: 40, camDist: 12, camHeight: 5.2, camUp: 7.8, camSide: 1.6, cockpit: [0, 4.7, 0.2], cockpitKind: 'walker', steamAt: [-0.5, 4.3, -1.3], step: 1.3, crush: true, crushH: 2.2, runover: 0,
   hint: 'WASD walk · click shoots · right-click mortar · X leaves',
   turret: { rate: 1.5, pitchRate: 1.2, pitchMin: -0.45, pitchMax: 0.5, pivot: [0, 4.35, 0] },
   weapons: [
@@ -376,16 +376,24 @@ function buildJeepModel(team) {
   const wheels = new THREE.InstancedMesh(jeepWheel(), BODY, 4);
   wheels.castShadow = true; wheels.frustumCulled = false;
   root.add(body, lamps, turretPivot, wheels);
-  const parts = { root, turretPivot, gun, gunZ: 0.2, recoilK: 0.08, muzzles: [muzzle], meshes: [body, mount, gunMesh, wheels], steerA: 0 };
+  const parts = { root, turretPivot, gun, gunZ: 0.2, recoilK: 0.08, muzzles: [muzzle], meshes: [body, mount, gunMesh, wheels], steerA: 0, susp: [0, 0, 0, 0] };
   parts.animate = (v) => {
     const target = THREE.MathUtils.clamp(-v.ctrl.steer, -1, 1) * 0.5 * (v.alive ? 1 : 0);
     parts.steerA += (target - parts.steerA) * 0.2;
     let i = 0;
+    const yc = Math.cos(v.yaw), ys = Math.sin(v.yaw), tanP = Math.tan(v.pitch), tanR = Math.tan(v.roll);
     for (const sx of [-1, 1]) for (const sz of [-1, 1]) {
+      // each wheel reaches for the ground under it on its own spring
+      const lx = sx * JW.x, lz = sz * JW.z;
+      const ground = height(v.pos.x + yc * lx + ys * lz, v.pos.z - ys * lx + yc * lz);
+      const now = v.pos.y + lz * tanP - lx * tanR + JW.y;
+      const want = THREE.MathUtils.clamp(ground + JW.r - now, -0.26, 0.12);
+      const idx = i;
+      parts.susp[idx] += (want - parts.susp[idx]) * (v.alive ? 0.35 : 0.1);
       _q.setFromEuler(_e.set(((sx < 0 ? -1 : 1) * v.wheelPhase) / JW.r, 0, 0));
       if (sx < 0) _q.premultiply(_q2.setFromAxisAngle(_up, Math.PI));
       if (sz > 0) _q.premultiply(_q2.setFromAxisAngle(_up, parts.steerA + (sx < 0 ? 0 : 0)));
-      _m.compose(_p.set(sx * JW.x, JW.y, sz * JW.z), _q, _s.set(1, JW.r, JW.r));
+      _m.compose(_p.set(lx, JW.y + parts.susp[idx], lz), _q, _s.set(1, JW.r, JW.r));
       wheels.setMatrixAt(i++, _m);
     }
     wheels.instanceMatrix.needsUpdate = true;
@@ -712,6 +720,24 @@ export class Vehicle {
     return out.set(0, 0, 1).transformDirection(o.matrixWorld);
   }
   weapon(i) { return this.def.weapons[i]; }
+  // first-person cockpit: hide the outside of the machine, keep the gun so you see it ahead
+  setCockpit(on) {
+    if (!!this.cockpitOn === on) return;
+    this.cockpitOn = on;
+    const gun = this.parts.gun;
+    this.group.traverse((o) => {
+      if (!o.isMesh) return;
+      for (let p = o; p; p = p.parent) if (p === gun) return;
+      o.visible = !on;
+    });
+  }
+  // where the driver's eyes are, in the world
+  cockpitEye(out = new THREE.Vector3()) {
+    const l = this.def.cockpit;
+    out.set(l[0], l[1] + (this.parts.hy !== undefined ? this.parts.hy - WL.hip : 0), l[2]);
+    this.group.updateMatrixWorld(true);
+    return this.group.localToWorld(out);
+  }
   hudWeapon() {
     const d = this.def.weapons[0], c = this.cool[0];
     const slow = d.interval > 1;
@@ -942,11 +968,28 @@ export class Vehicle {
       this.roll += (tr * 0.5 + lean - this.roll) * k;
       return;
     }
-    this.pos.y += (gy - this.pos.y) * Math.min(1, k * 1.4);
-    const tilt = d.tilt ?? 1;
-    this.pitch += (tp * tilt - this.pitch) * k;
-    this.roll += (tr * tilt - this.roll) * k;
-    // gun fire and braking make the hull rock
+    if (d.drive === 'legged') {
+      this.pos.y += (gy - this.pos.y) * Math.min(1, k * 1.4);
+      const tilt = d.tilt ?? 1;
+      this.pitch += (tp * tilt - this.pitch) * k;
+      this.roll += (tr * tilt - this.roll) * k;
+      this.rock = (this.rock || 0) * Math.exp(-4 * dt);
+      return;
+    }
+    // tracks and wheels: lay the hull on the ground plane, then lift it until no point of the
+    // footprint is under the surface (so a crest or a kerb can never swallow a wheel)
+    const kk = 1 - Math.exp(-14 * dt);
+    this.pitch += (tp - this.pitch) * kk;
+    this.roll += (tr - this.roll) * kk;
+    const tanP = Math.tan(this.pitch), tanR = Math.tan(this.roll);
+    let need = -Infinity;
+    const ex = d.hx * 0.9, ez = d.hz * 0.92;
+    for (const lx of [-ex, 0, ex]) for (const lz of [-ez, -ez / 2, 0, ez / 2, ez]) {
+      need = Math.max(need, at(lx, lz) - (lz * tanP - lx * tanR));
+    }
+    need -= 0.04;
+    if (this.pos.y < need) this.pos.y = need;
+    else this.pos.y += (need - this.pos.y) * (1 - Math.exp(-10 * dt));
     this.rock = (this.rock || 0) * Math.exp(-4 * dt);
   }
 
