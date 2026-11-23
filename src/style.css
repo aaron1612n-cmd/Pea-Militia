@@ -419,3 +419,20 @@ html[data-free='1'] #pauseFree::after { content: ' (back to soldier)'; }
 .bigmap[hidden] { display: none; }
 .bigmap canvas { width: min(86vh, 92vw); height: min(86vh, 92vw); background: var(--glass-2); border: 1px solid var(--line-2); }
 .bigmap p { margin: 0; font-size: 12px; letter-spacing: 0.04em; color: var(--ink); text-align: center; max-width: 92vw; }
+/* soldier classes */
+.classes { flex-wrap: wrap; }
+.classes label { flex: 1 1 22%; }
+.classes span { font-size: 13px; }
+.class-info { margin: 6px 2px 0; font: 400 13px/1.45 var(--body); color: var(--mute); }
+.class-info b { color: var(--ink); font-weight: 500; }
+.class-info em { color: var(--accent); font-style: normal; }
+.skill-row { display: flex; align-items: center; gap: 8px; margin-bottom: 6px; font: 500 12px/1 var(--head); letter-spacing: 0.06em; color: var(--mute); }
+.skill-row .heatbar { flex: 1; display: block; margin: 0; }
+.skill-row .heatbar i { background: var(--mute); }
+.skill-row[data-state='ready'] { color: var(--accent); }
+.skill-row[data-state='ready'] .heatbar i, .skill-row[data-state='on'] .heatbar i { background: var(--accent); }
+.skill-row kbd { font: 500 11px/1 var(--head); padding: 2px 5px; border: 1px solid var(--line-2); }
+.tbtn.skill { right: 114px; bottom: 226px; width: 48px; height: 48px; overflow: hidden; }
+.tbtn.skill[data-state='ready'], .tbtn.skill[data-state='on'] { border-color: var(--accent); color: var(--accent); }
+.tbtn.skill i { position: absolute; inset: 0; background: rgba(0, 0, 0, 0.55); transform-origin: top; pointer-events: none; }
+html[data-free='1'] .tbtn.skill { display: none !important; }
