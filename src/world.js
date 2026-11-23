@@ -14,9 +14,28 @@ export function createSky() {
       top: { value: new THREE.Color('#9aa3a9') },
       mid: { value: new THREE.Color('#c9ccca') },
       low: { value: new THREE.Color('#b3b5b1') },
+      sunDir: { value: new THREE.Vector3(42, 40, 26).normalize() },
+      time: { value: 0 },
     },
     vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-    fragmentShader: 'uniform vec3 top; uniform vec3 mid; uniform vec3 low; varying vec3 vP; void main(){ float h=vP.y; vec3 c = h>0.0 ? mix(mid, top, smoothstep(0.0,0.6,h)) : mix(mid, low, smoothstep(0.0,0.2,-h)); gl_FragColor=vec4(c,1.0);\n#include <colorspace_fragment>\n}',
+    fragmentShader: `uniform vec3 top; uniform vec3 mid; uniform vec3 low; uniform vec3 sunDir; uniform float time; varying vec3 vP;
+float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f); return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
+float fbm(vec2 p){ float a=0.5, s=0.0; for(int i=0;i<5;i++){ s+=a*vn(p); p=p*2.03+7.1; a*=0.5; } return s; }
+void main(){ float h=vP.y; vec3 c = h>0.0 ? mix(mid, top, smoothstep(0.0,0.6,h)) : mix(mid, low, smoothstep(0.0,0.2,-h));
+  if (h > 0.02) {
+    vec2 uv = vP.xz / (h + 0.25) * 1.6 + vec2(time * 0.004, time * 0.0015);
+    float cl = smoothstep(0.42, 0.78, fbm(uv));
+    float shade = fbm(uv + vec2(0.07, 0.05));
+    vec3 cc = mix(vec3(0.82,0.80,0.76), vec3(0.50,0.50,0.52), smoothstep(0.35, 0.8, cl * (0.6 + 0.8 * shade)));
+    c = mix(c, cc, cl * smoothstep(0.02, 0.2, h) * 0.85);
+  }
+  float sd = max(dot(normalize(vP), sunDir), 0.0);
+  c += vec3(1.0,0.82,0.55) * (pow(sd, 6.0) * 0.22 + pow(sd, 90.0) * 0.5);
+  c = mix(c, mid, smoothstep(0.12, 0.0, abs(h)) * 0.6); // haze at the horizon
+  gl_FragColor=vec4(c,1.0);
+#include <colorspace_fragment>
+}`,
   });
   const sky = new THREE.Mesh(geo, m);
   sky.name = 'sky';
@@ -31,15 +50,42 @@ export function pointMarker(r) {
   ring.rotation.x = -Math.PI / 2;
   ring.position.y = 0.02;
   ring.renderOrder = 1;
-  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 5, 8), new THREE.MeshStandardMaterial({ color: '#2a2f34', roughness: 0.5, metalness: 0.6 }));
-  mast.position.y = 2.5;
+  const steel = new THREE.MeshStandardMaterial({ color: '#2a2f34', roughness: 0.5, metalness: 0.6 });
+  const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.08, 5.2, 8), steel);
+  mast.position.y = 2.6;
   mast.castShadow = true;
-  const flagGeo = new THREE.BoxGeometry(0.05, 0.7, 1.2);
-  flagGeo.translate(0, 0, 0.62);
-  const flag = new THREE.Mesh(flagGeo, new THREE.MeshStandardMaterial({ color: '#d8d8d4', roughness: 0.8 }));
-  flag.position.y = 4.55;
+  // stepped concrete plinth with a ring of bolts, a brass finial on top
+  const concrete = new THREE.MeshStandardMaterial({ color: '#8f8b82', roughness: 0.95, flatShading: true });
+  const plinth = new THREE.Mesh(new THREE.CylinderGeometry(0.75, 0.95, 0.3, 10), concrete);
+  plinth.position.y = 0.15; plinth.receiveShadow = plinth.castShadow = true;
+  const step = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.6, 0.22, 10), concrete);
+  step.position.y = 0.4; step.castShadow = true;
+  const finial = new THREE.Mesh(new THREE.SphereGeometry(0.1, 10, 8), new THREE.MeshStandardMaterial({ color: '#b08d3c', metalness: 0.8, roughness: 0.35 }));
+  finial.position.y = 5.28;
+  // a short post every few metres around the ring so the boundary reads from far off
+  const stakeGeo = new THREE.CylinderGeometry(0.05, 0.07, 0.8, 5);
+  const stakes = new THREE.InstancedMesh(stakeGeo, steel, 16);
+  const mm = new THREE.Matrix4();
+  for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2; mm.makeTranslation(Math.cos(a) * (r + 0.1), 0.35, Math.sin(a) * (r + 0.1)); stakes.setMatrixAt(i, mm); }
+  stakes.frustumCulled = false;
+  // a cloth banner on the mast; its free edge ripples in the wind
+  const flagGeo = new THREE.PlaneGeometry(1.3, 0.8, 10, 3);
+  flagGeo.translate(0.65, 0, 0);
+  flagGeo.rotateY(-Math.PI / 2);
+  const flag = new THREE.Mesh(flagGeo, new THREE.MeshStandardMaterial({ color: '#d8d8d4', roughness: 0.85, side: THREE.DoubleSide }));
+  flag.position.y = 4.65;
   flag.castShadow = true;
-  g.add(ring, mast, flag);
-  g.userData = { ring, flag };
+  const base = flagGeo.attributes.position.array.slice();
+  const wave = (t) => {
+    const p = flagGeo.attributes.position;
+    for (let i = 0; i < p.count; i++) {
+      const d = Math.abs(base[i * 3 + 2]) / 1.3; // distance from the mast
+      p.setX(i, base[i * 3] + Math.sin(t * 3 + d * 7) * 0.12 * d);
+      p.setY(i, base[i * 3 + 1] + Math.sin(t * 2.2 + d * 5) * 0.03 * d);
+    }
+    p.needsUpdate = true;
+  };
+  g.add(ring, mast, plinth, step, finial, stakes, flag);
+  g.userData = { ring, flag, wave };
   return g;
 }

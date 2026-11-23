@@ -2,6 +2,7 @@ import { HALF } from './world.js';
 import { baseAt } from './battle.js';
 import { setupTerrain, mountTerrain, height, slopeAt, nearRoad, layout, POINTS, POINT_R } from './terrain.js';
 import { buildTrees } from './trees.js';
+import { buildDecor } from './decor.js';
 
 // Lays out the field over the terrain: a ruined village at C, bunkered hilltops at A and D,
 // farms with walled fields and orchards at B and E, woods on the slopes, rocks, field walls and
@@ -155,6 +156,10 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
   battle.scene.add(treeGroup);
   battle.decor.push(treeGroup);
   for (const t of trees) { P('tree', t.x, t.z, t.yaw); keep.push([t.x, t.z, 1]); }
+
+  const decor = buildDecor(battle);
+  battle.scene.add(decor);
+  battle.decor.push(decor);
 
   // ---- field walls: short dry-stone runs with gaps, along level ground
   for (let k = 0, runs = 0; k < 240 && runs < 28; k++) {

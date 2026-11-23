@@ -86,6 +86,7 @@ cam.collide = (o, d, max) => {
   return h.hit ? h.t : max;
 };
 
+let smokeScale = 600;
 function resize() {
   const w = innerWidth, h = innerHeight;
   renderer.setSize(w, h, false);
@@ -94,6 +95,7 @@ function resize() {
   cam.fov = w / h < 0.8 ? 78 : 70;
   camera.updateProjectionMatrix();
   fx.setCamera(camera, renderer.domElement.height);
+  smokeScale = renderer.domElement.height * 0.75;
 }
 addEventListener('resize', resize);
 resize();
@@ -583,6 +585,8 @@ let menuT = 0;
 let skipDraw = false;
 function frame(_t, fixedDt) {
   const dt = fixedDt ?? Math.min(clock.getDelta(), 0.05);
+  { const now = performance.now() / 1000; if (!reduced) sky.material.uniforms.time.value = now; if (!reduced) for (const p of battle.points) p.model.userData.wave?.(now); }
+  for (const d of battle.decor) if (d.userData.tick) { d.userData.tick(performance.now() / 1000); d.userData.smoke.material.uniforms.scale.value = smokeScale; }
   const inp = input.read();
   if (!frozen) {
     if (state === 'menu') {
