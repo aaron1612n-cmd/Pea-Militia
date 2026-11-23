@@ -1,4 +1,5 @@
 import { HOLD_WIN } from './battle.js';
+import { CLASSES } from './classes.js';
 import * as THREE from 'three';
 import { TEAMS } from './factions.js';
 import { SLOTS } from './weapons.js';
@@ -22,6 +23,7 @@ export class Hud {
     this.feed = $('feed'); this.banner = $('banner');
     this.cap = $('capture'); this.capText = $('capText'); this.capFill = $('capFill');
     this.slots = $('slots');
+    this.skillRow = $('skillRow'); this.skillName = $('skillName'); this.skillBar = $('skillBar'); this.skillBtn = $('skillBtn'); this.skillCd = $('skillCd');
     this.radar = $('radar'); this.rc = this.radar.getContext('2d');
     this.hitT = 0; this.hurtT = 0; this.bannerT = 0; this.radarT = 0;
     this.last = {};
@@ -162,6 +164,19 @@ export class Hud {
     if (label !== this.last.label) { this.wname.textContent = label; this.last.label = label; }
     this.heatBar.hidden = !def.heat;
     if (def.heat) { this.heat.style.width = `${w.heat * 100}%`; this.heat.classList.toggle('hot', w.locked > 0); }
+    if (player.weapons.length !== this.slots.children.length) { this.slots.innerHTML = player.weapons.map(() => '<span></span>').join(''); this.last.wi = -1; }
+    // class ability: bar fills as it recharges, drains while it runs
+    const cls = CLASSES[player.kind], sk = cls?.skill;
+    if (sk) {
+      const on = player.skillT > 0;
+      const f = on ? player.skillT / player.skillMax : 1 - player.skillCd / sk.cd;
+      const st = on ? 'on' : f >= 1 ? 'ready' : 'cool';
+      this.skillName.textContent = `${sk.name}${st === 'ready' ? '' : st === 'cool' ? ` ${Math.ceil(player.skillCd)}s` : ''}`;
+      this.skillBar.style.width = `${Math.round(f * 100)}%`;
+      this.skillRow.dataset.state = st;
+      this.skillBtn.dataset.state = st;
+      this.skillCd.style.transform = `scaleY(${on ? 0 : 1 - f})`;
+    }
     if (player.wi !== this.last.wi) {
       this.last.wi = player.wi;
       [...this.slots.children].forEach((s, i) => s.classList.toggle('on', i === player.wi));

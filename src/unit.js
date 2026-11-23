@@ -3,6 +3,7 @@ import { U, pose, makePose } from './rig.js';
 import { WEAPONS } from './weapons.js';
 import { wrap } from './physics.js';
 import { Ragdoll } from './ragdoll.js';
+import { CLASSES, NEUTRAL } from './classes.js';
 
 export const RADIUS = U.RADIUS;
 export const WALK = 2.2; // m/s
@@ -12,7 +13,7 @@ const lerp = THREE.MathUtils.lerp;
 const JUMP_V = 4.8;
 // The fastest any soldier can run on their own: walk pace times the sprint multiplier. One source
 // of truth; weapon, stance and suppression modifiers only ever slow a soldier from here.
-export const MAX_SPEED = WALK * SPRINT;
+export const MAX_SPEED = WALK * SPRINT * 1.75; // fastest class (assault) mid-dash
 const CADENCE = 1.9; // steps per second per foot at walking pace
 
 let nextId = 1;
@@ -41,8 +42,11 @@ export class Unit {
     this.distance = 0;
     this.mx = 0; this.mz = 1;
 
-    this.hp = 100;
-    this.maxHp = 100;
+    const cls = CLASSES[kind];
+    this.maxHp = cls?.hp ?? 100;
+    this.hp = this.maxHp;
+    this.speedK = cls?.speed ?? 1;
+    this.mod = NEUTRAL; this.skillT = 0; this.skillCd = 0; this.skillMax = 1; this.skillFlash = 0;
     this.alive = true;
     this.deadT = 0;
     this.lastHurt = -99;
@@ -136,7 +140,7 @@ export class Unit {
 
   hurt(dmg, from, world, kind = 'bullet') {
     if (!this.alive || this.god) return;
-    this.hp -= dmg;
+    this.hp -= dmg * this.mod.dmgIn;
     this.lastHurt = this.t;
     this.flinch = Math.min(1, this.flinch + dmg / 40);
     if (this.onHurt) this.onHurt(dmg, from, kind);
@@ -184,7 +188,11 @@ export class Unit {
     if (!this.alive) return this.updateDead(dt, world);
     this.rag = null;
     const c = this.ctrl;
-    this.cool -= dt;
+    this.cool -= dt * this.mod.rate;
+    if (this.skillT > 0) { this.skillT -= dt; if (this.skillT <= 0) this.mod = NEUTRAL; if (this.mod.noBurn) this.burn = 0; }
+    this.skillCd = Math.max(0, this.skillCd - dt);
+    this.skillFlash = Math.max(0, this.skillFlash - dt);
+    if (this.mod.quick && this.reloadT > 0.3) this.reloadT = 0.3;
     this.flinch = Math.max(0, this.flinch - dt * 3);
     this.suppression = Math.max(0, this.suppression - dt * 0.35);
     this.recoil = Math.max(0, this.recoil - dt * 9);
@@ -241,7 +249,7 @@ export class Unit {
     // stamina: sprinting drains it; once spent you jog until it's a third back
     if (this.stamina === undefined) { this.stamina = 1; this.winded = false; }
     let sprint = c.sprint && !c.fire && !this.busy && Math.hypot(c.wx, c.wz) > 0.3 && !this.winded;
-    if (sprint) { this.stamina -= dt / 7; this.restT = 0.9; if (this.stamina <= 0) { this.stamina = 0; this.winded = true; sprint = false; } }
+    if (sprint) { if (!this.mod.noTire) this.stamina -= dt / 7; this.restT = 0.9; if (this.stamina <= 0) { this.stamina = 0; this.winded = true; sprint = false; } }
     else { this.restT = Math.max(0, (this.restT || 0) - dt); if (this.restT <= 0) this.stamina = Math.min(1, this.stamina + dt / 5); }
     if (this.winded && this.stamina > 0.35) this.winded = false;
     const prone = c.prone && this.grounded ? 1 : 0;
@@ -251,7 +259,7 @@ export class Unit {
     this.leanK = (this.leanK || 0) + (lean - (this.leanK || 0)) * (1 - Math.exp(-10 * dt));
     const kneel = c.kneel && !sprint && !prone ? 1 : 0;
     this.kneelK += (kneel - this.kneelK) * (1 - Math.exp(-9 * dt));
-    const speed = WALK * (c.speed ?? 1) * (def.move || 1) * (sprint ? SPRINT : 1) * (1 - 0.6 * this.kneelK) * (1 - 0.72 * this.proneK) * (1 - 0.5 * Math.abs(this.leanK)) * (1 - 0.25 * this.suppression);
+    const speed = WALK * this.speedK * this.mod.speed * (c.speed ?? 1) * (def.move || 1) * (sprint ? SPRINT : 1) * (1 - 0.6 * this.kneelK) * (1 - 0.72 * this.proneK) * (1 - 0.5 * Math.abs(this.leanK)) * (1 - 0.25 * this.suppression);
     this.sprinting = sprint;
     this.move(dt, c.wx, c.wz, c.jump && this.proneK < 0.3, speed, world, aiming || c.faceYaw !== undefined);
     c.jump = false;
@@ -341,7 +349,7 @@ export class Unit {
     }
     world.discharge(this, def);
     if (def.heat) {
-      w.heat += def.heat;
+      if (!this.mod.noHeat) w.heat += def.heat;
       if (w.heat >= 1) { w.heat = 1; w.locked = 1.6; world.fx.steam(this.muzzle(), new THREE.Vector3(0, 0.8, 0), 4, 0.35); }
     } else if (!this.god) w.mag--;
     this.recoil = def.kind === 'flame' ? 0.15 : 1;

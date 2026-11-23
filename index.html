@@ -43,6 +43,11 @@
             <legend>Fight for</legend>
             <div id="sides" class="seg sides" role="radiogroup"></div>
           </fieldset>
+          <fieldset class="field" id="classField">
+            <legend>Class</legend>
+            <div id="classes" class="seg classes" role="radiogroup"></div>
+            <p id="classInfo" class="class-info"></p>
+          </fieldset>
           <fieldset class="field" id="sizeField">
             <legend>Army size <output id="sizeOut" class="num">50</output></legend>
             <input id="size" name="size" type="range" min="10" max="150" step="10" value="50" aria-label="Soldiers per army" />
@@ -113,6 +118,7 @@
         <span class="label">HP</span><div class="hp"><i id="hpbar"></i><s id="stambar"></s></div><b id="hpnum" class="num">100</b>
       </div>
       <div class="gun">
+        <div class="skill-row" id="skillRow"><span id="skillName"></span><div class="heatbar"><i id="skillBar"></i></div><kbd class="mouse-only">H</kbd></div>
         <div class="gun-row"><span id="wname" class="wname"></span><b id="ammo" class="num"></b></div>
         <div class="heatbar" hidden><i id="heat"></i></div>
         <div id="slots" class="slots"></div>
@@ -151,7 +157,7 @@
           <button id="restart" class="ghost" type="button">Restart</button>
           <button id="toMenu" class="ghost" type="button">Setup</button>
         </div>
-        <p class="keys mouse-only">Shift sprint · C crouch · Z prone · Q/E lean · R reload · G grenade · T squad orders · K call-ins · 1–7 or wheel weapons · V view · M mute</p>
+        <p class="keys mouse-only">Shift sprint · C crouch · Z prone · Q/E lean · R reload · G grenade · H ability · T squad orders · K call-ins · 1–7 or wheel weapons · V view · M mute</p>
       </div>
     </section>
     <section id="end" class="sheet" hidden aria-label="Battle over">
@@ -174,6 +180,7 @@
       <button id="jump" class="tbtn jump" type="button" aria-label="Jump"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 15l7-7 7 7" /></svg></button>
       <button id="aimBtn" class="tbtn aim" type="button" aria-label="Aim down sights"><svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="7" /><circle cx="12" cy="12" r="1.5" /></svg></button>
       <button id="crouchBtn" class="tbtn crouch" type="button" aria-label="Crouch"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9l7 7 7-7" /></svg></button>
+      <button id="skillBtn" class="tbtn skill" type="button" aria-label="Class ability"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M13 2L5 14h6l-1 8 8-12h-6z" /></svg><i id="skillCd"></i></button>
       <button id="swap" class="tbtn swap" type="button" aria-label="Next weapon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h14l-4-4M20 15H6l4 4" /></svg></button>
       <button id="useBtn" class="tbtn use" type="button" aria-label="Enter or leave vehicle" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 15h18l-2-5H8L6 12M6 15v3M18 15v3M9 10V7h5" /></svg></button>
       <button id="cmdBtn" class="tbtn cmd" type="button" aria-label="Squad orders"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3" /></svg></button>

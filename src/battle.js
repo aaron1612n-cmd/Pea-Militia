@@ -1,3 +1,4 @@
+import { CLASSES } from './classes.js';
 import * as THREE from 'three';
 import { Unit, RADIUS } from './unit.js';
 import { U } from './rig.js';
@@ -18,15 +19,7 @@ const V = () => new THREE.Vector3();
 const EDGE = HALF - 0.6;
 
 // Unit types: loadouts for AI soldiers.
-export const KINDS = {
-  rifleman: { name: 'Rifleman', loadout: ['rifle', 'grenade'] },
-  assault: { name: 'Assault', loadout: ['smg', 'grenade'] },
-  gunner: { name: 'Gunner', loadout: ['mg'] },
-  flamer: { name: 'Flamer', loadout: ['flame', 'grenade'] },
-  mortar: { name: 'Mortar', loadout: ['launcher'] },
-  coil: { name: 'Coil gunner', loadout: ['plasma', 'grenade'] },
-  medic: { name: 'Medic', loadout: ['smg'] },
-};
+export const KINDS = CLASSES;
 // squad mixes, one per army
 export const SQUAD_MIX = [
   ['rifleman', 'gunner', 'assault', 'rifleman', 'medic', 'assault', 'rifleman', 'coil', 'mortar'],
@@ -417,7 +410,9 @@ export class Battle {
     const m = shooter.muzzle();
     let dir = this.aimDir(shooter, m);
     const moving = Math.hypot(shooter.vel.x, shooter.vel.z) > 0.5 ? 1 : 0;
-    const steady = shooter.isPlayer ? (shooter.ads > 0.5 ? 0.45 : 1) : 1;
+    const sm = shooter.mod?.spread ?? 1;
+    if (shooter.mod?.dmgOut > 1 && def.damage) def = { ...def, damage: def.damage * shooter.mod.dmgOut, dps: def.dps && def.dps * shooter.mod.dmgOut };
+    const steady = sm * (shooter.isPlayer ? (shooter.ads > 0.5 ? 0.45 : 1) : 1);
     const s = (def.spread || 0) * steady * (1 + moving * 1.2 + shooter.suppression * 1.5) * (1 - 0.35 * shooter.kneelK);
     dir = this.spread(dir, s);
     this.stats.shots++;
