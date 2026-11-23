@@ -37,7 +37,7 @@ const VEHICLE_ITEMS = [
   { id: 'hoverEmpty', name: 'Skiff (empty)', icon: 'hover', kind: 'vehicle', vkind: 'hover', crew: false },
   { id: 'walkerEmpty', name: 'Strider (empty)', icon: 'walker', kind: 'vehicle', vkind: 'walker', crew: false },
 ];
-const COVER_ITEMS = Object.entries(PROPS).map(([k, v]) => ({ id: k, name: v.name, icon: k, kind: 'prop' }));
+const COVER_ITEMS = Object.entries(PROPS).filter(([, v]) => !v.hidden).map(([k, v]) => ({ id: k, name: v.name, icon: k, kind: 'prop' }));
 const TOOL_ITEMS = [
   { id: 'move', name: 'Move', icon: 'move', kind: 'tool', hint: 'Click a soldier or cover, then click where it goes.' },
   { id: 'delete', name: 'Delete', icon: 'delete', kind: 'tool', hint: 'Click soldiers or cover to remove them.' },
