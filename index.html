@@ -105,7 +105,8 @@
       </div>
       <canvas id="marks" class="marks" aria-hidden="true"></canvas>
       <div id="supp" class="supp" aria-hidden="true"></div>
-      <canvas id="radar" class="radar" width="300" height="300" aria-hidden="true"></canvas>
+      <canvas id="radar" class="radar" width="300" height="300" role="button" aria-label="Open full map (N)"></canvas>
+      <div id="bigmap" class="bigmap" hidden role="dialog" aria-label="Battlefield map"><canvas id="bigcanvas" width="900" height="900"></canvas><p>North up · orange diamond: enemy you tagged · red: spotted by your side · N or tap to close</p></div>
       <ol id="feed" class="feed" aria-live="polite"></ol>
       <div class="vitals">
         <span class="label">HP</span><div class="hp"><i id="hpbar"></i><s id="stambar"></s></div><b id="hpnum" class="num">100</b>
@@ -175,6 +176,7 @@
       <button id="swap" class="tbtn swap" type="button" aria-label="Next weapon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h14l-4-4M20 15H6l4 4" /></svg></button>
       <button id="useBtn" class="tbtn use" type="button" aria-label="Enter or leave vehicle" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 15h18l-2-5H8L6 12M6 15v3M18 15v3M9 10V7h5" /></svg></button>
       <button id="cmdBtn" class="tbtn cmd" type="button" aria-label="Squad orders"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3" /></svg></button>
+      <button id="spotBtn" class="tbtn spot" type="button" aria-label="Tag enemy (Y)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3l8 9-8 9-8-9z M12 9v6" /></svg></button>
       <button id="viewBtn" class="tbtn view" type="button" aria-label="Switch view"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg></button>
     </div>
     <div id="wheel" class="wheel" hidden role="dialog" aria-label="Squad orders">

@@ -16,7 +16,7 @@ import { Audio } from './audio.js';
 import { Hud } from './hud.js';
 import { SLOTS, weaponModel } from './weapons.js';
 import { Sandbox } from './sandbox.js';
-import { TEAMS } from './factions.js';
+import { TEAMS, hostile } from './factions.js';
 import { ViewModel } from './viewmodel.js';
 import { Cockpit } from './cockpit.js';
 import { MAX_SPEED } from './unit.js';
@@ -74,7 +74,7 @@ const crowd = new Crowd(scene, 700);
 const hud = new Hud();
 const input = new Input(canvas, {
   stick: $('stick'), knob: $('knob'), jumpBtn: $('jump'), fireBtn: $('fire'),
-  buttons: { next: $('swap'), view: $('viewBtn'), use: $('useBtn'), wheelDown: $('cmdBtn') },
+  buttons: { spot: $('spotBtn'), next: $('swap'), view: $('viewBtn'), use: $('useBtn'), wheelDown: $('cmdBtn') },
 });
 
 const wheel = new Wheel($('wheel'), (id) => giveOrder(id));
@@ -409,6 +409,8 @@ function handle(actions) {
       continue;
     }
     if (wheel.open) { if (a.type === 'slot') wheel.pick(a.n); continue; }
+    if (a.type === 'map') { hud.toggleMap(); continue; }
+    if (a.type === 'spot') { if (player.alive && cam.mode !== 'free' && !sandbox.open) spotEnemy(); continue; }
     if (a.type === 'view') { if (player.vehicle) { cam.cockpit = !cam.cockpit; hud.say(cam.cockpit ? 'Cockpit view' : 'Chase view', 1); continue; } if (cam.mode !== 'over' && cam.mode !== 'free') { cam.mode = cam.mode === '1p' ? '3p' : '1p'; document.documentElement.dataset.view = cam.mode; } continue; }
     if (!player.alive || sandbox.open || cam.mode === 'free') continue;
     if (a.type === 'slot') player.setWeapon(a.n);
@@ -498,6 +500,34 @@ function driveVehicle(inp) {
   player.facing = v.yaw;
 }
 
+// Tag the enemy under the crosshair (or nearest to it). Your squad and any friendly squad close by hear of it.
+let spotCool = 0;
+function spotEnemy() {
+  if (battle.time < spotCool) return;
+  spotCool = battle.time + 0.5;
+  const d = camera.getWorldDirection(new THREE.Vector3()), o = camera.position;
+  let tgt = null;
+  const hit = battle.raycast(o, d, 300, { ignore: player });
+  if (hit.unit && hostile(hit.unit.team, player.team)) tgt = hit.unit;
+  else if (hit.vehicle && hostile(hit.vehicle.team, player.team)) tgt = hit.vehicle;
+  else {
+    let best = 0.96; // within about 16 degrees
+    const v = new THREE.Vector3();
+    for (const e of [...battle.units, ...battle.vehicles]) {
+      if (!e.alive || !hostile(e.team, player.team) || e.vehicle) continue;
+      v.set(e.pos.x - o.x, e.pos.y + 1 - o.y, e.pos.z - o.z);
+      const dist = v.length();
+      if (dist > 160 || dist < 2) continue;
+      const dot = v.dot(d) / dist;
+      if (dot > best && battle.los(o, new THREE.Vector3(e.pos.x, e.pos.y + 1.2, e.pos.z))) { best = dot; tgt = e; }
+    }
+  }
+  if (!tgt) { hud.say('No enemy in sight', 0.8); return; }
+  tgt.markedUntil = tgt.spottedUntil = battle.time + 10;
+  for (const sq of battle.squads) if (sq.team === player.team && sq.alive.length && sq.alive[0].pos.distanceTo(player.pos) < 120) sq.know(tgt, tgt.pos, true);
+  audio.play('ping', null, 0.35);
+  hud.say(`Enemy spotted · ${tgt.crew ? tgt.def.name : KINDS[tgt.kind]?.name || 'Soldier'}`, 1.2);
+}
 const aimPoint = new THREE.Vector3();
 function updateAim() {
   const d = camera.getWorldDirection(new THREE.Vector3());

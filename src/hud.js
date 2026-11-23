@@ -37,6 +37,9 @@ export class Hud {
     this.compass.innerHTML = html + '<b id="cobj"></b>';
     this.cobj = $('cobj');
     this.marks = $('marks'); this.mc = this.marks.getContext('2d');
+    this.bigEl = $('bigmap'); this.big = $('bigcanvas'); this.bc = this.big.getContext('2d');
+    this.radar.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); this.toggleMap(true); });
+    this.bigEl.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); this.toggleMap(false); });
   }
 
   // squad markers: a small chevron over each friendly in view, fading with distance
@@ -68,10 +71,23 @@ export class Hud {
       g.globalAlpha = 0.9;
       g.beginPath(); g.moveTo(x - s, y - s); g.lineTo(x + s, y - s); g.lineTo(x, y + s * 0.6); g.closePath(); g.fill();
     }
+    // enemies you or your squad have tagged: an orange diamond with the range, seen through cover
+    g.font = `600 ${Math.round(11 * dpr)}px "Chakra Petch", sans-serif`; g.textAlign = 'center';
+    for (const e of [...battle.units, ...battle.vehicles]) {
+      if (!e.alive || e.team === player.team || !(battle.time < (e.markedUntil || 0))) continue;
+      const d = Math.hypot(e.pos.x - player.pos.x, e.pos.z - player.pos.z);
+      V.set(e.pos.x, e.pos.y + (e.crew ? 4 : 2.1), e.pos.z).project(camera);
+      if (V.z > 1 || Math.abs(V.x) > 1 || Math.abs(V.y) > 1) continue;
+      const x = (V.x * 0.5 + 0.5) * W, y = (-V.y * 0.5 + 0.5) * H, s = 7 * dpr;
+      g.globalAlpha = Math.min(1, (e.markedUntil - battle.time) / 2);
+      g.fillStyle = '#ff7a1a'; g.strokeStyle = '#101316'; g.lineWidth = 1.5 * dpr;
+      g.beginPath(); g.moveTo(x, y - s); g.lineTo(x + s, y); g.lineTo(x, y + s); g.lineTo(x - s, y); g.closePath(); g.fill(); g.stroke();
+      g.lineWidth = 3 * dpr; g.strokeText(`${Math.round(d)}m`, x, y - s - 4 * dpr); g.fillText(`${Math.round(d)}m`, x, y - s - 4 * dpr);
+    }
     g.globalAlpha = 1;
   }
 
-  show(on) { this.el.hidden = !on; }
+  show(on) { this.el.hidden = !on; if (!on) this.bigEl.hidden = true; }
 
   setup(battle) {
     this.cobj.innerHTML = battle.points.map((p) => `<span class="obj" data-p="${p.name}">${p.name}</span>`).join('');
@@ -197,59 +213,109 @@ export class Hud {
       this.capText.textContent = txt;
       this.capFill.style.width = `${Math.round((on.capTeam === me || on.owner === me ? on.capture : 1 - on.capture) * 100)}%`;
     } else this.cap.hidden = true;
+    this.lastPlayer = player; this.lastBattle = battle; this.lastCam = cam;
     this.drawRadar(player, battle, cam);
+    this.paintBig(player, battle, cam);
   }
 
   drawRadar(player, battle, cam) {
-    const c = this.rc, W = this.radar.width;
-    const R = 60; // metres shown from centre to edge
-    const s = W / 2 / R;
+    const over = cam.mode === 'over';
+    this.paintMap(this.rc, this.radar.width, 60, over ? cam.over.x : player.pos.x, over ? cam.over.z : player.pos.z, over ? 0 : cam.yaw, player, battle, cam, false);
+  }
+
+  // the full battlefield, north up, with every point named (N or tap the radar)
+  toggleMap(on = this.bigEl.hidden) { this.bigEl.hidden = !on; if (on) this.paintBig(this.lastPlayer, this.lastBattle, this.lastCam); }
+  paintBig(player, battle, cam) {
+    if (!player || this.bigEl.hidden) return;
+    const c = this.big, W = this.big.width;
+    this.paintMap(this.bc, W, HALF * 1.04, 0, 0, 0, player, battle, cam, true);
+  }
+
+  // One painter for both maps. `R` is metres from centre to edge; `rot` turns the world so the view points up.
+  paintMap(c, W, R, ox, oz, rot, player, battle, cam, full) {
+    const s = W / 2 / R, k = W / 150; // k keeps marker sizes steady whatever the canvas size
     c.clearRect(0, 0, W, W);
     c.save();
     c.translate(W / 2, W / 2);
-    // rotate so the view direction points up
-    c.rotate(cam.mode === 'over' ? 0 : cam.yaw);
-    const ox = cam.mode === 'over' ? cam.over.x : player.pos.x, oz = cam.mode === 'over' ? cam.over.z : player.pos.z;
+    c.rotate(rot);
     const X = (x) => (x - ox) * s, Z = (z) => (z - oz) * s;
     // the ground itself: hill shading, roads and contours
     const map = minimapImage();
-    if (map) { c.globalAlpha = 0.55; c.drawImage(map, X(-HALF), Z(-HALF), HALF * 2 * s, HALF * 2 * s); c.globalAlpha = 1; }
+    if (map) { c.globalAlpha = full ? 0.8 : 0.55; c.drawImage(map, X(-HALF), Z(-HALF), HALF * 2 * s, HALF * 2 * s); c.globalAlpha = 1; }
     c.strokeStyle = 'rgba(230,232,228,0.18)';
     c.lineWidth = 2;
     c.strokeRect(X(-HALF), Z(-HALF), HALF * 2 * s, HALF * 2 * s);
+    c.font = `600 ${Math.round(13 * k)}px "Chakra Petch", sans-serif`;
+    c.textAlign = 'center'; c.textBaseline = 'middle';
     for (const p of battle.points) {
-      c.fillStyle = p.owner >= 0 ? TEAMS[p.owner].ui : 'rgba(230,232,228,0.5)';
-      c.globalAlpha = 0.35;
+      const col = p.owner >= 0 ? TEAMS[p.owner].ui : '#d8d8d4';
+      c.fillStyle = col;
+      c.globalAlpha = 0.3;
       c.beginPath(); c.arc(X(p.pos.x), Z(p.pos.z), p.r * s, 0, Math.PI * 2); c.fill();
       c.globalAlpha = 1;
+      c.save(); c.translate(X(p.pos.x), Z(p.pos.z)); c.rotate(-rot);
+      let lx = 0, lz = 0, off = false;
+      // a point beyond the edge of the radar shows as a lettered tab on the rim
+      const d = Math.hypot(X(p.pos.x), Z(p.pos.z)), lim = W / 2 - 11 * k;
+      if (!full && d > lim) { off = true; lx = -X(p.pos.x) * (1 - lim / d); lz = -Z(p.pos.z) * (1 - lim / d); const q = Math.cos(rot), w = Math.sin(rot); const rx = lx * q + lz * w, rz = -lx * w + lz * q; lx = rx; lz = rz; }
+      c.translate(lx, lz);
+      c.fillStyle = 'rgba(14,17,20,0.85)';
+      c.fillRect(-8 * k, -8 * k, 16 * k, 16 * k);
+      c.strokeStyle = col; c.lineWidth = 1.5 * k; c.strokeRect(-8 * k, -8 * k, 16 * k, 16 * k);
+      c.fillStyle = col;
+      c.fillText(p.name, 0, 1 * k);
+      c.restore();
+      if (off) continue;
     }
     for (const u of battle.units) {
-      if (!u.alive || u === player) continue;
+      if (!u.alive || u === player || u.vehicle) continue;
       const x = X(u.pos.x), z = Z(u.pos.z);
       if (Math.abs(x) > W * 0.75 || Math.abs(z) > W * 0.75) continue;
+      const foe = u.team !== player.team;
       // enemies show only when somebody on your side has them in sight or they're shooting
-      if (u.team !== player.team && u.t - u.lastShot > 1.5 && !(battle.time < (u.spottedUntil || 0))) continue;
-      c.fillStyle = TEAMS[u.team].ui;
-      c.fillRect(x - 3, z - 3, 6, 6);
+      if (foe && u.t - u.lastShot > 1.5 && !(battle.time < (u.spottedUntil || 0))) continue;
+      if (foe) this.foe(c, x, z, k, battle.time < (u.markedUntil || 0), rot);
+      else {
+        c.fillStyle = TEAMS[u.team].ui;
+        const r = (u.squad === player.squad ? 3.4 : 2.6) * k;
+        c.fillRect(x - r, z - r, r * 2, r * 2);
+      }
     }
     for (const v of battle.vehicles) {
       if (!v.alive || v === player.vehicle) continue;
-      if (v.team !== player.team && v.t - v.lastShot > 2 && !(battle.time < (v.spottedUntil || 0))) continue;
+      const foe = v.team !== player.team;
+      if (foe && v.t - v.lastShot > 2 && !(battle.time < (v.spottedUntil || 0))) continue;
       c.save();
       c.translate(X(v.pos.x), Z(v.pos.z));
       c.rotate(-v.yaw + Math.PI);
       c.fillStyle = TEAMS[v.team].ui;
-      c.fillRect(-4, -7, 8, 14);
+      c.fillRect(-4 * k, -7 * k, 8 * k, 14 * k);
       c.fillStyle = '#101316';
-      c.fillRect(-1, -7, 2, 6);
+      c.fillRect(-1 * k, -7 * k, 2 * k, 6 * k);
       c.restore();
+      if (foe) this.foe(c, X(v.pos.x), Z(v.pos.z), k * 1.6, battle.time < (v.markedUntil || 0), rot);
     }
-    c.restore();
-    // you, at the centre
+    // you
+    c.save();
+    c.translate(X(player.pos.x), Z(player.pos.z));
+    if (full) c.rotate(-cam.yaw); else c.rotate(-rot);
     c.fillStyle = '#ff7a1a';
     c.beginPath();
-    c.moveTo(W / 2, W / 2 - 9); c.lineTo(W / 2 + 6, W / 2 + 6); c.lineTo(W / 2 - 6, W / 2 + 6); c.closePath();
+    c.moveTo(0, -9 * k); c.lineTo(6 * k, 6 * k); c.lineTo(-6 * k, 6 * k); c.closePath();
     c.fill();
+    c.restore();
+    c.restore();
+  }
+
+  // a spotted enemy: a hollow diamond, filled and ringed when you tagged it yourself
+  foe(c, x, z, k, marked, rot) {
+    const r = 5 * k;
+    c.save(); c.translate(x, z); c.rotate(-rot);
+    c.beginPath(); c.moveTo(0, -r); c.lineTo(r, 0); c.lineTo(0, r); c.lineTo(-r, 0); c.closePath();
+    c.fillStyle = marked ? '#ff7a1a' : 'rgba(226,81,59,0.9)'; c.fill();
+    c.lineWidth = 1.2 * k; c.strokeStyle = '#101316'; c.stroke();
+    if (marked) { c.beginPath(); c.arc(0, 0, r * 1.9, 0, Math.PI * 2); c.strokeStyle = '#ff7a1a'; c.lineWidth = 1.5 * k; c.stroke(); }
+    c.restore();
   }
 }
 
