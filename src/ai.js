@@ -18,7 +18,10 @@ const V = () => new THREE.Vector3();
 const rand = (a, b) => a + Math.random() * (b - a);
 // distance across the ground, ignoring height (points and waypoints sit on hills and in hollows)
 const flat = (a, b) => Math.hypot(a.x - b.x, a.z - b.z);
-const SIGHT = 70;
+const BASE_SIGHT = 70;
+let SIGHT = BASE_SIGHT;
+// weather and darkness shorten how far soldiers can pick out an enemy
+export function setSight(k) { SIGHT = BASE_SIGHT * k; }
 
 export class Commander {
   constructor(world, team) {
