@@ -146,7 +146,7 @@ export class Input {
     });
 
     const GAME = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
-    const KEYS = { KeyR: 'reload', KeyG: 'grenade', KeyB: 'menu', KeyV: 'view', KeyF: 'free', KeyX: 'use', KeyY: 'spot', KeyN: 'map', KeyK: 'callin', Tab: 'map' };
+    const KEYS = { KeyR: 'reload', KeyG: 'grenade', KeyB: 'menu', KeyV: 'view', KeyF: 'free', KeyX: 'use', KeyY: 'spot', KeyN: 'map', KeyK: 'callin', Tab: 'map', KeyH: 'skill' };
     const WHEEL = 'KeyT';
     addEventListener('keydown', (e) => {
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;

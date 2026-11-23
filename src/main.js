@@ -14,7 +14,7 @@ import { buildMap } from './map.js';
 import { Effects } from './effects.js';
 import { Audio } from './audio.js';
 import { Hud } from './hud.js';
-import { SLOTS, weaponModel } from './weapons.js';
+import { SLOTS, WEAPONS, weaponModel } from './weapons.js';
 import { Sandbox } from './sandbox.js';
 import { TEAMS, hostile } from './factions.js';
 import { ViewModel } from './viewmodel.js';
@@ -22,6 +22,7 @@ import { Cockpit } from './cockpit.js';
 import { MAX_SPEED } from './unit.js';
 import { Wheel, ORDERS, issue as issueOrder, tick as tickOrders } from './orders.js';
 import { CALLINS, ORDER, RANGE, Reticle, CallinBar } from './callins.js';
+import { CLASSES, CLASS_IDS, useSkill } from './classes.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('scene');
@@ -75,7 +76,7 @@ const crowd = new Crowd(scene, 700);
 const hud = new Hud();
 const input = new Input(canvas, {
   stick: $('stick'), knob: $('knob'), jumpBtn: $('jump'), fireBtn: $('fire'),
-  buttons: { spot: $('spotBtn'), next: $('swap'), view: $('viewBtn'), use: $('useBtn'), wheelDown: $('cmdBtn') },
+  buttons: { spot: $('spotBtn'), next: $('swap'), view: $('viewBtn'), use: $('useBtn'), wheelDown: $('cmdBtn'), skill: $('skillBtn') },
 });
 
 const wheel = new Wheel($('wheel'), (id) => giveOrder(id));
@@ -127,6 +128,17 @@ resize();
 // ---------------- setup screen ----------------
 const menu = $('menu');
 const form = $('setup');
+function fillClasses() {
+  const cur = form.querySelector('[name=cls]:checked')?.value ?? (() => { try { return localStorage.getItem('sm-class'); } catch { return null; } })() ?? 'rifleman';
+  $('classes').innerHTML = CLASS_IDS.map((id) => `<label><input type="radio" name="cls" value="${id}" ${id === cur ? 'checked' : ''}/><span>${CLASSES[id].name}</span></label>`).join('');
+  showClass();
+}
+function showClass() {
+  const id = form.querySelector('[name=cls]:checked')?.value ?? 'rifleman', c = CLASSES[id];
+  const wp = c.loadout.map((w) => WEAPONS[w].name).join(' + ');
+  $('classInfo').innerHTML = `<b>${c.name}</b> ${c.brief}. ${wp} · ${c.hp} HP · ${Math.round(c.speed * 100)}% pace<br><em>${c.skill.name}</em> (H): ${c.skill.blurb}`;
+  try { localStorage.setItem('sm-class', id); } catch {}
+}
 function fillSides() {
   const n = +form.teams.value;
   const cur = Math.min(+(form.querySelector('[name=side]:checked')?.value ?? 0), n - 1);
@@ -138,9 +150,10 @@ function syncForm() {
   $('ticketField').hidden = sandbox;
   $('sizeField').hidden = sandbox;
 }
-form.addEventListener('change', (e) => { if (e.target.name === 'teams') fillSides(); syncForm(); });
+form.addEventListener('change', (e) => { if (e.target.name === 'teams') fillSides(); if (e.target.name === 'cls') showClass(); syncForm(); });
 form.size.addEventListener('input', syncForm);
 fillSides();
+fillClasses();
 syncForm();
 form.gore.value = String(fx.gore.level);
 // phones: the setup folds down to a slim bar (title, Options, Deploy) so the field stays visible
@@ -154,6 +167,7 @@ form.addEventListener('submit', (e) => {
   const s = {
     mode: form.mode.value === 'free' ? 'battle' : form.mode.value, startFree: form.mode.value === 'free', teams: +form.teams.value, size: +form.size.value,
     tickets: +form.tickets.value, view: form.view.value, playerTeam: +(form.querySelector('[name=side]:checked')?.value ?? 0),
+    cls: form.querySelector('[name=cls]:checked')?.value ?? 'rifleman',
   };
   fx.gore.setLevel(+form.gore.value);
   atmo.set({ time: form.time.value === 'cycle' ? 12 : form.time.value, cycle: form.time.value === 'cycle', weather: form.weather.value });
@@ -219,7 +233,8 @@ function startBattle(s) {
   battle.configure({ teams: settings.teams, size: settings.size, tickets, mode: settings.mode, playerTeam: settings.playerTeam });
   buildMap(battle, { seed: 7 + Math.floor(Math.random() * 1000), teams: settings.teams, points: settings.mode === 'battle' });
   // the player
-  player = new Unit({ team: settings.playerTeam, loadout: SLOTS, kind: 'player' });
+  const cls = CLASSES[settings.cls] || CLASSES.rifleman;
+  player = new Unit({ team: settings.playerTeam, loadout: cls.loadout, kind: CLASSES[settings.cls] ? settings.cls : 'rifleman' });
   player.isPlayer = true;
   player.semiLatch = true;
   player.respawnT = 0;
@@ -292,7 +307,7 @@ function toggleFree(on = cam.mode !== 'free', start = false) {
   } else {
     const gx = THREE.MathUtils.clamp(cam.fr.x, -HALF + 2, HALF - 2), gz = THREE.MathUtils.clamp(cam.fr.z, -HALF + 2, HALF - 2);
     player.pos.set(gx, 0, gz); player.vel.set(0, 0, 0);
-    player.hp = 100; player.alive = true; player.deadT = 0; player.respawnT = 0; player.grounded = false;
+    player.hp = player.maxHp; player.alive = true; player.deadT = 0; player.respawnT = 0; player.grounded = false;
     for (const w of player.weapons) { w.mag = w.def.mag; }
     if (!battle.units.includes(player)) battle.units.push(player);
     cam.yaw = cam.yaw; cam.mode = settings.view; cam.blend = settings.view === '1p' ? 1 : 0;
@@ -472,6 +487,7 @@ function handle(actions) {
     if (a.type === 'slot') player.setWeapon(a.n);
     else if (a.type === 'next') player.cycleWeapon(1);
     else if (a.type === 'prev') player.cycleWeapon(-1);
+    else if (a.type === 'skill') { if (useSkill(player, battle)) audio.play('reload', null, 0.5); }
     else if (a.type === 'reload') { if (player.startReload()) audio.play('reload', null, 0.6); }
     else if (a.type === 'grenade') {
       const g = player.weapons.findIndex((w) => w.id === 'grenade');

@@ -618,7 +618,7 @@ export class Brain {
     const d = Math.hypot(t.pos.x - u.pos.x, t.pos.z - u.pos.z);
     if (d > 2.4) { this.reviveT = 0; return false; }
     c.aimAt = null; c.fire = false; c.kneel = true;
-    if (m.kind === 'heal') t.hp = Math.min(100, t.hp + 16 * dt);
+    if (m.kind === 'heal') t.hp = Math.min(t.maxHp, t.hp + 16 * dt);
     else {
       this.reviveT = (this.reviveT || 0) + dt;
       if (this.reviveT >= 2.5) { this.w.revive(t); this.reviveT = 0; this.mission = null; }
