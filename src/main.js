@@ -20,6 +20,7 @@ import { TEAMS } from './factions.js';
 import { ViewModel } from './viewmodel.js';
 import { Cockpit } from './cockpit.js';
 import { MAX_SPEED } from './unit.js';
+import { Wheel, ORDERS, issue as issueOrder, tick as tickOrders } from './orders.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('scene');
@@ -73,8 +74,24 @@ const crowd = new Crowd(scene, 700);
 const hud = new Hud();
 const input = new Input(canvas, {
   stick: $('stick'), knob: $('knob'), jumpBtn: $('jump'), fireBtn: $('fire'),
-  buttons: { next: $('swap'), view: $('viewBtn'), use: $('useBtn') },
+  buttons: { next: $('swap'), view: $('viewBtn'), use: $('useBtn'), wheelDown: $('cmdBtn') },
 });
+
+const wheel = new Wheel($('wheel'), (id) => giveOrder(id));
+let wheelAt = 0;
+function giveOrder(id) {
+  if (!player?.alive) return;
+  const n = issueOrder(battle, player, id, { dir: camera.getWorldDirection(new THREE.Vector3()), aim: aimPoint });
+  const o = ORDERS.find((x) => x.id === id);
+  hud.say(n ? `${o.label}: ${n} squad${n > 1 ? 's' : ''}` : 'No squad close enough to hear you', 1.6);
+}
+function openWheel(on) {
+  if (on && (!player?.alive || sandbox.open || cam.mode === 'free' || player.vehicle)) return;
+  wheel.show(on);
+  if (on) wheelAt = performance.now();
+}
+$('wheelX').addEventListener('click', () => openWheel(false));
+$('wheelX').addEventListener('pointerdown', (e) => e.stopPropagation());
 
 let battle = new Battle(scene, fx, audio);
 let player = null;
@@ -386,6 +403,12 @@ function handle(actions) {
     if (a.type === 'free') { toggleFree(); continue; }
     if (a.type === 'menu') { if (state === 'play') sandbox.toggle(); continue; }
     if (a.type === 'use') { useVehicle(); continue; }
+    if (a.type === 'wheelDown') { openWheel(!wheel.open); continue; }
+    if (a.type === 'wheelUp') {
+      if (wheel.open && !input.touch) { if (wheel.sel >= 0) wheel.pick(wheel.sel); else if (performance.now() - wheelAt > 300) openWheel(false); }
+      continue;
+    }
+    if (wheel.open) { if (a.type === 'slot') wheel.pick(a.n); continue; }
     if (a.type === 'view') { if (player.vehicle) { cam.cockpit = !cam.cockpit; hud.say(cam.cockpit ? 'Cockpit view' : 'Chase view', 1); continue; } if (cam.mode !== 'over' && cam.mode !== 'free') { cam.mode = cam.mode === '1p' ? '3p' : '1p'; document.documentElement.dataset.view = cam.mode; } continue; }
     if (!player.alive || sandbox.open || cam.mode === 'free') continue;
     if (a.type === 'slot') player.setWeapon(a.n);
@@ -614,6 +637,7 @@ function frame(_t, fixedDt) {
           cam.fly(dt, inp.move, up, inp.sprint);
         } else {
           if (input.touch && player?.alive) aimAssist(dt, inp);
+          if (wheel.open) { wheel.nudge(inp.look.dx, inp.look.dy); inp.look.dx = inp.look.dy = 0; inp.fire = false; }
           cam.look(inp.look.dx, inp.look.dy);
           lastLook = inp.look;
           tut.looked += Math.abs(inp.look.dx) + Math.abs(inp.look.dy);
@@ -623,6 +647,8 @@ function frame(_t, fixedDt) {
       const sdt = dt * battle.timeScale;
       if (cam.mode !== 'free') updatePlayer(sdt, inp);
       battle.update(dt);
+      if (player) tickOrders(battle, player);
+      if (wheel.open && (!player?.alive || player.vehicle)) openWheel(false);
       if (cam.mode !== 'free') tutorialTick();
       cam.shake = Math.max(cam.shake, fx.shake);
       for (const e of battle.events) {

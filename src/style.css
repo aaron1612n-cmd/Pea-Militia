@@ -205,6 +205,7 @@ html[data-input='mouse'] .touchpad { display: none; }
 .tbtn.crouch { right: 148px; bottom: 8px; width: 48px; height: 48px; }
 .tbtn.swap { right: 6px; bottom: 150px; width: 48px; height: 48px; }
 .tbtn.view { right: 60px; bottom: 164px; width: 48px; height: 48px; }
+.tbtn.cmd { right: 6px; bottom: 206px; width: 48px; height: 48px; }
 .tbtn.use { right: 120px; bottom: 164px; width: 52px; height: 52px; }
 .tbtn.use[hidden] { display: none; }
 .tbtn.use:not([hidden]) { border-color: var(--accent); color: var(--accent); }
@@ -401,3 +402,15 @@ html[data-free='1'] #pauseFree::after { content: ' (back to soldier)'; }
 .bloodscreen i { position: absolute; border-radius: 52% 48% 55% 45%; background: radial-gradient(ellipse at 50% 40%, rgba(120, 12, 12, 0.92) 0 45%, rgba(80, 6, 6, 0.8) 70%, rgba(80, 6, 6, 0) 72%); opacity: 1; transition: opacity 3.2s ease-in 1.2s, transform 4.4s ease-in; }
 .bloodscreen i.go { opacity: 0; transform: translateY(26px) scaleY(1.25); }
 @media (prefers-reduced-motion: reduce) { .bloodscreen i { transition: opacity 0.2s 1.5s; transform: none !important; } }
+
+/* ---------------- squad command wheel ---------------- */
+.wheel { position: fixed; inset: 0; z-index: 20; display: grid; place-items: center; background: rgba(10, 12, 14, 0.35); }
+.wheel-ring { position: relative; width: min(300px, 82vmin); height: min(300px, 82vmin); --r: calc(min(300px, 82vmin) * 0.42); }
+.wheel-hub { position: absolute; left: 50%; top: 50%; width: 30%; aspect-ratio: 1; transform: translate(-50%, -50%); display: grid; place-items: center; text-align: center; padding: 6px; font-size: 11px; line-height: 1.2; letter-spacing: 0.04em; text-transform: uppercase; color: var(--mute); background: var(--glass); border: 1px solid var(--line-2); border-radius: 50%; }
+.wheel-item { position: absolute; left: 50%; top: 50%; width: 84px; height: 56px; margin: -28px 0 0 -42px; transform: translate(calc(var(--x) * var(--r)), calc(var(--y) * var(--r))); display: grid; place-items: center; align-content: center; gap: 0; background: var(--glass-2); border: 1px solid var(--line-2); border-radius: 10px; font: 600 14px var(--head); color: var(--ink); cursor: pointer; touch-action: manipulation; }
+.wheel-item .num { font-size: 11px; color: var(--mute); }
+.wheel-item.on, .wheel-item:focus-visible { border-color: var(--accent); background: var(--accent); color: var(--accent-ink); outline: none; }
+.wheel-item.on .num { color: var(--accent-ink); }
+.wheel-x { position: absolute; top: max(12px, env(safe-area-inset-top)); right: max(12px, env(safe-area-inset-right)); width: 44px; height: 44px; font-size: 26px; background: var(--glass); border: 1px solid var(--line-2); border-radius: 10px; }
+@media (prefers-reduced-motion: no-preference) { .wheel:not([hidden]) .wheel-item { animation: wheel-in 0.14s ease-out both; } }
+@keyframes wheel-in { from { opacity: 0; transform: translate(0, 0) scale(0.6); } }

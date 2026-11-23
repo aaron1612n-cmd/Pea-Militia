@@ -149,7 +149,7 @@
           <button id="restart" class="ghost" type="button">Restart</button>
           <button id="toMenu" class="ghost" type="button">Setup</button>
         </div>
-        <p class="keys mouse-only">Shift sprint · C crouch · Z prone · Q/E lean · R reload · G grenade · 1–7 or wheel weapons · V view · M mute</p>
+        <p class="keys mouse-only">Shift sprint · C crouch · Z prone · Q/E lean · R reload · G grenade · T squad orders · 1–7 or wheel weapons · V view · M mute</p>
       </div>
     </section>
     <section id="end" class="sheet" hidden aria-label="Battle over">
@@ -174,7 +174,12 @@
       <button id="crouchBtn" class="tbtn crouch" type="button" aria-label="Crouch"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 9l7 7 7-7" /></svg></button>
       <button id="swap" class="tbtn swap" type="button" aria-label="Next weapon"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 9h14l-4-4M20 15H6l4 4" /></svg></button>
       <button id="useBtn" class="tbtn use" type="button" aria-label="Enter or leave vehicle" hidden><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 15h18l-2-5H8L6 12M6 15v3M18 15v3M9 10V7h5" /></svg></button>
+      <button id="cmdBtn" class="tbtn cmd" type="button" aria-label="Squad orders"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3" /></svg></button>
       <button id="viewBtn" class="tbtn view" type="button" aria-label="Switch view"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7S2 12 2 12z" /><circle cx="12" cy="12" r="3" /></svg></button>
+    </div>
+    <div id="wheel" class="wheel" hidden role="dialog" aria-label="Squad orders">
+      <div class="wheel-ring"><div class="wheel-hub num">Squad orders</div></div>
+      <button id="wheelX" class="wheel-x" type="button" aria-label="Close squad orders">&times;</button>
     </div>
     <div id="corner" class="corner" hidden>
       <button id="sbxBtn" class="icon-btn" type="button" aria-label="Sandbox tools" title="Sandbox (B)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 4h6v6H4zM14 4h6v6h-6zM4 14h6v6H4zM17 14v6M14 17h6" /></svg></button>
