@@ -1,3 +1,4 @@
+import { HOLD_WIN } from './battle.js';
 import * as THREE from 'three';
 import { TEAMS } from './factions.js';
 import { SLOTS } from './weapons.js';
@@ -180,6 +181,14 @@ export class Hud {
       el.lastElementChild.textContent = t.tickets + t.alive;
       el.classList.toggle('lost', t.lost);
     }
+    // domination countdown
+    if (battle.holder >= 0 && battle.holdT > 0 && !battle.result) {
+      const left = Math.max(0, Math.ceil(HOLD_WIN - battle.holdT));
+      if (left !== this.holdLeft && (left <= 10 || left % 10 === 0 || this.holdLeft === undefined)) {
+        this.say(`${battle.holder === me ? 'You hold' : TEAMS[battle.holder].short + ' holds'} every point · ${left}s`, 1.4);
+      }
+      this.holdLeft = left;
+    } else this.holdLeft = undefined;
     // capture progress when standing on a point
     const on = player.alive && battle.points.find((p) => (player.pos.x - p.pos.x) ** 2 + (player.pos.z - p.pos.z) ** 2 < p.r * p.r);
     if (on && (on.owner !== me || on.capture < 1 || on.contested)) {

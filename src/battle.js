@@ -33,6 +33,7 @@ export const SQUAD_MIX = [
   ['coil', 'flamer', 'rifleman', 'medic', 'coil', 'assault', 'rifleman', 'gunner', 'coil'],
 ];
 export const SQUAD_SIZE = 6;
+export const HOLD_WIN = 60; // seconds holding every point
 
 // Uniform grid over the map for neighbour and line queries.
 class Grid {
@@ -142,7 +143,7 @@ export class Battle {
     Object.assign(this.settings, settings);
     const n = this.settings.teams;
     this.teams = TEAMS.slice(0, n).map((t, i) => ({
-      id: i, tickets: this.settings.tickets, base: baseAt(i, n), spawnT: 0, alive: 0, lost: false,
+      id: i, tickets: this.settings.tickets, base: baseAt(i, n), spawnT: 0, alive: 0, lost: false, kills: 0, losses: 0, caps: 0,
     }));
     this.commanders = this.teams.map((t) => new Commander(this, t.id));
     this.result = null;
@@ -678,6 +679,9 @@ export class Battle {
     this.fx.gore.death(u, k, this);
     this.events.push({ type: 'death', unit: u, from });
     this.stats.kills++;
+    const tu = this.teams[u.team], tf = from && from.team !== undefined && from.team !== u.team ? this.teams[from.team] : null;
+    if (tu) tu.losses++;
+    if (tf) tf.kills++;
     u.brain?.releaseCover();
     this.onKill?.(u, from);
   }
@@ -754,7 +758,7 @@ export class Battle {
           p.capTeam = top;
           p.capture += rate;
           if (p.capture >= 1) {
-            p.owner = top; p.capture = 1;
+            p.owner = top; p.capture = 1; if (this.teams[top]) this.teams[top].caps++;
             this.paintPoint(p);
             this.events.push({ type: 'capture', point: p, team: top });
           }
@@ -827,8 +831,14 @@ export class Battle {
       for (const t of this.teams) if (held[t.id] < most && t.tickets > 0) t.tickets = Math.max(0, t.tickets - (most - held[t.id]));
     }
     for (const t of this.teams) if (!t.lost && t.tickets <= 0 && t.alive === 0) t.lost = true;
+    // domination: one army holding every point for HOLD_WIN seconds wins the match
+    const all = this.points.length > 1 && this.points.every((p) => p.owner === this.points[0].owner && p.owner >= 0 && !p.contested);
+    const holder = all ? this.points[0].owner : -1;
+    if (holder !== this.holder) { this.holder = holder; this.holdT = 0; }
+    this.holdT = holder >= 0 ? (this.holdT || 0) + dt : 0;
     const standing = this.teams.filter((t) => !t.lost);
-    if (!this.result && standing.length <= 1 && this.time > 3) this.result = { winner: standing[0]?.id ?? -1, time: this.time };
+    if (!this.result && standing.length <= 1 && this.time > 3) this.result = { winner: standing[0]?.id ?? -1, time: this.time, why: 'tickets' };
+    if (!this.result && holder >= 0 && this.holdT >= HOLD_WIN) this.result = { winner: holder, time: this.time, why: 'points' };
   }
 
   // ---------- frame ----------
