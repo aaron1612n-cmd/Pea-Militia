@@ -404,7 +404,7 @@ const reticle = new Reticle(scene);
 const ciBar = new CallinBar($('callins'), (i) => pickCallin(i));
 const ci = { sel: -1, fireHeld: false, aimHeld: false };
 const MIN_DIST = { strike: 30, barrage: 26, supply: 0 };
-function callinOk() { return state === 'play' && player && player.alive && !sandbox.open && cam.mode !== 'free'; }
+function callinOk() { return state === 'play' && !wheel.open && player && player.alive && !sandbox.open && cam.mode !== 'free'; }
 function cancelCallin() { ci.sel = -1; reticle.hide(); }
 function pickCallin(i) {
   if (!callinOk()) return;
