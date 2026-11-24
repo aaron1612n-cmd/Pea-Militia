@@ -381,7 +381,7 @@ export class Brain {
     this.badUntil = 0;
     this.skill = rand(0.75, 1.2);
     this.blocked = false;
-    unit.ctrl.turnRate = 4.5 * this.skill;
+    unit.ctrl.turnRate = 2.8 * this.skill;
   }
 
   releaseCover() {
@@ -549,6 +549,16 @@ export class Brain {
       this.goal = slot;
     }
     this.goal.y = 0;
+    // out of ammunition and nothing in sight: go to the nearest friendly ammo crate
+    {
+      const main = u.weapons[0];
+      const dry = !main.inf && main.mag <= 0 && main.reserve <= 0;
+      const low = !main.inf && main.reserve + main.mag < main.def.mag * 0.8 && !this.seen && !contact;
+      if (dry || low) {
+        const cr = w.nearestCrate(u.team, u.pos);
+        if (cr) { this.releaseCover(); this.goal = new THREE.Vector3(cr.x, 0, cr.z); this.ammoRun = true; }
+      }
+    }
 
     // can see them but can't shoot them (crate, wall, crest in the way): give up this spot
     if (this.seen && this.blockT > 1.2 && !this.sidestep) {

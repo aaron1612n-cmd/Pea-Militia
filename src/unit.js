@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { U, pose, makePose } from './rig.js';
-import { WEAPONS } from './weapons.js';
+import { WEAPONS, makeWeapon } from './weapons.js';
 import { wrap } from './physics.js';
 import { Ragdoll } from './ragdoll.js';
 import { CLASSES, NEUTRAL } from './classes.js';
@@ -60,13 +60,15 @@ export class Unit {
     this.bleed = 0; this.leg = 0; this.arm = 0; this.down = false; this.stagger = 0; this.shock = 0;
     this.bandageT = 0; this.jamT = 0; this.cry = 0; this.corpseHp = 70;
 
-    this.weapons = loadout.map((id) => ({ id, def: WEAPONS[id], mag: WEAPONS[id].mag, reserve: WEAPONS[id].reserve ?? Infinity, heat: 0, locked: 0 }));
+    this.weapons = loadout.map((id) => makeWeapon(id));
     this.wi = 0;
     this.cool = 0;
     this.reloadT = 0;
     this.throwT = 0;
     this.thrown = false;
     this.recoil = 0;
+    this.recoilBuild = 0; this.shotIdx = 0; this.kickP = 0; this.kickY = 0; // climbing recoil pattern and the view kick waiting to be applied
+    this.reloadDur = 1; this.reloadEmpty = false; this.adsT = 0;
     this.lastShot = -99;
     this.wasFiring = false;
     this.aimYaw = 0;
@@ -137,7 +139,14 @@ export class Unit {
   startReload() {
     const w = this.weapon;
     if (this.busy || w.def.heat || w.mag >= w.def.mag || w.reserve <= 0) return false;
-    this.reloadT = w.def.reload;
+    // a part-used magazine is worth swapping only for a fuller one
+    if (!w.inf && w.mag > 0 && Math.max(...w.spare) <= w.mag) return false;
+    // tactical reload (rounds still in the gun): quicker, the old magazine goes back in the pouch.
+    // Empty reload: full time plus working the charging handle.
+    const d = w.def;
+    this.reloadEmpty = w.mag <= 0;
+    this.reloadDur = d.reload * (this.reloadEmpty ? d.empty + (d.rack || 0) * 0.5 : d.tac);
+    this.reloadT = this.reloadDur;
     return true;
   }
 
@@ -225,6 +234,8 @@ export class Unit {
     this.flinch = Math.max(0, this.flinch - dt * 3);
     this.suppression = Math.max(0, this.suppression - dt * 0.35);
     this.recoil = Math.max(0, this.recoil - dt * 9);
+    if (this.t - (this.lastShotT || -9) > 0.14) this.recoilBuild = Math.max(0, this.recoilBuild - dt * (this.weapon.def.rc?.rec ?? 1));
+    this.adsT = this.ads > 0.5 ? this.adsT + dt : Math.max(0, this.adsT - dt * 2);
     // no regeneration: wounds bleed until bandaged, minor ones clot slowly
     this.stagger = Math.max(0, this.stagger - dt); this.shock = Math.max(0, this.shock - dt); this.cry -= dt;
     if (this.jamT > 0) this.jamT -= dt;
@@ -254,9 +265,17 @@ export class Unit {
       this.reloadT -= dt;
       if (this.reloadT <= 0) {
         const w = this.weapon;
-        const take = this.god ? w.def.mag - w.mag : Math.min(w.def.mag - w.mag, w.reserve);
-        w.mag += take;
-        if (!this.god) w.reserve -= take;
+        if (this.god || w.inf) w.mag = w.def.mag;
+        else if (w.spare.length) {
+          // swap in the fullest spare magazine; a part-used one is stowed, not thrown away
+          let bi = 0;
+          for (let i = 1; i < w.spare.length; i++) if (w.spare[i] > w.spare[bi]) bi = i;
+          const fresh = w.spare.splice(bi, 1)[0], old = w.mag;
+          const keep = old > 0 && w.def.chamber ? 1 : 0; // the round in the breech stays
+          if (old - keep > 0) w.spare.push(old - keep);
+          w.mag = fresh + keep;
+          if (old <= 0) world?.fx?.dust?.(this.pos.clone().setY(this.pos.y + 0.05), 1, 0.15);
+        }
         this.reloadT = 0;
       }
     }
@@ -277,11 +296,17 @@ export class Unit {
       const yaw = Math.atan2(c.aimAt.x - sx, c.aimAt.z - sz);
       const pitch = Math.atan2(c.aimAt.y - sy, Math.hypot(c.aimAt.x - sx, c.aimAt.z - sz));
       const rate = c.turnRate ?? Infinity;
-      const dy = wrap(yaw - this.aimYaw);
-      this.aimYaw = wrap(this.aimYaw + Math.sign(dy) * Math.min(Math.abs(dy), rate * dt));
-      this.aimPitch += THREE.MathUtils.clamp(pitch - this.aimPitch, -rate * dt, rate * dt);
+      const dy = wrap(yaw - this.aimYaw), dp = pitch - this.aimPitch;
+      // the gun has weight: it eases off as it nears the target instead of snapping onto it
+      const ease = (d) => Math.min(1, 0.22 + Math.abs(d) / 0.45);
+      this.aimYaw = wrap(this.aimYaw + Math.sign(dy) * Math.min(Math.abs(dy), rate * ease(dy) * dt));
+      this.aimPitch += THREE.MathUtils.clamp(dp, -rate * ease(dp) * 0.8 * dt, rate * ease(dp) * 0.8 * dt);
       this.aimPitch = THREE.MathUtils.clamp(this.aimPitch, -1.2, 1.2);
+      // time on target: the longer the sights stay on, the tighter the shots
+      const off = Math.hypot(dy * Math.cos(this.aimPitch), dp);
+      if (off < 0.05) this.onT = (this.onT || 0) + dt; else this.onT = off > 0.3 ? 0 : Math.max(0, (this.onT || 0) - dt * 2);
     } else {
+      this.onT = 0;
       this.aimYaw = this.facing + this.twist;
       this.aimPitch *= 1 - Math.min(1, dt * 6);
     }
@@ -301,7 +326,7 @@ export class Unit {
     this.leanK = (this.leanK || 0) + (lean - (this.leanK || 0)) * (1 - Math.exp(-10 * dt));
     const kneel = c.kneel && !sprint && !prone ? 1 : 0;
     this.kneelK += (kneel - this.kneelK) * (1 - Math.exp(-9 * dt));
-    const speed = WALK * this.speedK * this.mod.speed * (c.speed ?? 1) * (def.move || 1) * (sprint ? SPRINT : 1) * (1 - 0.6 * this.kneelK) * (1 - 0.72 * this.proneK) * (1 - 0.5 * Math.abs(this.leanK)) * (1 - 0.25 * this.suppression) * (1 - 0.55 * this.leg) * (this.down ? 0.28 : 1) * (this.stagger > 0 ? 0.45 : 1) * (this.shock > 0 && !this.isPlayer ? 0.2 : 1) * (this.bandageT > 0 ? 0.2 : 1);
+    const speed = WALK * this.speedK * this.mod.speed * (c.speed ?? 1) * (def.move || 1) * (sprint ? SPRINT : 1) * (1 - 0.6 * this.kneelK) * (1 - 0.72 * this.proneK) * (1 - 0.5 * Math.abs(this.leanK)) * (1 - 0.25 * this.suppression) * (1 - 0.28 * this.ads) * (this.reloadT > 0 ? 0.82 : 1) * (1 - 0.12 * this.recoilBuild) * (1 - 0.55 * this.leg) * (this.down ? 0.28 : 1) * (this.stagger > 0 ? 0.45 : 1) * (this.shock > 0 && !this.isPlayer ? 0.2 : 1) * (this.bandageT > 0 ? 0.2 : 1);
     this.sprinting = sprint;
     this.move(dt, c.wx, c.wz, c.jump && this.proneK < 0.3 && this.leg < 0.5 && !this.down, speed, world, aiming || c.faceYaw !== undefined);
     c.jump = false;
@@ -397,6 +422,19 @@ export class Unit {
       if (w.heat >= 1) { w.heat = 1; w.locked = 1.6; world.fx.steam(this.muzzle(), new THREE.Vector3(0, 0.8, 0), 4, 0.35); }
     } else if (!this.god) w.mag--;
     this.recoil = 1;
+    {
+      // recoil: each shot kicks the view up and sideways along the weapon's pattern; it builds
+      // while you hold the trigger and settles when you let go
+      const rc = def.rc, pat = def.pattern || [0];
+      if (this.recoilBuild < 0.05 || this.t - this.lastShotT > 0.5) this.shotIdx = 0;
+      const k = 1 + this.recoilBuild * 1.1;
+      const steady = (this.isPlayer ? 1 - 0.4 * this.ads : 1) * (1 - 0.3 * this.kneelK) * (1 - 0.45 * (this.proneK || 0));
+      this.kickP += rc.up * k * steady;
+      this.kickY += (pat[this.shotIdx % pat.length] * rc.side * (0.5 + this.recoilBuild) + (Math.random() - 0.5) * rc.side * 0.5) * steady;
+      this.shotIdx++;
+      this.recoilBuild = Math.min(1, this.recoilBuild + rc.build);
+      this.lastShotT = this.t;
+    }
     if (w.mag <= 0 && !def.heat && def.kind !== 'throw') this.startReload();
     return true;
   }
@@ -455,7 +493,7 @@ export class Unit {
     s.mx = this.mx; s.mz = this.mz; s.air = this.air; s.rise = THREE.MathUtils.clamp(this.vel.y / JUMP_V, -1, 1);
     s.land = land; s.kneel = this.kneelK; s.aimPitch = THREE.MathUtils.clamp(this.aimPitch, -0.9, 0.9);
     s.twist = this.twist; s.ready = this.ready; s.recoil = this.recoil;
-    s.reload = this.reloadT > 0 ? 1 - this.reloadT / this.weapon.def.reload : -1;
+    s.reload = this.reloadT > 0 ? 1 - this.reloadT / this.reloadDur : -1;
     s.throw = this.throwT > 0 ? 1 - this.throwT / 0.6 : -1;
     s.flinch = this.flinch; s.ads = this.ads; s.fp = this.fp || 0; s.sprint = this.sprinting;
     s.lean = this.alive ? this.leanK || 0 : 0; s.prone = this.alive ? this.proneK || 0 : 0;

@@ -44,7 +44,12 @@ export class ViewModel {
     const bobX = Math.sin(c) * 0.014 * w, bobY = -Math.abs(Math.cos(c)) * 0.016 * w + 0.008 * w;
     const breathe = Math.sin(u.t * 1.6) * 0.002 * (1 - a);
     const rec = u.recoil;
-    const rl = u.reloadT > 0 ? Math.sin(Math.min(1, 1 - u.reloadT / u.weapon.def.reload) * Math.PI) : 0;
+    const rp = u.reloadT > 0 ? Math.min(1, 1 - u.reloadT / u.reloadDur) : -1;
+    const rl = rp >= 0 ? Math.sin(rp * Math.PI) : 0;
+    // an empty gun finishes with a hard pull on the charging handle
+    const rack = rp > 0.72 && u.reloadEmpty && u.weapon.def.rack ? Math.sin(((rp - 0.72) / 0.28) * Math.PI) : 0;
+    const rb = u.recoilBuild || 0;
+    const jam = u.jamT > 0 ? Math.sin(u.t * 24) * 0.5 + 0.5 : 0; // clearing a jam: the gun rocks as the bolt is worked
     const air = u.air;
 
     camera.updateMatrixWorld();
@@ -77,11 +82,11 @@ export class ViewModel {
     const sightDrop = h.sight * vs;
     const x = lerp(0.15, 0, a) + bobX + sw - this.sprintK * 0.02;
     const y = lerp(-0.16, -sightDrop, a) + bobY + breathe + sh - rl * h.anim.drop - this.sprintK * 0.05 - air * 0.02;
-    const z = lerp(-0.34, -0.58, a) + rec * h.anim.kick;
+    const z = lerp(-0.34, -0.58, a) + rec * h.anim.kick * (1 + rb * 0.7) + rack * 0.035 + jam * 0.01;
     const yaw = lerp(0.05, 0, a) + this.sprintK * 0.7 + sw * 2;
     // (positive x rotation tips the barrel down)
-    const pitch = -rec * h.anim.climb * (1 - 0.5 * a) + rl * h.anim.tilt + this.sprintK * 0.35 + sh * 2;
-    E.set(pitch, Math.PI + yaw, -rl * h.anim.roll + bobX * 2, 'YXZ');
+    const pitch = -rec * h.anim.climb * (1 + rb * 0.9) * (1 - 0.5 * a) - rb * 0.05 * (1 - 0.4 * a) + rack * 0.1 + jam * 0.05 + rl * h.anim.tilt + this.sprintK * 0.35 + sh * 2;
+    E.set(pitch, Math.PI + yaw + rb * 0.03 * Math.sin(u.shotIdx * 2.1), -rl * h.anim.roll + bobX * 2 + rb * 0.04 * Math.sin(u.shotIdx * 1.7), 'YXZ');
     Q.setFromEuler(E);
     L.compose(P.set(x, y, z), Q, S.setScalar(vs));
     p.weapon.multiplyMatrices(camera.matrixWorld, L);

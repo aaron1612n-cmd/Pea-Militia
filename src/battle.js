@@ -11,7 +11,7 @@ import { VehicleBrain } from './vehicleai.js';
 import { CallIns } from './callins.js';
 import { projectileModel, WEAPONS } from './weapons.js';
 import { hostile, TEAMS } from './factions.js';
-import { HALF, pointMarker } from './world.js';
+import { HALF, pointMarker, ammoCrate } from './world.js';
 import { rayBox, pushCircle, segmentHitsBox, corners, segDist, toLocal } from './physics.js';
 import { height, rayTerrain, terrainClear, normalAt } from './terrain.js';
 
@@ -160,6 +160,13 @@ export class Battle {
     const p = { name, pos: new THREE.Vector3(x, y, z), r, owner: -1, capture: 0, capTeam: -1, contested: false, model: m, counts: [0, 0, 0] };
     this.points.push(p);
     this.paintPoint(p);
+    // an ammo crate beside the flag: the owning side's soldiers restock from it
+    const crate = ammoCrate();
+    const ca = Math.atan2(x, z) + 0.9;
+    crate.position.set(x + Math.sin(ca) * 2.6, height(x + Math.sin(ca) * 2.6, z + Math.cos(ca) * 2.6), z + Math.cos(ca) * 2.6);
+    crate.rotation.y = ca;
+    this.scene.add(crate);
+    p.crate = crate; p.fed = new Map();
     return p;
   }
 
@@ -297,7 +304,7 @@ export class Battle {
 
   dispose() {
     this.clearAll();
-    for (const p of this.points) this.scene.remove(p.model);
+    for (const p of this.points) { this.scene.remove(p.model); if (p.crate) this.scene.remove(p.crate); }
     this.points = [];
     for (const d of this.decor) this.scene.remove(d);
     this.decor = [];
@@ -440,11 +447,21 @@ export class Battle {
   discharge(shooter, def) {
     const m = shooter.muzzle();
     let dir = this.aimDir(shooter, m);
+    if (!shooter.isPlayer && shooter.ctrl.aimAt && def.kind === 'hitscan') {
+      // AI fires where the gun actually points, with an error that shrinks with time on target
+      // and grows when moving, suppressed, hurt or in shock
+      const mv = Math.hypot(shooter.vel.x, shooter.vel.z) > 0.5 ? 1 : 0;
+      const err = (0.05 * Math.exp(-(shooter.onT || 0) / 1.1) + 0.004) * (1 + mv * 1.5 + shooter.suppression * 2 + (shooter.arm || 0) * 1.5 + (shooter.shock > 0 ? 2 : 0)) * (1 - 0.35 * shooter.kneelK) / (shooter.brain?.skill || 1);
+      const g = new THREE.Vector3(Math.sin(shooter.aimYaw) * Math.cos(shooter.aimPitch), Math.sin(shooter.aimPitch), Math.cos(shooter.aimYaw) * Math.cos(shooter.aimPitch));
+      // gun direction, corrected so a settled aim still lands on the target (parallax between eye and muzzle)
+      dir = g.lerp(dir, Math.min(1, (shooter.onT || 0) / 0.6)).normalize();
+      dir = this.spread(dir, err);
+    }
     const moving = Math.hypot(shooter.vel.x, shooter.vel.z) > 0.5 ? 1 : 0;
     const sm = shooter.mod?.spread ?? 1;
     if (shooter.mod?.dmgOut > 1 && def.damage) def = { ...def, damage: def.damage * shooter.mod.dmgOut, dps: def.dps && def.dps * shooter.mod.dmgOut };
     const steady = sm * (shooter.isPlayer ? (shooter.ads > 0.5 ? 0.45 : 1) : 1);
-    const s = (def.spread || 0) * steady * (1 + moving * 1.2 + shooter.suppression * 1.5) * (1 - 0.35 * shooter.kneelK) * (1 + (shooter.arm || 0) * 1.5 + (shooter.shock > 0 ? 2 : 0) + (shooter.leg || 0) * 0.4);
+    const s = (def.spread || 0) * steady * (1 + moving * 1.2 + shooter.suppression * 1.5 + (shooter.recoilBuild || 0) * 1.4) * (1 - 0.35 * shooter.kneelK) * (1 + (shooter.arm || 0) * 1.5 + (shooter.shock > 0 ? 2 : 0) + (shooter.leg || 0) * 0.4);
     dir = this.spread(dir, s);
     this.stats.shots++;
     if (def.kind === 'hitscan') this.hitscan(shooter, m, dir, def);
@@ -831,9 +848,37 @@ export class Battle {
   }
 
   // ---------- control points and reinforcements ----------
+  // soldiers of the owning side standing at a point's crate refill their pouches (once a minute each)
+  restock(p) {
+    const c = p.crate.position;
+    for (const u of this.unitGrid.near(c.x, c.z, 3.5, this.tmpA)) {
+      if (!u.alive || u.team !== p.owner || u.vehicle || Math.hypot(u.pos.x - c.x, u.pos.z - c.z) > 3) continue;
+      if (this.time < (p.fed.get(u) || 0)) continue;
+      let need = false;
+      for (const w of u.weapons) if (!w.inf && w.def.reserve && w.reserve < w.def.reserve) need = true;
+      if (!need) continue;
+      p.fed.set(u, this.time + 45);
+      for (const w of u.weapons) if (!w.inf && w.def.reserve) w.reserve = w.def.reserve;
+      this.audio.play('reload', u.pos, 0.6);
+      if (u.isPlayer) this.events.push({ type: 'resupply' });
+    }
+  }
+
+  // nearest friendly-owned crate, for soldiers who have run dry
+  nearestCrate(team, pos) {
+    let best = null, bd = Infinity;
+    for (const p of this.points) {
+      if (p.owner !== team || !p.crate) continue;
+      const d = (p.crate.position.x - pos.x) ** 2 + (p.crate.position.z - pos.z) ** 2;
+      if (d < bd) { bd = d; best = p.crate.position; }
+    }
+    return best;
+  }
+
   updatePoints(dt) {
     const n = this.teams.length;
     for (const p of this.points) {
+      if (p.owner >= 0 && p.crate) this.restock(p);
       p.counts.fill(0);
       for (const u of this.unitGrid.near(p.pos.x, p.pos.z, p.r, this.tmpA)) {
         if (!u.alive) continue;

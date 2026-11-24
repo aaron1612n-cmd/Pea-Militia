@@ -344,7 +344,7 @@ function toggleFree(on = cam.mode !== 'free', start = false) {
     player.pos.set(gx, 0, gz); player.vel.set(0, 0, 0);
     player.hp = player.maxHp; player.alive = true; player.deadT = 0; player.respawnT = 0; player.grounded = false;
     player.wound = 0; player.lost = 0; player.wounds = null; player.marks = null; player.rag = null; fx.gore.forget(player);
-    for (const w of player.weapons) { w.mag = w.def.mag; }
+    for (const w of player.weapons) { w.mag = w.def.mag; w.reserve = w.def.reserve ?? Infinity; }
     if (!battle.units.includes(player)) battle.units.push(player);
     cam.yaw = cam.yaw; cam.mode = settings.view; cam.blend = settings.view === '1p' ? 1 : 0;
     snap = true;
@@ -677,14 +677,15 @@ function aimAssist(dt, inp) {
   cam.yaw += dy * k; cam.pitch += dp * k;
 }
 
-let swayT = 0, swayPrev = 0;
+const lookAcc = { x: 0, y: 0 };
+let swayT = 0, swayPrev = 0, recoilDebt = 0;
 // the rifle is never dead still: breathing sway, worse when winded, hurt or shocked
 function battleFeel(dt) {
   const p = player;
   if (reduced || !p.alive || state === 'menu') return;
   const sup = p.suppression, sh = Math.min(1, p.shock / 3);
   swayT += dt;
-  const wob = (0.00045 + (p.winded ? 0.0009 : 0) + p.arm * 0.0007 + (p.bleed > 0.3 ? 0.0004 : 0) + sh * 0.0016 + sup * 0.0004) * (1 - 0.5 * cam.ads) * (1 - 0.4 * p.kneelK) * (1 - 0.5 * (p.proneK || 0));
+  const wob = (0.00045 + (p.winded ? 0.0009 : 0) + p.arm * 0.0007 + (p.bleed > 0.3 ? 0.0004 : 0) + sh * 0.0016 + sup * 0.0004) * (p.weapon.def.sway ?? 1) * (1 - 0.3 * cam.ads + Math.min(0.9, Math.max(0, p.adsT - 3) * 0.25)) * (1 - 0.4 * p.kneelK) * (1 - 0.5 * (p.proneK || 0));
   const now = Math.sin(swayT * 1.7) + Math.sin(swayT * 2.9) * 0.5;
   cam.pitch += (now - swayPrev) * wob * 3;
   cam.yaw += (Math.cos(swayT * 1.3) - Math.cos((swayT - dt) * 1.3)) * wob * 3;
@@ -803,7 +804,15 @@ function frame(_t, fixedDt) {
         } else {
           if (input.touch && player?.alive) aimAssist(dt, inp);
           if (wheel.open) { wheel.nudge(inp.look.dx, inp.look.dy); inp.look.dx = inp.look.dy = 0; inp.fire = false; }
-          cam.look(inp.look.dx, inp.look.dy);
+          {
+            // weighty aim: input is eased in over a few frames (nothing is lost), heavier guns turn slower
+            const wt = player?.weapon ? 1 / (1 + 0.3 * ((player.weapon.def.sway ?? 1) - 1)) : 1;
+            lookAcc.x += inp.look.dx * wt; lookAcc.y += inp.look.dy * wt;
+            const f = input.touch ? 1 : 1 - Math.exp(-dt / 0.035);
+            const sx = lookAcc.x * f, sy = lookAcc.y * f;
+            lookAcc.x -= sx; lookAcc.y -= sy;
+            cam.look(sx, sy);
+          }
           lastLook = inp.look;
           tut.looked += Math.abs(inp.look.dx) + Math.abs(inp.look.dy);
         }
@@ -832,12 +841,18 @@ function frame(_t, fixedDt) {
     }
   }
   if (state !== 'menu' && player) {
-    // real recoil: each shot kicks the view up a little
-    if (player.shots !== lastShots) {
-      const k = { rifle: 0.022, smg: 0.007, mg: 0.009, plasma: 0.008, launcher: 0.03, grenade: 0 }[player.weapon.id] ?? 0.01;
-      cam.pitch += k * (player.shots - lastShots > 3 ? 1 : player.shots - lastShots) * (1 - 0.4 * cam.ads);
-      cam.yaw += (Math.random() - 0.5) * k * 0.6;
-      lastShots = player.shots;
+    // recoil: the view takes the kick of each shot; once you stop firing it settles most of the way back
+    {
+      const kp = player.kickP, ky = player.kickY;
+      player.kickP = player.kickY = 0;
+      cam.pitch += kp * (1 - 0.2 * cam.ads); cam.yaw += ky;
+      recoilDebt += kp;
+      const idle = player.t - (player.lastShotT || -9) > 0.14;
+      if (idle && recoilDebt > 0) {
+        const back = Math.min(recoilDebt, Math.max(0.004, recoilDebt * 3) * dt * (player.weapon.def.rc?.rec ?? 1) * 2.4);
+        cam.pitch -= back * 0.7; recoilDebt -= back;
+      }
+      if (!player.alive) recoilDebt = 0;
     }
     cam.update(dt, player, snap);
     snap = false;
