@@ -49,7 +49,7 @@ class Box {
       this.legs = Math.max(0, this.legs - dt / 0.6);
       const k = this.legs * this.legs;
       this.v.y += GRAV * dt * k * 0.92;
-      this.v.x *= Math.exp(-5 * k * dt); this.v.z *= Math.exp(-5 * k * dt);
+      this.v.x *= Math.exp(-1.2 * k * dt); this.v.z *= Math.exp(-1.2 * k * dt);
       // gravity pulls the unsupported top of the body over, along the way it was pushed
       const f = (1 - this.legs) * this.fall * dt;
       this.w.x += this.tip.x * f; this.w.z += this.tip.z * f;
@@ -93,7 +93,7 @@ class Box {
     // rolling resistance and air drag so bodies settle instead of rocking
     const damp = this.hits ? Math.exp(-6.5 * dt) : Math.exp(-0.15 * dt);
     this.w.multiplyScalar(damp);
-    if (this.hits >= 2) this.v.x *= Math.exp(-4 * dt), this.v.z *= Math.exp(-4 * dt);
+    if (this.hits >= 2) this.v.x *= Math.exp(-2.6 * dt), this.v.z *= Math.exp(-2.6 * dt);
     // edge of the slab and prop sides: push the box centre out horizontally
     if (world) {
       const probe = this.probe || (this.probe = { pos: new THREE.Vector3(), vel: this.v });
@@ -141,9 +141,10 @@ export class Ragdoll {
     this.body.v.copy(unit.vel).add(kick);
     // the hit lands high on the body, so it topples away from the shot, slowly: weight, not a spin
     const hitAt = new THREE.Vector3(0, 0.3 + Math.random() * 0.15, 0).applyQuaternion(this.body.q);
-    const horiz = _v.copy(kick).setY(0);
+    const horiz = _v.copy(kick).setY(0).addScaledVector(unit.vel, 0.5).setY(0);
+    const run = Math.hypot(unit.vel.x, unit.vel.z);
     const blast = unit.heavy;
-    this.body.w.crossVectors(hitAt, horiz).multiplyScalar(blast ? 4 : 1.1);
+    this.body.w.crossVectors(hitAt, horiz).multiplyScalar(blast ? 4 : 1.1 + Math.min(run, 9) * 0.12);
     this.body.w.y += (Math.random() - 0.5) * Math.min(blast ? 3 : 0.8, kick.length());
     // standing soldiers buckle at the knees; one thrown by a blast or already airborne has nothing to stand on
     if (unit.grounded && !blast) {
