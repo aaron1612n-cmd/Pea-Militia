@@ -454,7 +454,7 @@ export class Battle {
       const d = segDist(a, b, c);
       if (d < 1.8) {
         u.suppression = Math.min(1, u.suppression + (1.8 - d) * 0.1);
-        if (u.isPlayer && d < 1.4) this.audio.play('whiz', null, 0.5 * (1.4 - d));
+        if (u.isPlayer && d < 1.4) { this.audio.crack(1.4 - d); this.onNearMiss?.(1.4 - d); }
         if (u.squad) u.squad.know(shooter, shooter.pos, false);
       }
     }
@@ -581,6 +581,7 @@ export class Battle {
     void pierce;
     this.fx.explosion(pos, r);
     this.audio.play('boom', pos);
+    this.onBlast?.(pos, r);
     this.events.push({ type: 'boom', pos: pos.clone(), r });
     const c = V();
     const from = pos.clone().setY(Math.max(pos.y, height(pos.x, pos.z) + 0.3));
