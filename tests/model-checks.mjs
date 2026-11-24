@@ -11,7 +11,7 @@ export const exposeParts = () => {
   for (const [k, m] of Object.entries(c.gear)) PART_GEO[`gear-${k}`] = m.geometry;
   for (const [k, m] of Object.entries(c.marks)) PART_GEO[`mark-${k}`] = m.geometry;
   // the head and helmet are open at the neck and under the brim on purpose (a skull and a shell)
-  window.__parts = { PART_GEO, HEAD: c.head.geometry, HELMET: c.helmet.geometry };
+  window.__parts = { PART_GEO, HEAD: c.head.geometry, HELMET: c.helmets.rifleman.geometry };
 };
 
 export const modelChecks = () => {
@@ -55,7 +55,7 @@ export const modelChecks = () => {
     for (let i = 0; i < p.count; i += step) pts.push(new THREE.Vector3().fromBufferAttribute(p, i));
     return pts;
   };
-  const S = { boot: sample(crowd.boot.geometry), body: sample(crowd.body.geometry, 400), pack: sample(crowd.pack.geometry), head: sample(crowd.head.geometry), helmet: sample(crowd.helmet.geometry), hand: sample(crowd.handL.geometry) };
+  const S = { boot: sample(crowd.boot.geometry), body: sample(crowd.body.geometry, 400), pack: sample(crowd.pack.geometry), head: sample(crowd.head.geometry), helmet: sample(crowd.helmets.rifleman.geometry), hand: sample(crowd.handL.geometry) };
   const bodyInv = new THREE.Matrix4();
   const v = new THREE.Vector3();
   // inside the torso block (rounded), a little smaller so touching surfaces don't count
