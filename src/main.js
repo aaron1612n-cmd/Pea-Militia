@@ -268,6 +268,7 @@ function startBattle(s) {
   player.isPlayer = true;
   player.semiLatch = true;
   player.respawnT = 0;
+  clearPlayerEffects();
   battle.setPlayer(player);
   const T = battle.teams[settings.playerTeam];
   player.pos.copy(T.base);
@@ -342,8 +343,8 @@ function toggleFree(on = cam.mode !== 'free', start = false) {
   } else {
     const gx = THREE.MathUtils.clamp(cam.fr.x, -HALF + 2, HALF - 2), gz = THREE.MathUtils.clamp(cam.fr.z, -HALF + 2, HALF - 2);
     player.pos.set(gx, 0, gz); player.vel.set(0, 0, 0);
-    player.hp = player.maxHp; player.alive = true; player.deadT = 0; player.respawnT = 0; player.grounded = false;
-    player.wound = 0; player.lost = 0; player.wounds = null; player.marks = null; player.rag = null; fx.gore.forget(player);
+    player.alive = true; player.deadT = 0; player.respawnT = 0; player.grounded = false;
+    player.resetBody(); fx.gore.forget(player); clearPlayerEffects();
     for (const w of player.weapons) { w.mag = w.def.mag; w.reserve = w.def.reserve ?? Infinity; }
     if (!battle.units.includes(player)) battle.units.push(player);
     cam.yaw = cam.yaw; cam.mode = settings.view; cam.blend = settings.view === '1p' ? 1 : 0;
@@ -728,19 +729,26 @@ function updatePlayer(dt, inp) {
   player.update(dt, battle);
 }
 
+// screen and sound leftovers from being hurt: blood on the lens, deafness, ringing, shake, bleed text
+function clearPlayerEffects() {
+  bloodEl.replaceChildren();
+  audio.deaf = 0; audio.sup = 0;
+  cam.shake = 0; cam.ads = 0; adsToggle = false;
+  hud.hurtT = 0;
+  hud.bleedEl.hidden = true; hud.last.bl = '';
+}
+
 function respawnPlayer() {
   const T = battle.teams[player.team];
   const at = battle.spawnSpot(player.team);
   player.pos.copy(at);
   player.vel.set(0, 0, 0);
   player.alive = true;
-  player.hp = player.maxHp;
-  player.burn = 0;
-  player.wound = 0; player.lost = 0; player.wounds = null; player.marks = null; player.rag = null; player.flinch = 0; player.suppression = 0;
+  player.resetBody();
   fx.gore.forget(player);
+  clearPlayerEffects();
   player.respawnT = 0;
   player.deadT = 0;
-  player.reloadT = player.throwT = 0;
   for (const w of player.weapons) { w.mag = w.def.mag; w.reserve = w.def.reserve ?? Infinity; w.heat = 0; w.locked = 0; }
   if (settings.mode === 'battle') T.tickets = Math.max(0, T.tickets - 1);
   const f = Math.atan2(-at.x, -at.z);
