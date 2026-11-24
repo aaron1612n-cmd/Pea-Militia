@@ -116,6 +116,8 @@ export class Squad {
     this.holdA = Math.random() * Math.PI * 2; // where around a point this squad settles
     this.holding = false;
     this.watch = null;
+    this.cautious = false; // enemy close enough that nobody strolls across open ground
+    this.foePos = null;
   }
 
   get alive() { return this.members.filter((m) => m.alive); }
@@ -239,8 +241,14 @@ export class Squad {
     }
     if (this.rotate || (this.ldStall || 0) >= 4) this.rotateLeader(goal);
 
+    // wary: an enemy within ~100 m, seen or not. Move cover to cover in bounds, never stroll across open ground
+    this.cautious = false; this.foePos = null;
+    let fd = 100;
+    for (const m of alive) { const b = m.brain; if (b && b.foe && b.foeD < fd) { fd = b.foeD; this.foePos = b.foe; this.cautious = true; } }
+    if (this.cautious && this.objective && flat(lead.pos, this.objective.pos) < this.objective.r * 1.2) this.cautious = false;
+    const fight = this.inContact();
+    const contact = fight || this.cautious;
     // bounding overwatch: under fire the anchor creeps forward a few metres at a time
-    const contact = this.inContact();
     if (!this.anchor) this.anchor = lead.pos.clone();
     if (goal) {
       const to = V().subVectors(goal, this.anchor).setY(0);
@@ -248,7 +256,7 @@ export class Squad {
       if (contact) {
         // pinned down head-on for too long: swing wide round the enemy's flank
         this.pinT = (this.pinT || 0) + dt;
-        if (this.pinT > 14 && !this.waypoint && w.time > (this.flankCool || 0) && this.contact?.pos) {
+        if (fight && this.pinT > 14 && !this.waypoint && w.time > (this.flankCool || 0) && this.contact?.pos) {
           const cp = this.contact.pos, to = V().subVectors(cp, lead.pos).setY(0), cd = to.length();
           const progress = this.pinRef == null ? 99 : this.pinRef - cd;
           this.pinRef = cd;
@@ -266,11 +274,11 @@ export class Squad {
         }
         this.boundT -= dt;
         if (this.boundT <= 0) {
-          this.boundT = rand(5, 8);
+          this.boundT = fight ? rand(5, 8) : rand(3.5, 5.5);
           this.bound ^= 1;
           // push forward if not badly outnumbered nearby
           const ratio = this.localRatio(lead.pos);
-          if (ratio >= 0.8 && d > 3) this.anchor.addScaledVector(to.normalize(), Math.min(d, rand(6, 10)));
+          if (ratio >= 0.8 && d > 3) this.anchor.addScaledVector(to.normalize(), Math.min(d, fight ? rand(6, 10) : rand(10, 15)));
           else if (ratio < 0.45) {
             // pull back a little toward home
             const base = w.teams[this.team]?.base;
@@ -297,7 +305,8 @@ export class Squad {
       }
       if (d > 0.5) this.facing = Math.atan2(goal.x - this.anchor.x, goal.z - this.anchor.z);
     } else this.anchor.copy(lead.pos).setY(0);
-    if (contact && this.contact.pos) this.facing = Math.atan2(this.contact.pos.x - this.anchor.x, this.contact.pos.z - this.anchor.z);
+    const face = fight && this.contact.pos ? this.contact.pos : this.cautious ? this.foePos : null;
+    if (face) this.facing = Math.atan2(face.x - this.anchor.x, face.z - this.anchor.z);
   }
 
   // friendlies vs enemies within 30 m
@@ -382,6 +391,8 @@ export class Brain {
 
   hurtBy(from) {
     if (!from || !from.alive || from.team === this.u.team) return;
+    this.squad.know(from, from.pos, true); // shot at: the whole squad knows there is a fight
+    this.badCover = null;
     // turn on whoever is shooting at us if we have nothing better
     if (!this.target || !this.seen) { this.target = from; this.react = Math.min(this.react, 0.15); }
   }
@@ -402,6 +413,13 @@ export class Brain {
     const u = this.u, w = this.w, sq = this.squad;
     const def = u.weapon.def;
     const eye = u.eye(V());
+    // nearest hostile on foot within 100 m, seen or not: the squad goes cautious when one is about
+    this.foe = null; this.foeD = 1e9;
+    for (const e of w.nearUnits(u.pos.x, u.pos.z, 100)) {
+      if (!e.alive || !hostile(e.team, u.team)) continue;
+      const d = Math.hypot(e.pos.x - u.pos.x, e.pos.z - u.pos.z);
+      if (d < this.foeD) { this.foeD = d; this.foe = e.pos; }
+    }
     // perception: nearest few hostiles in range, checked for line of sight
     const near = w.nearUnits(u.pos.x, u.pos.z, SIGHT);
     const c = this.cands;
@@ -465,8 +483,9 @@ export class Brain {
 
     // ---- where to stand
     const slot = sq.retreating ? sq.anchor.clone() : sq.slot(this.slotIndex());
-    const contact = sq.inContact() || this.seen;
-    const threat = this.seen ? this.target.pos : sq.contact?.pos;
+    const contact = sq.inContact() || this.seen || (sq.cautious && !sq.holding && !!sq.foePos);
+    const threat = this.seen ? this.target.pos : (sq.inContact() ? sq.contact.pos : sq.foePos);
+    const suppressed = u.suppression > 0.4;
     const lowHp = u.hp < 35;
     this.mission = u.kind === 'medic' && !this.seen && !sq.retreating && u.suppression < 0.3 ? this.medicMission() : null;
     if (this.mission) {
@@ -482,8 +501,8 @@ export class Brain {
       const held = this.cover && !this.coverBad(this.cover, threat) && this.cover.prop.alive !== false && (!this.cover.terrain || w.time - this.cover.t < 10);
       if (!held || (!this.overwatch && this.cover.dist2(slot) > 100)) {
         this.releaseCover();
-        const range = sq.retreating || lowHp ? 14 : 9;
-        const from = sq.retreating || lowHp ? u.pos : slot;
+        const range = sq.retreating || lowHp || suppressed ? 14 : 12;
+        const from = sq.retreating || lowHp || suppressed ? u.pos : slot;
         let cv = this.findCover(from, threat, range);
         // no solid cover about: use the lie of the land, a dip or reverse slope to fight from
         if (!cv && w.time > this.defT) { this.defT = w.time + 1.5; cv = this.findDefilade(from, threat, range + 4); }
@@ -496,7 +515,7 @@ export class Brain {
         if (want !== this.peeking && w.time - (this.peekT || 0) > 0.9) { this.peeking = want; this.peekT = w.time; }
         const shooting = this.peeking;
         this.goal = this.cover.high && shooting ? new THREE.Vector3(this.cover.px, 0, this.cover.pz) : new THREE.Vector3(this.cover.x, 0, this.cover.z);
-      } else if (this.seen && (def.id === 'smg' || def.id === 'flame') && !lowHp) {
+      } else if (this.seen && (def.id === 'smg' || def.id === 'flame') && !lowHp && !suppressed) {
         // close-range weapons press in to their range
         const d = this.target.pos.distanceTo(u.pos);
         const want = (def.ideal[0] + def.ideal[1]) / 2;
@@ -775,7 +794,9 @@ export class Brain {
     // run when there's ground to cover: advancing, flanking, falling back, or caught in the open
     // (the unit itself stops sprinting the moment it needs to shoot or runs out of stamina)
     const open = !this.cover || gd > 3;
-    c.sprint = evading || open && ((gd > 7 && (!this.seen || sq.retreating || u.suppression > 0.25)) || gd > 16 || (sq.retreating && gd > 3));
+    // dash between covers; the half that is covering stays down
+    const dash = sq.cautious && !this.seen && !this.overwatch && gd > 3 && !sq.holding;
+    c.sprint = evading || dash || open && ((gd > 7 && (!this.seen || sq.retreating || u.suppression > 0.25)) || gd > 16 || (sq.retreating && gd > 3));
     c.speed = 1;
 
     this.watchdog(dt, gd, wl);
@@ -842,7 +863,7 @@ export class Brain {
       c.kneel = (inCover && !this.cover.high) || (!this.cover && (def.id === 'mg' || def.id === 'rifle' || def.id === 'launcher') && wl < 0.3) || (sup > 0.6 && gd < 3);
       if (inCover && !this.cover.high && sup > 0.6) c.fire = false;
       // caught in the open under heavy fire, or a gunner settling in: go prone for a while
-      if (!this.cover && (sup > 0.8 || (def.id === 'mg' && wl < 0.2 && this.seenT > 1.5))) this.proneUntil = w.time + rand(2, 4);
+      if (!this.cover && (sup > 0.5 || (def.id === 'mg' && wl < 0.2 && this.seenT > 1.5))) this.proneUntil = w.time + rand(2, 4);
       c.prone = w.time < (this.proneUntil || 0) && !sq.retreating && gd < 3; // crawling a long way is lingering
     } else {
       this.react = Math.max(this.react, 0.15);
@@ -858,13 +879,16 @@ export class Brain {
           return;
         }
       }
-      c.prone = w.time < (this.proneUntil || 0) && gd < 1;
+      // no cover and an enemy about: the covering half lies down; anyone shot at goes to ground
+      if (!this.cover && sup > 0.4) this.proneUntil = w.time + rand(2, 4);
+      const lieLow = !this.cover && sq.cautious && !sq.holding && !sq.retreating && gd < 2.5 && (this.overwatch || sq.size < 4);
+      c.prone = (w.time < (this.proneUntil || 0) && gd < 1) || lieLow;
       // look where trouble was, or where we're going
       const look = sq.contact && w.time - sq.contact.t < 8 ? sq.contact.pos : sq.holding && gd < 1 ? sq.watch : null;
       // keep the gun on the last spot for a moment after losing sight, instead of snapping away
       if (this.lastAim && w.time - this.lastAimT < 1.2) c.aimAt = this.lastAim.setY(Math.max(this.lastAim.y, height(this.lastAim.x, this.lastAim.z) + 0.15));
       else c.aimAt = look ? look.clone().setY(Math.max(U.BODY_Y + look.y, height(look.x, look.z) + 0.15)) : null;
-      c.kneel = !!(inCover && sq.inContact());
+      c.kneel = !!(inCover && (sq.inContact() || sq.cautious));
       if (u.weapon.mag < u.weapon.def.mag * 0.5 && !u.busy) c.reload = true;
     }
     if (u.wi !== 0 && !this.nade && u.weapon.id === 'grenade') u.setWeapon(0);
