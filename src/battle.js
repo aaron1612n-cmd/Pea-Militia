@@ -725,7 +725,7 @@ export class Battle {
     this.vehicles = this.vehicles.filter((q) => q !== v);
     for (const u of v.seats) if (u && u.vehicle === v) { u.vehicle = null; }
   }
-  // wrecks burn out and vanish; destroyed tanks are replaced at the base after a while
+  // wrecks burn out and vanish; destroyed striders are replaced at the base after a while
   updateVehicles(dt) {
     for (const v of [...this.vehicles]) {
       if (!v.alive && v.deadT > 50) this.removeVehicle(v);
@@ -739,10 +739,10 @@ export class Battle {
       if (due && this.settings.mode === 'battle' && this.reinforce) { t.vehicleQ = t.vehicleQ.filter((q) => q !== due); this.spawnTeamVehicle(t, true, due.slot, due.kind); }
     }
   }
-  spawnTeamVehicle(t, crew = true, slot = 0, kind = 'tank') {
+  spawnTeamVehicle(t, crew = true, slot = 0, kind = 'walker') {
     const f = Math.atan2(-t.base.x, -t.base.z);
-    // pads in a row either side of the base: tanks nearest, cars further out
-    const k = { tank: 12, jeep: 20, hover: 27, walker: 34 }[kind] ?? 12;
+    // pads in a row either side of the base: walkers in a row
+    const k = { walker: 14 }[kind] ?? 14;
     const side = Math.cos(f) * (slot ? -1 : 1), sz = -Math.sin(f) * (slot ? -1 : 1);
     const at = { x: t.base.x + side * k + Math.sin(f) * 6, z: t.base.z + sz * k + Math.cos(f) * 6 };
     const v = this.addVehicle(kind, t.id, at.x, at.z, f, { crew });
