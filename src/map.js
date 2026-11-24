@@ -43,8 +43,8 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
   P('crate', C.x + 1.6, C.z + 1.1, 0.3); P('crate', C.x - 1.9, C.z - 0.9, 1.1); P('drum', C.x + 2.2, C.z - 2.1);
   P('ruinLow', C.x - 3.3, C.z + 3.6, 0.6);
   let houses = 0;
-  for (let k = 0; k < 50 && houses < 9; k++) {
-    const a = fixed() * Math.PI * 2, r = 13 + fixed() * 16;
+  for (let k = 0; k < 140 && houses < 16; k++) {
+    const a = fixed() * Math.PI * 2, r = 12 + fixed() * 24;
     const x = C.x + Math.cos(a) * r, z = C.z + Math.sin(a) * r;
     if (nearRoad(x, z) < 4.5 || !clear(x, z, 4.5) || !level(x, z, 3.5, 0.9)) continue;
     house(x, z, Math.round((a + Math.PI / 2) / (Math.PI / 2)) * (Math.PI / 2) + (fixed() - 0.5) * 0.2);
@@ -107,7 +107,7 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
     && POINTS.every((p) => Math.hypot(x - p.x, z - p.z) > POINT_R + 3) && layout.bases.every((b) => Math.hypot(x - b.x, z - b.z) > 16);
   const tree = (x, z, kind, s) => { trees.push({ x, z, kind, s, yaw: fixed() * Math.PI * 2 }); };
   let woods = 0;
-  for (let k = 0; k < 240 && woods < 18; k++) {
+  for (let k = 0; k < 500 && woods < 30; k++) {
     const x = (fixed() * 2 - 1) * (EDGE - 6), z = (fixed() * 2 - 1) * (EDGE - 6);
     if (nearRoad(x, z) < 7 || POINTS.some((p) => Math.hypot(x - p.x, z - p.z) < 20) || layout.bases.some((b) => Math.hypot(x - b.x, z - b.z) < 26)) continue;
     if (trees.some((t) => Math.hypot(t.x - x, t.z - z) < 18)) continue;
@@ -140,7 +140,7 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
       if (treeOK(x, z, 2.5)) tree(x + (fixed() - 0.5) * 0.4, z + (fixed() - 0.5) * 0.4, 'leaf', 0.55 + fixed() * 0.15);
     }
   }
-  for (let i = 0, tries = 0; i < 60 && tries < 600; tries++) {
+  for (let i = 0, tries = 0; i < 140 && tries < 1400; tries++) {
     const x = (fixed() * 2 - 1) * EDGE, z = (fixed() * 2 - 1) * EDGE;
     if (treeOK(x, z, 6)) { tree(x, z, fixed() < 0.5 ? 'fir' : 'leaf', 0.7 + fixed() * 0.4); i++; }
   }
@@ -162,7 +162,7 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
   battle.decor.push(decor);
 
   // ---- field walls: short dry-stone runs with gaps, along level ground
-  for (let k = 0, runs = 0; k < 240 && runs < 28; k++) {
+  for (let k = 0, runs = 0; k < 600 && runs < 55; k++) {
     const x0 = (fixed() * 2 - 1) * (EDGE - 8), z0 = (fixed() * 2 - 1) * (EDGE - 8);
     if (nearRoad(x0, z0) < 3 || !clear(x0, z0, 3) || POINTS.some((p) => Math.hypot(x0 - p.x, z0 - p.z) < POINT_R + 2)) continue;
     runs++;
@@ -177,8 +177,38 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
     }
   }
 
+  // ---- trench lines: two facing rows of sandbags with a gap between, broken into firing bays
+  for (let k = 0, lines = 0; k < 400 && lines < 14; k++) {
+    const x0 = (fixed() * 2 - 1) * (EDGE - 14), z0 = (fixed() * 2 - 1) * (EDGE - 14);
+    if (nearRoad(x0, z0) < 5 || !clear(x0, z0, 6) || POINTS.some((p) => Math.hypot(x0 - p.x, z0 - p.z) < POINT_R + 4)) continue;
+    const yaw = fixed() * Math.PI, bays = 3 + Math.floor(fixed() * 3);
+    let okRun = true;
+    const spots = [];
+    for (let i = 0; i < bays; i++) {
+      const [bx, bz] = Lx(x0, z0, yaw, i * 3.3, 0);
+      if (!inside(bx, bz, 3) || nearRoad(bx, bz) < 2 || !level(bx, bz, 2, 0.5) || !clear(bx, bz, 2)) { okRun = false; break; }
+      spots.push([bx, bz]);
+    }
+    if (!okRun) continue;
+    lines++;
+    spots.forEach(([bx, bz], i) => {
+      if (i % 4 !== 3) {
+        const [ax, az] = Lx(bx, bz, yaw, 0, 1.6), [cx, cz] = Lx(bx, bz, yaw, 0, -1.6);
+        P('sandbags', ax, az, yaw); P('sandbags', cx, cz, yaw);
+      }
+      keep.push([bx, bz, 3.2]);
+    });
+  }
+  // ---- ruined hamlets scattered between the objectives: wall fragments, a house or two
+  for (let k = 0, h = 0; k < 400 && h < 7; k++) {
+    const x = (fixed() * 2 - 1) * (EDGE - 12), z = (fixed() * 2 - 1) * (EDGE - 12);
+    if (nearRoad(x, z) < 5 || !clear(x, z, 6) || !level(x, z, 3.5, 0.9) || POINTS.some((p) => Math.hypot(x - p.x, z - p.z) < POINT_R + 10)) continue;
+    house(x, z, Math.round(fixed() * 3) * (Math.PI / 2) + (fixed() - 0.5) * 0.2);
+    h++;
+  }
+
   // ---- boulders where the ground breaks
-  for (let i = 0, tries = 0; i < 46 && tries < 900; tries++) {
+  for (let i = 0, tries = 0; i < 80 && tries < 1500; tries++) {
     const x = (fixed() * 2 - 1) * EDGE, z = (fixed() * 2 - 1) * EDGE;
     if (slopeAt(x, z) < 0.18 && fixed() < 0.85) continue;
     if (nearRoad(x, z) < 1.5 || !clear(x, z, 1.6)) continue;
@@ -187,10 +217,10 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
 
   // ---- loose cover, shuffled each battle
   let placed = 0, tries = 0;
-  while (placed < 80 && tries++ < 1600) {
+  while (placed < 190 && tries++ < 3500) {
     const x = (loose() * 2 - 1) * (EDGE - 4), z = (loose() * 2 - 1) * (EDGE - 4);
-    if (!clear(x, z, 4) || !level(x, z, 2, 0.4) || nearRoad(x, z) < 0.5) continue;
-    keep.push([x, z, 4]);
+    if (!clear(x, z, 3) || !level(x, z, 2, 0.4) || nearRoad(x, z) < 0.5) continue;
+    keep.push([x, z, 3]);
     placed++;
     const kind = loose();
     const yaw = loose() * Math.PI;
