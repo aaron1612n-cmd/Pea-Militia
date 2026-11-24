@@ -1,6 +1,5 @@
 import * as THREE from 'three';
 import { U, pose, makePose, HOLD } from './rig.js';
-import { U, pose, makePose, HOLD } from './rig.js';
 import { strideLength } from './gait.js';
 import { WEAPONS, makeWeapon } from './weapons.js';
 import { wrap } from './physics.js';
