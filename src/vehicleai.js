@@ -101,7 +101,7 @@ export class VehicleBrain {
     this.target = best; this.seen = !!best;
     if (best) this.err = V().set(rand(-1, 1), rand(-0.3, 0.6), rand(-1, 1)).multiplyScalar(0.5 + Math.hypot(best.pos.x - v.pos.x, best.pos.z - v.pos.z) * 0.012);
     // stop and fight when it is close and in the open; keep rolling otherwise
-    if (best && (v.def.drive === 'tracked' || v.def.drive === 'legged')) { const d = Math.hypot(best.pos.x - v.pos.x, best.pos.z - v.pos.z); this.hold = d < 34 && !!best.isVehicle || d < 16; }
+    if (best && (true)) { const d = Math.hypot(best.pos.x - v.pos.x, best.pos.z - v.pos.z); this.hold = d < 34 && !!best.isVehicle || d < 16; }
     else this.hold = false;
   }
 
@@ -158,7 +158,7 @@ export class VehicleBrain {
     }
     const err = wrap(heading - v.yaw);
     c.steer = clamp(-err * 2.4, -1, 1);
-    if (v.def.drive === 'tracked' || v.def.drive === 'legged') c.throttle = Math.abs(err) > 1.3 ? 0 : clamp(1 - Math.abs(err) / 1.5, 0.2, 1) * Math.min(1, dist / 14);
+    if (true) c.throttle = Math.abs(err) > 1.3 ? 0 : clamp(1 - Math.abs(err) / 1.5, 0.2, 1) * Math.min(1, dist / 14);
     else c.throttle = clamp(1 - Math.abs(err) / 2.4, 0.35, 1) * Math.min(1, Math.max(0.35, dist / 14)); // cars and skiffs turn on the move
     // a fixed-forward gun means pointing the whole machine at the enemy
     const lim = v.def.turret?.yawLimit;

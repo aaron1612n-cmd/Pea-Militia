@@ -259,11 +259,8 @@ function startBattle(s) {
         battle.spawnSquad(t.id, at, Array.from({ length: m }, (_, i) => SQUAD_MIX[t.id][(i + k) % SQUAD_MIX[t.id].length]), f);
       }
       t.tickets = tickets;
-      battle.spawnTeamVehicle(t, true, 0, 'tank');
-      battle.spawnTeamVehicle(t, true, 0, 'jeep');
-      battle.spawnTeamVehicle(t, true, 0, 'hover');
       battle.spawnTeamVehicle(t, true, 0, 'walker');
-      if (t.id === settings.playerTeam) { battle.spawnTeamVehicle(t, false, 1, 'tank'); battle.spawnTeamVehicle(t, false, 1, 'jeep'); battle.spawnTeamVehicle(t, false, 1, 'hover'); battle.spawnTeamVehicle(t, false, 1, 'walker'); } // some for you to climb into
+      if (t.id === settings.playerTeam) { battle.spawnTeamVehicle(t, false, 1, 'walker'); } // some for you to climb into
     }
   }
   battle.onHitMarker = (kill) => { hud.hit(kill); if (kill) audio.play('ping', null, 0.4); };

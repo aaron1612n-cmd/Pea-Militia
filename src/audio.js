@@ -252,7 +252,7 @@ export class Audio {
     const c = this.ctx;
     if (!c) return { set() {}, stop() {} };
     const o = c.createOscillator();
-    o.type = kind === 'hover' ? 'triangle' : 'sawtooth';
+    o.type = 'sawtooth';
     const f = c.createBiquadFilter();
     f.type = 'lowpass'; f.frequency.value = 300;
     const g = c.createGain();
@@ -261,7 +261,7 @@ export class Audio {
     o.connect(f).connect(g);
     if (pan) g.connect(pan).connect(this.master); else g.connect(this.master);
     o.start();
-    const base = { tank: 38, jeep: 62, walker: 45, hover: 120 }[kind] || 50;
+    const base = { walker: 45 }[kind] || 45;
     return {
       set: (k, p) => {
         const t = c.currentTime;
