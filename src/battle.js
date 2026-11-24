@@ -88,6 +88,7 @@ let stampN = 1;
 
 // Everything on the field: soldiers, squads, props, projectiles, control points; firing, hits,
 // explosions, reinforcements and the rules that connect them.
+const wrapAng = (a) => Math.atan2(Math.sin(a), Math.cos(a));
 export class Battle {
   constructor(scene, fx, audio) {
     this.scene = scene;
@@ -366,6 +367,35 @@ export class Battle {
     best.point = o.clone().addScaledVector(d, best.t);
     best.hit = !!(best.unit || best.prop || best.ground || best.vehicle);
     return best;
+  }
+
+  // Fog of war: an enemy is known only while you or a teammate has clear line of sight to it.
+  // Each frame a few observers look around; what they see gets seenAt and a last-known spot.
+  updateSight() {
+    const pl = this.player; if (!pl) return;
+    const obs = this.sightObs || (this.sightObs = []);
+    if (!this.sightI || this.sightI >= obs.length) {
+      this.sightI = 0; obs.length = 0;
+      for (const u of this.units) if (u.alive && u.team === pl.team && !u.vehicle) obs.push(u);
+      for (const v of this.vehicles) if (v.alive && v.team === pl.team) obs.push(v);
+    }
+    const eye = V(), tc = V(), end = Math.min(obs.length, this.sightI + 8);
+    for (; this.sightI < end; this.sightI++) {
+      const o = obs[this.sightI];
+      if (!o.alive) continue;
+      eye.set(o.pos.x, o.pos.y + (o.isVehicle ? 2.6 : 1.6), o.pos.z);
+      const face = o.isVehicle ? o.yaw : o.facing, range = o.isVehicle ? 130 : 100;
+      for (const list of [this.units, this.vehicles]) for (const e of list) {
+        if (!e.alive || e.vehicle || !hostile(e.team, pl.team)) continue;
+        const dx = e.pos.x - o.pos.x, dz = e.pos.z - o.pos.z, d2 = dx * dx + dz * dz;
+        if (d2 > range * range) continue;
+        if (d2 > 100 && face !== undefined && Math.abs(wrapAng(Math.atan2(dx, dz) - face)) > 1.6) continue;
+        e.center(tc);
+        if (!this.los(eye, tc)) continue;
+        e.seenAt = this.time;
+        (e.lastKnown || (e.lastKnown = new THREE.Vector3())).copy(e.pos);
+      }
+    }
   }
 
   // Clear line between two points (props block; soldiers don't).
@@ -895,6 +925,7 @@ export class Battle {
         }
       }
     }
+    this.updateSight();
     this.updateProjectiles(dt);
     this.callins.update(dt);
     this.updatePoints(dt);
