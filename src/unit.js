@@ -215,16 +215,20 @@ export class Unit {
     const kick = new THREE.Vector3();
     this.heavy = h?.kind === 'blast';
     if (h && h.dir && this.t - h.t < 0.05) {
-      const k = h.kind === 'blast' ? THREE.MathUtils.clamp(2.4 + h.dmg / 70, 2.4, 6) : THREE.MathUtils.clamp(0.35 + h.dmg / 200, 0.4, 1.2);
+      // bullets: small for rifles, bigger for heavy rounds; head and leg hits shove less than torso
+      const zk = { head: 0.8, torso: 1, arm: 0.7, leg: 0.6 }[h.zone] ?? 1;
+      const k = h.kind === 'blast' ? THREE.MathUtils.clamp(3 + h.dmg / 40, 3, 9) : THREE.MathUtils.clamp(0.5 + h.dmg / 60, 0.6, 3.2) * zk;
       kick.copy(h.dir).setY(0).normalize().multiplyScalar(k);
-      kick.y = h.kind === 'blast' ? 2.2 + Math.random() * 1.2 : 0.05 + Math.random() * 0.15;
+      kick.y = h.kind === 'blast' ? 2.5 + Math.random() * 1.5 + h.dmg / 80 : (h.zone === 'leg' ? 0 : 0.05 + Math.random() * 0.2);
     } else {
       // burned or bled out: the knees go and the body slumps where it stood
       const a = this.facing + (Math.random() < 0.5 ? 0 : Math.PI) + (Math.random() - 0.5);
       kick.set(Math.sin(a) * 0.35, 0, Math.cos(a) * 0.35);
     }
-    this.vel.set(0, 0, 0);
+    // the body keeps whatever speed the soldier had (run, sprint, fall); the ragdoll adds the hit on top
     this.rag = new Ragdoll(this, kick);
+    if (window.__DEATHLOG__) window.__DEATHLOG__.push({ v0: this.vel.clone(), p0: this.pos.clone(), kind: h?.kind || 'none', rag: this.rag });
+    this.vel.set(0, 0, 0);
     this.lastThud = 0;
     if (world) world.onDeath(this, from);
   }
