@@ -5,6 +5,7 @@ import { canvasTex, decalMesh, stamp } from './effects.js';
 import { TEAMS } from './factions.js';
 import { U } from './rig.js';
 import { onShell, HALF } from './wounds.js';
+import { rayBox } from './physics.js';
 
 // Stylised gore, three levels (0 off, 1 low, 2 full), remembered in localStorage.
 //  - spray: streaks of blood that arc, fall and splat where they land, plus a red mist
@@ -84,6 +85,7 @@ class DecalSet {
     this.quat = Array.from({ length: n }, () => new THREE.Quaternion());
     this.m = new THREE.Matrix4(); this.s = new THREE.Vector3(); this.p = new THREE.Vector3();
     this.tick = 0;
+    this._x = new THREE.Vector3(); this._y = new THREE.Vector3(); this._z = new THREE.Vector3();
   }
 
   add(x, z, size, spreadTo = 0, yaw) {
@@ -99,6 +101,26 @@ class DecalSet {
     this.age[i] = 0; this.size[i] = spreadTo ? size * 0.35 : size; this.grow[i] = spreadTo ? size : 0;
     this.mesh.getMatrixAt(i, this.m);
     this.m.decompose(this.pos[i], this.quat[i], this.s);
+    return i;
+  }
+
+  // stamp on any surface: normal n, long axis pointing along `dir` (projected onto the surface)
+  addOn(p, n, size, dir, spreadTo = 0) {
+    const i = this.mesh.userData.next++ % this.n;
+    const y = this._y.copy(n), z = this._z.copy(dir);
+    z.addScaledVector(y, -z.dot(y));
+    if (z.lengthSq() < 1e-4) z.set(Math.random() - 0.5, 0, Math.random() - 0.5).addScaledVector(y, 0).cross(y);
+    if (z.lengthSq() < 1e-4) z.set(1, 0, 0);
+    z.normalize();
+    const x = this._x.crossVectors(y, z);
+    this.m.makeBasis(x, y, z);
+    const q = this.quat[i].setFromRotationMatrix(this.m);
+    const sz = spreadTo ? size * 0.35 : size;
+    this.pos[i].copy(p).addScaledVector(n, 0.012);
+    this.mesh.setMatrixAt(i, this.m.compose(this.pos[i], q, this.s.set(sz, 1, sz)));
+    this.mesh.count = Math.min(this.n, Math.max(this.mesh.count, i + 1));
+    this.mesh.instanceMatrix.needsUpdate = true;
+    this.age[i] = 0; this.size[i] = sz; this.grow[i] = spreadTo ? size : 0;
     return i;
   }
 
@@ -136,10 +158,14 @@ export class Gore {
     this.splats = [0, 1, 2].map(() => new DecalSet(scene, 130, splatTexture('splat'), 0.65));
     this.streaks = new DecalSet(scene, 70, splatTexture('streak'), 0.7);
     this.pools = new DecalSet(scene, 90, splatTexture('pool'), 0.3);
-    this.sets = [...this.splats, this.streaks, this.pools];
+    this.walls = new DecalSet(scene, 140, splatTexture('splat'), 0.65);
+    this.wallRuns = new DecalSet(scene, 60, splatTexture('streak'), 0.7);
+    this.sets = [...this.splats, this.streaks, this.pools, this.walls, this.wallRuns];
+    this.world = null; // the battle, set by main: props and soldiers for blood to hit
+    this.hitV = new THREE.Vector3(); this.hitN = new THREE.Vector3(); this.hitD = new THREE.Vector3(); this.hitO = new THREE.Vector3(); this.nbuf = [];
     this.si = 0;
-    // droplets: thin streaks stretched along their flight
-    const dg = new THREE.BoxGeometry(1, 1, 1);
+    // droplets: small beads, stretched a little along their flight
+    const dg = new THREE.IcosahedronGeometry(1, 0);
     this.dropMesh = new THREE.InstancedMesh(dg, new THREE.MeshBasicMaterial({ color: '#ffffff', fog: true }), DROP_MAX);
     this.dropMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(DROP_MAX * 3), 3);
     this.dropMesh.count = 0; this.dropMesh.frustumCulled = false;
@@ -154,6 +180,7 @@ export class Gore {
     this.gibs = [];
     this.gi = 0;
     this.bleeders = [];
+    this.live = []; // wounded soldiers still on their feet: they drip as they go
     this.runs = [];
     this.m = new THREE.Matrix4(); this.q = new THREE.Quaternion(); this.s = new THREE.Vector3(); this.v = new THREE.Vector3(); this.p = new THREE.Vector3();
     this.z = new THREE.Vector3(0, 0, 1);
@@ -170,8 +197,15 @@ export class Gore {
     for (const d of this.sets) d.clear();
     this.drops.length = 0; this.dropMesh.count = 0;
     this.gibs.length = 0; this.gi = 0; this.gibMesh.count = 0;
-    this.bleeders.length = 0;
+    this.bleeders.length = 0; this.live.length = 0;
     this.runs.length = 0;
+  }
+
+  // drop any bleeding or wound runs tied to a unit that is back on its feet
+  forget(u) {
+    this.bleeders = this.bleeders.filter((b) => b.u !== u);
+    this.live = this.live.filter((x) => x !== u);
+    this.runs = this.runs.filter((r) => !(u.wounds || []).includes(r));
   }
 
   rnd(s = 1) { return (Math.random() * 2 - 1) * s; }
@@ -180,7 +214,7 @@ export class Gore {
   // ---- droplets ----
   drop(pos, vel, size = 0.03, big = false) {
     if (this.drops.length >= DROP_MAX) this.drops.shift();
-    this.drops.push({ p: pos.clone(), v: vel.clone(), size, big, c: (Math.random() * 3) | 0 });
+    this.drops.push({ p: pos.clone(), v: vel.clone(), size, big, c: (Math.random() * 3) | 0, k: 0.04 / Math.max(size, 0.012) * (0.7 + Math.random() * 0.6) });
   }
 
   // a spray of droplets from pos along dir: speed range, spread, count
@@ -212,7 +246,7 @@ export class Gore {
     const q = onShell(xFace ? nx * U.W / 2 : side * HALF[0] * 1.1, y, xFace ? side * HALF[2] * 1.2 : nz * U.D / 2, {});
     const rec = (sa, sb, tile, dent, dd, extra) => { const r = { x: q.x, y: q.y, z: q.z, nx, nz, sa, sb, tile, sh: Math.random(), dent, dd }; if (extra) Object.assign(r, extra); w.push(r); return r; };
     const big = s * (exit ? 1.4 : 1);
-    if (kind === 'hole') rec(0.08, 0.08, 1, depth, depth);
+    if (kind === 'hole') rec(0.13, 0.13, 1, depth, depth);
     else if (kind === 'exit') rec(big * 2.4 + 0.1, big * 2.4 + 0.1, 3, -depth, -depth);
     else {
       rec(big * 2 + 0.06, big * 2 + 0.06, 0, 0, depth);
@@ -227,13 +261,14 @@ export class Gore {
     const L = this.level;
     if (!L || kind === 'fire') return;
     u.wound = Math.min(1, (u.wound || 0) + dmg / 80);
+    if (u.alive && !this.live.includes(u) && this.live.length < 60) this.live.push(u);
     const d = dir ? dir.clone().normalize() : UP;
     const back = d.clone().negate();
     const blast = kind === 'blast', plasma = kind === 'plasma';
     if (blast) {
       this.spray(pos, UP, 10 + dmg / 10, 2, 8, 1.6, 0.04);
       this.mist(pos, UP.clone().multiplyScalar(1.5), 1.3, 4, 0.55);
-      for (let i = 0; i < (L === 2 ? 4 : 2); i++) this.wound(u, this.v.set(this.rnd(), 0, this.rnd()), 0.07 + Math.random() * 0.08, i & 1, i & 1 ? 'exit' : 'splash', 0.025 + Math.random() * 0.02);
+      for (let i = 0; i < (L === 2 ? 6 : 3); i++) this.wound(u, this.v.set(this.rnd(), 0, this.rnd()), 0.1 + Math.random() * 0.1, i & 1, i & 1 ? 'exit' : 'hole', 0.05 + Math.random() * 0.035); // blasted craters
       this.bits(pos, UP, 6, 5);
       this.splat(pos.x + this.rnd(1.4), pos.z + this.rnd(1.4), 0.45 + Math.random() * 0.4);
       return;
@@ -252,11 +287,11 @@ export class Gore {
     this.spray(pos, d, 3 + heavy * 6, 3, 8 + heavy * 3, 0.45, 0.035);      // exit: a fan thrown out the far side
     this.mist(pos, d.clone().multiplyScalar(2), 0.35 + heavy * 0.4, 1 + (heavy > 0.8 ? 1 : 0), 0.45);
     // the round dents the shell going in, and sometimes tears out the far side
-    const depth = 0.012 + heavy * 0.01;
+    const depth = 0.022 + heavy * 0.016;
     this.wound(u, d, 0.05 + heavy * 0.03, false, 'splash', depth);
     this.wound(u, d, 0, false, 'hole', depth + 0.006);
-    if (dmg >= 18 && Math.random() < 0.45 + heavy * 0.25) {
-      this.wound(u, d, 0.07 + heavy * 0.04, true, 'exit', depth * 2);
+    if (dmg >= 18 && Math.random() < 0.65 + heavy * 0.2) {
+      this.wound(u, d, 0.1 + heavy * 0.05, true, 'exit', depth * 2);
       this.bits(pos, d, 2 + Math.round(heavy * 2), 4 + heavy * 2); // chips of shell and flesh out the back
     } else this.bits(pos, back, 1, 2.5);
     if (Math.random() < 0.35 + heavy * 0.2) {
@@ -293,7 +328,7 @@ export class Gore {
     if (L < 2 || !rag) return;
     const blast = kind === 'blast', plasma = kind === 'plasma';
     const heavy = dmg >= 45;
-    let limbs = blast ? 1 + Math.floor(Math.random() * 3) : plasma ? 1 + Math.floor(Math.random() * 2) : heavy ? (Math.random() < 0.45 ? 1 : 0) : Math.random() < 0.04 ? 1 : 0;
+    let limbs = blast ? 2 + Math.floor(Math.random() * 3) : plasma ? 1 + Math.floor(Math.random() * 2) : heavy ? (Math.random() < 0.45 ? 1 : 0) : Math.random() < 0.04 ? 1 : 0;
     let shells = blast ? 2 + Math.floor(Math.random() * 3) : plasma ? 1 : heavy && Math.random() < 0.4 ? 1 : 0;
     let chunks = blast ? 7 + Math.floor(Math.random() * 5) : plasma ? 4 : 2 + Math.floor(Math.random() * 3) + Math.floor(dmg / 30);
     const sp = blast ? 6 : plasma ? 4 : 3;
@@ -329,6 +364,65 @@ export class Gore {
     this.gibMesh.setMatrixAt(g.slot, this.m.compose(g.p, g.q, this.s.set(g.size[0], g.size[1], g.size[2])));
   }
 
+  // Did this droplet hit something on its last step? Leaves a splat shaped by speed and angle.
+  impact(d, sp) {
+    const p = d.p, v = d.v, o = this.hitO, w = this.world;
+    const N = this.hitN, dir = this.hitD.copy(v).divideScalar(sp || 1);
+    // cover and walls (props are oriented boxes)
+    if (w && w.propGrid) {
+      const seg = o.distanceTo(p);
+      if (seg > 1e-5) {
+        const ray = this.v.copy(p).sub(o).divideScalar(seg);
+        let best = null;
+        for (const pr of w.propGrid.near(p.x, p.z, 0.8, this.nbuf)) {
+          const h = rayBox(o, ray, seg, pr.box);
+          if (h && h.t > 0 && (!best || h.t < best.t)) best = h;
+        }
+        if (best) { p.copy(o).addScaledVector(ray, best.t); N.copy(best.n); this.land(d, sp, N, dir); return true; }
+      }
+    }
+    // soldiers: big beads that reach one leave a stain on it
+    if (w && d.big && p.y < 2.1 && sp > 1.2) {
+      for (const u of w.nearUnits(p.x, p.z, 0.5)) {
+        if (!u.alive || u.removed) continue;
+        const dx = p.x - u.pos.x, dz = p.z - u.pos.z;
+        if (dx * dx + dz * dz < 0.09 && p.y > u.pos.y && p.y < u.pos.y + U.H) {
+          if (Math.random() < 0.3 && this.level) { u.wound = Math.min(1, (u.wound || 0) + 0.01); this.wound(u, this.v.copy(dir).negate().setY(0), 0.04 + Math.random() * 0.04, false, 'splash', 0); }
+          this.mist(p, this.hitV.set(0, 0.3, 0), 0.2, 1, 0.3);
+          return true;
+        }
+      }
+    }
+    // ground
+    const gy = height(p.x, p.z);
+    if (p.y <= gy) { p.y = gy; this.land(d, sp, normalAt(p.x, p.z), dir); return true; }
+    return false;
+  }
+
+  land(d, sp, nrm, dir) {
+    if (!this.level) return;
+    const p = d.p, wall = nrm.y < 0.6;
+    const cosI = Math.abs(dir.dot(nrm)), shallow = 1 - cosI; // 1 = grazing
+    // light beads at slow speed just soak in; big and fast ones spread. Drips that fall a long way splash wider.
+    const big = d.big || sp > 6;
+    const size = Math.min(0.75, d.size * (2.6 + sp * 0.45) + Math.random() * 0.06);
+    if (!big && Math.random() < 0.55) return;
+    const set = wall ? this.walls : this.splats[this.si++ % 3];
+    if (shallow > 0.55 && sp > 4 && size > 0.18) {
+      // a glancing hit smears along its travel
+      (wall ? this.wallRuns : this.streaks).addOn(p, nrm, size * (1.1 + shallow * 0.8), dir);
+    } else set.addOn(p, nrm, size, dir);
+    if (wall && big) this.wallRuns.addOn(p, nrm, 0.25 + size * 0.7, this.hitV.set(0, -1, 0)); // runs down
+    // fast impacts throw satellite droplets back out
+    if (sp > 5 && d.big && this.drops.length < DROP_MAX * 0.75) {
+      const m = 1 + ((Math.random() * 3) | 0);
+      for (let i = 0; i < m; i++) {
+        const out = this.hitV.set(this.rnd(), Math.random(), this.rnd()).normalize().addScaledVector(nrm, 0.9).addScaledVector(dir, 0.35 * shallow).multiplyScalar(sp * (0.12 + Math.random() * 0.22));
+        this.drop(p.clone().addScaledVector(nrm, 0.03), out, d.size * (0.4 + Math.random() * 0.3), false);
+      }
+    }
+  }
+
   update(dt) {
     if (!this.level && !this.gibs.length && !this.bleeders.length && !this.drops.length) return;
     // gibs: tumble, bounce, trail blood, settle
@@ -354,22 +448,24 @@ export class Gore {
       dirty = true;
     }
     if (dirty) this.gibMesh.instanceMatrix.needsUpdate = true;
-    // droplets: arc, then splat where they land
+    // droplets: real ballistics. Gravity and air drag bend the arc, fast ones fly further, light
+    // mist slows and hangs, and each drop splats on whatever it meets: ground, cover or a soldier.
     const dm = this.dropMesh;
     let n = 0;
     const keep = [];
     for (const d of this.drops) {
-      d.v.y -= 14 * dt;
-      d.p.addScaledVector(d.v, dt);
-      const gy = height(d.p.x, d.p.z);
-      if (d.p.y <= gy) {
-        if (d.big) this.splat(d.p.x, d.p.z, 0.1 + d.size * 3 + Math.random() * 0.12);
-        continue;
-      }
+      const p = d.p, v = d.v;
+      this.hitO.copy(p);
+      v.y -= 11 * dt;
+      const damp = Math.exp(-d.k * dt);
+      v.multiplyScalar(damp);
+      p.addScaledVector(v, dt);
+      const sp = v.length();
+      if (this.impact(d, sp)) continue;
       keep.push(d);
-      const sp = d.v.length(), len = Math.min(0.16, d.size * 1.2 + sp * 0.012);
-      this.q.setFromUnitVectors(this.z, this.v.copy(d.v).divideScalar(sp || 1));
-      dm.setMatrixAt(n, this.m.compose(d.p, this.q, this.s.set(d.size * 0.45, d.size * 0.45, len)));
+      const stretch = Math.min(2.4, 1 + sp * 0.07), r = d.size * 0.85;
+      this.q.setFromUnitVectors(this.z, this.v.copy(v).divideScalar(sp || 1));
+      dm.setMatrixAt(n, this.m.compose(p, this.q, this.s.set(r, r, r * stretch)));
       const c = DROPC[d.c];
       dm.instanceColor.setXYZ(n, c.r, c.g, c.b);
       n++;
@@ -394,6 +490,19 @@ export class Gore {
       b.drip -= dt;
       if (b.drip <= 0 && b.t < 3) { b.drip = 0.12; this.spray(bp, UP, 2, 0.5, 2.5, 1.2, 0.03); this.splat(bp.x + this.rnd(0.4), bp.z + this.rnd(0.4), 0.2 + Math.random() * 0.2); }
       if (!b.pooled && (u.rag.asleep || b.t > 5)) { b.pooled = true; this.pools.add(bp.x, bp.z, b.size * (1.1 + Math.random() * 0.4), 1); this.bleeders.splice(i, 1); }
+    }
+    // wounded soldiers drip as they move: worse wounds drip faster, leaving a trail of spots
+    for (let i = this.live.length - 1; i >= 0; i--) {
+      const u = this.live[i];
+      if (!u.alive || u.removed || !(u.wound > 0.05)) { this.live.splice(i, 1); continue; }
+      u.dripT = (u.dripT ?? 0) - dt;
+      if (u.dripT <= 0) {
+        u.dripT = 0.55 / (0.3 + u.wound * 2.5) * (0.6 + Math.random() * 0.8);
+        const c = u.center(), sp = Math.hypot(u.vel.x, u.vel.z);
+        this.v.set(u.vel.x * 0.5 + this.rnd(0.4), 0.2 + Math.random() * 0.5, u.vel.z * 0.5 + this.rnd(0.4));
+        this.drop(this.p.set(c.x + this.rnd(0.12), c.y - 0.2 + this.rnd(0.3), c.z + this.rnd(0.12)), this.v, 0.026 + Math.random() * 0.016, true);
+        if (u.wound > 0.5 && sp > 0.5 && L2(this)) this.splat(u.pos.x, u.pos.z, 0.12 + Math.random() * 0.12);
+      }
     }
     // bleeding wounds creep down the shell
     for (let i = this.runs.length - 1; i >= 0; i--) {
