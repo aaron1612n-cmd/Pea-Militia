@@ -23,6 +23,8 @@ button, label, a, select, .pal-grid > * { touch-action: manipulation; }
 #scene { position: fixed; inset: 0; width: 100%; height: 100%; display: block; }
 /* soft lens vignette over the scene, under all UI */
 .vignette { position: fixed; inset: 0; pointer-events: none; background: radial-gradient(ellipse 120% 95% at 50% 48%, transparent 58%, rgba(22, 18, 12, 0.38) 100%); }
+/* suppression: the edges close in and darken */
+.supp { position: fixed; inset: 0; pointer-events: none; opacity: 0; background: radial-gradient(ellipse 70% 62% at 50% 50%, transparent 25%, rgba(8, 8, 6, 0.85) 100%); }
 [hidden] { display: none !important; }
 button { font: inherit; color: inherit; }
 .num { font-family: var(--head); font-variant-numeric: tabular-nums; }
