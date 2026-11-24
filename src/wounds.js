@@ -12,10 +12,11 @@ export const MAX_DENTS = 4;
 const HALF = [U.W / 2 - U.R, U.H / 2 - U.R, U.D / 2 - U.R];
 const TAU = Math.PI * 2;
 
-// atlas tiles (2 x 2): 0 splash, 1 bullet hole, 2 bleeding run, 3 ragged exit wound
+// atlas tiles (4 x 4 grid, tile t at column t % 4, row t >> 2): 0 splash, 1 bullet hole, 2 bleeding run,
+// 3 ragged exit wound, 4 torn-open chest (ribs, viscera), 5 shredded cloth and flesh
 function atlas() {
-  return canvasTex(256, (g, S) => {
-    const T = S / 2, rnd = Math.random;
+  return canvasTex(512, (g, S) => {
+    const T = S / 4, rnd = Math.random;
     const blob = (cx, cy, r, jag, fill) => {
       g.fillStyle = fill; g.beginPath();
       const n = 22;
@@ -40,6 +41,28 @@ function atlas() {
     cx = T + T / 2; cy = T + T / 2;
     blob(cx, cy, T * 0.34, 0.4, '#6e0f0f'); spokes(cx, cy, 14, T * 0.3, T * 0.48, 4.5, '#6e0f0f'); drops(cx, cy, 16, T * 0.3, T * 0.48, 1.5, 4.5, '#7a1010');
     blob(cx, cy, T * 0.22, 0.35, '#3a0606'); blob(cx, cy, T * 0.13, 0.3, '#080101');
+    // 4: torn-open chest. Frayed cloth rim, bruised skin edge, wet dark cavity, broken ribs and pink-grey viscera
+    cx = 2 * T + T / 2; cy = T / 2;
+    blob(cx, cy, T * 0.47, 0.22, 'rgba(84,22,16,0.55)');                                 // blood-soaked cloth around it
+    spokes(cx, cy, 16, T * 0.36, T * 0.5, 3.2, '#4a1812');                               // frayed strands
+    blob(cx, cy, T * 0.4, 0.2, '#8a3a30');                                                // torn skin and fat
+    blob(cx, cy, T * 0.33, 0.28, '#5e0e0e');                                              // muscle
+    blob(cx, cy, T * 0.26, 0.22, '#2a0505');                                              // cavity
+    g.strokeStyle = '#d9cfb6'; g.lineCap = 'round';
+    for (let i = 0; i < 4; i++) { g.lineWidth = 3.2 - i * 0.3; const yy = cy - T * 0.2 + i * T * 0.11; g.beginPath(); g.moveTo(cx - T * 0.27, yy + T * 0.04); g.quadraticCurveTo(cx, yy - T * 0.02 + rnd() * 5, cx + T * 0.27, yy + T * 0.05); g.stroke(); } // ribs
+    g.strokeStyle = '#efe7d0'; g.lineWidth = 1.4;
+    for (let i = 0; i < 4; i++) { const yy = cy - T * 0.2 + i * T * 0.11; g.beginPath(); g.moveTo(cx - T * 0.2, yy + T * 0.03); g.lineTo(cx + T * 0.1 + rnd() * 10, yy + T * 0.02); g.stroke(); } // rib highlights
+    for (let i = 0; i < 6; i++) blob(cx + (rnd() - 0.5) * T * 0.36, cy + (rnd() - 0.2) * T * 0.34, T * (0.05 + rnd() * 0.05), 0.35, i % 2 ? '#a4626a' : '#8a4048');   // viscera
+    g.fillStyle = 'rgba(255,190,180,0.3)'; g.beginPath(); g.ellipse(cx - T * 0.08, cy - T * 0.02, 7, 3, -0.4, 0, TAU); g.fill();
+    drops(cx, cy, 22, T * 0.36, T * 0.5, 1.2, 4, '#7a1010');
+    // 5: shredded wound, long and ragged: torn sleeve over raw red muscle
+    cx = 3 * T + T / 2; cy = T / 2;
+    blob(cx, cy, T * 0.46, 0.3, 'rgba(70,20,14,0.5)');
+    spokes(cx, cy, 14, T * 0.36, T * 0.5, 3, '#43160f');
+    blob(cx, cy, T * 0.36, 0.3, '#7a1a1a');
+    for (let i = 0; i < 9; i++) { g.strokeStyle = i % 2 ? '#a02a2a' : '#591010'; g.lineWidth = 2 + rnd() * 3; g.beginPath(); const x0 = cx - T * 0.3 + rnd() * T * 0.6; g.moveTo(x0, cy - T * 0.3); g.lineTo(x0 + (rnd() - 0.5) * 12, cy + T * 0.3); g.stroke(); } // muscle fibres
+    blob(cx + T * 0.06, cy, T * 0.12, 0.4, '#2a0505');
+    drops(cx, cy, 18, T * 0.34, T * 0.5, 1.2, 4, '#7a1010');
   });
 }
 
@@ -78,7 +101,8 @@ vShade = aS.z;`)
 vec4 wdent = vec4(aC.xyz, aS.w);
 wp += wn * (dentDisp(wp, wdent) + 0.006);
 vec3 transformed = wp;
-vWUv = (vec2(mod(aC.w, 2.0), floor(aC.w / 2.0)) + uv) * 0.5;`);
+vec2 wtc = aC.w < 3.5 ? vec2(mod(aC.w, 2.0), floor(aC.w / 2.0)) : vec2(2.0 + mod(aC.w - 4.0, 2.0), floor((aC.w - 4.0) / 2.0));
+vWUv = vec2((wtc.x + uv.x) * 0.25, (3.0 - wtc.y + uv.y) * 0.25);`);
     sh.fragmentShader = sh.fragmentShader
       .replace('#include <common>', '#include <common>\nvarying float vShade; varying vec2 vWUv;')
       .replace('#include <map_fragment>', `diffuseColor *= texture2D(map, vWUv); diffuseColor.rgb *= vShade;`);

@@ -530,7 +530,7 @@ export class Battle {
     const c = u.center();
     // sparks only where a round strikes steel: the helmet, or now and then the vest
     if (kind !== 'bullet' || zone === 'head' || Math.random() < 0.25) this.fx.impact(c.clone().addScaledVector(dir || UP, -0.25), dir ? dir.clone().negate() : UP, 'metal');
-    this.fx.gore.hit(c, dir, dmg, kind, u);
+    this.fx.gore.hit(c, dir, dmg, kind, u, zone);
     if (kind === 'bullet' || kind === 'plasma') markUnit(u, point || c, dir || UP, zone, kind, (kind === "plasma" ? 0.1 : 0.06) + Math.min(0.04, dmg / 1200));
     u.lastHit = { dir: dir ? dir.clone() : null, dmg, kind, t: u.t, zone };
     u.hurt(dmg, from, this, kind, zone);
