@@ -511,8 +511,8 @@ export class Battle {
       dmg *= { head: 2.6, torso: 1.15, arm: 0.6, leg: 0.7 }[zone];
     }
     const c = u.center();
-    this.fx.impact(c.clone().addScaledVector(dir || UP, -0.25), dir ? dir.clone().negate() : UP, 'metal');
-    if (Math.random() < 0.5) this.fx.debris(c, TEAMS[u.team].body, 2);
+    // sparks only where a round strikes steel: the helmet, or now and then the vest
+    if (kind !== 'bullet' || zone === 'head' || Math.random() < 0.25) this.fx.impact(c.clone().addScaledVector(dir || UP, -0.25), dir ? dir.clone().negate() : UP, 'metal');
     this.fx.gore.hit(c, dir, dmg, kind, u);
     if (kind === 'bullet' || kind === 'plasma') markUnit(u, point || c, dir || UP, zone, kind, (kind === "plasma" ? 0.1 : 0.06) + Math.min(0.04, dmg / 1200));
     u.lastHit = { dir: dir ? dir.clone() : null, dmg, kind, t: u.t, zone };
@@ -767,7 +767,6 @@ export class Battle {
 
   onDeath(u, from) {
     const c = u.center();
-    this.fx.debris(c, TEAMS[u.team].body, 6);
     this.fx.impact(c, UP, 'metal');
     const k = u.lastHit?.kind;
     if (k === 'blast' || k === 'fire' || k === 'plasma' || u.burn > 0) this.fx.smoulder(() => (u.rag ? u.rag.body.pos.clone() : u.center()), k === 'fire' || u.burn > 0 ? 5 : 3);
