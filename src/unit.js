@@ -168,6 +168,17 @@ export class Unit {
     world?.events.push({ type: 'down', unit: this });
   }
 
+  // back to a clean body: every wound, limb, bleed, shock and timer cleared (respawn, free-cam return)
+  resetBody() {
+    this.hp = this.maxHp; this.burn = 0; this.suppression = 0; this.flinch = 0;
+    this.bleed = 0; this.leg = 0; this.arm = 0; this.down = false; this.stagger = 0; this.shock = 0;
+    this.bandageT = 0; this.jamT = 0; this.cry = 0; this.corpseHp = 70; this.knockT = 0;
+    this.wound = 0; this.lost = 0; this.wounds = null; this.marks = null; this.rag = null;
+    this.stamina = 1; this.winded = false; this.restT = 0;
+    this.reloadT = this.throwT = 0; this.thrown = false; this.recoil = 0; this.landT = 1;
+    this.lastHurt = -99; this.lastHit = null;
+  }
+
   // a bandage stops the bleeding and gets a downed soldier back up
   bandage(amount = 20) {
     this.bleed = 0;
