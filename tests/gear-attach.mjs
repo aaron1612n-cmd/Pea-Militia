@@ -2,9 +2,8 @@
 // body (the torso shell or the pack) through a chain of touching pieces, so nothing floats.
 // Also checks the helmet strap against the head. Run by hand: node tests/gear-attach.mjs [kind...]
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { U } from '../src/rig.js';
-import { torsoGeo, headGeo, helmetGeo } from '../src/anatomy.js';
+import { torsoGeo, headGeo, helmetGeo, packGeo, HELMET_KINDS } from '../src/anatomy.js';
 import { gearPieces, KIND_IDS, PK } from '../src/gear.js';
 
 const TOUCH = 0.0045; // pieces closer than this count as joined (sunk 4 mm into what they sit on)
@@ -55,7 +54,7 @@ function gap(A, B) {
 }
 
 const torso = mesh(torsoGeo(6));
-const pg = new RoundedBoxGeometry(...U.PACK, 3, 0.04);
+const pg = packGeo();
 pg.translate(PK.x, PK.y, PK.z);
 const pack = mesh(pg);
 
@@ -88,11 +87,14 @@ for (const kind of kinds) {
   bad += loose.length + looseMarks;
 }
 
-// helmet strap and chin cup against the head: nothing hovers off the face
+// every class's headgear against the head: the guard and mask must reach the head, nothing floats
 {
-  const head = mesh(headGeo()), helmet = mesh(helmetGeo());
-  const g = gap(helmet, head);
-  console.log(`helmet to head: ${g.toFixed(4)} m`);
-  if (g > TOUCH) bad++;
+  const head = mesh(headGeo());
+  for (const kind of HELMET_KINDS) {
+    const helmet = mesh(helmetGeo(kind));
+    const g = gap(helmet, head);
+    console.log(`${kind} helmet to head: ${g.toFixed(4)} m`);
+    if (g > TOUCH) bad++;
+  }
 }
 process.exit(bad ? 1 : 0);
