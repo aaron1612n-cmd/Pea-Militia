@@ -243,9 +243,12 @@ export class Squad {
 
     // wary: an enemy within ~100 m, seen or not. Move cover to cover in bounds, never stroll across open ground
     this.cautious = false; this.foePos = null;
-    let fd = 150;
+    let fd = 62;
     for (const m of alive) { const b = m.brain; if (b && b.foe && b.foeD < fd) { fd = b.foeD; this.foePos = b.foe; this.cautious = true; } }
     if (this.cautious && this.objective && flat(lead.pos, this.objective.pos) < this.objective.r * 1.2) this.cautious = false;
+    // a squad that has crept along for a while without really gaining ground stops being wary and runs
+    this.creepT = this.cautious && !this.inContact() ? (this.creepT || 0) + dt : Math.max(0, (this.creepT || 0) - dt * 2);
+    if (this.creepT > 18) { this.cautious = false; if (this.creepT > 30) this.creepT = 0; }
     const fight = this.inContact();
     const contact = fight || this.cautious;
     // bounding overwatch: under fire the anchor creeps forward a few metres at a time
@@ -274,12 +277,13 @@ export class Squad {
         }
         this.boundT -= dt;
         if (this.boundT <= 0) {
-          this.boundT = fight ? rand(5, 8) : rand(3.5, 5.5);
+          this.boundT = fight ? rand(4, 6.5) : rand(2.5, 4);
           this.bound ^= 1;
           // push forward if not badly outnumbered nearby
           const ratio = this.localRatio(lead.pos);
-          if (ratio >= 0.8 && d > 3) this.anchor.addScaledVector(to.normalize(), Math.min(d, fight ? rand(6, 10) : rand(10, 15)));
-          else if (ratio < 0.45) {
+          this.holdBounds = ratio >= 0.8 ? 0 : (this.holdBounds || 0) + 1;
+          if ((ratio >= 0.8 || this.holdBounds >= 3) && d > 3) { this.anchor.addScaledVector(to.normalize(), Math.min(d, fight ? rand(7, 11) : rand(11, 16))); this.holdBounds = 0; }
+          else if (ratio < 0.45 && this.holdBounds < 3) {
             // pull back a little toward home
             const base = w.teams[this.team]?.base;
             if (base) this.anchor.addScaledVector(V().subVectors(base, this.anchor).setY(0).normalize(), 5);
@@ -464,7 +468,7 @@ export class Brain {
       const noticed = vis && (ang < 1.6 || d < 10 || e === this.target || (e.lastShot !== undefined && e.t - e.lastShot < 0.6));
       let sc = d;
       if (!noticed) sc += 200;
-      if (e === this.target) sc -= 6;
+      if (e === this.target) sc -= 18; // stick with a target: no flicking between two
       if (sq.focus && e === sq.focus && sq.focus.alive && w.time - sq.focusT < 5) sc -= 12; // the squad's chosen target
       if (e.hp < 40) sc -= 7; // finish the wounded
       if (e.isPlayer) sc -= 2;
@@ -480,7 +484,10 @@ export class Brain {
         this.err.set(rand(-1, 1), rand(-0.5, 0.8), rand(-1, 1)).normalize().multiplyScalar(0.6 + d * 0.035);
         this.seenT = 0;
       }
-      this.target = bestSeen ? best : this.target && this.target.alive ? this.target : null;
+      if (!(this.target && this.target.alive && best && best !== this.target && w.time - (this.tgtT || 0) < 1.5 && this.seen)) {
+        this.target = bestSeen ? best : this.target && this.target.alive ? this.target : null;
+        this.tgtT = w.time;
+      }
     }
     this.seen = !!(this.target && bestSeen && best === this.target);
     if (this.target && !this.target.alive) { this.target = null; this.seen = false; }
@@ -512,16 +519,16 @@ export class Brain {
       // bounding overwatch: one half of the squad (by slot parity) keeps its cover and shoots
       // while the other half moves up to the next cover; they swap on the squad's bound
       const bounding = !sq.retreating && sq.size >= 4 && !lowHp;
-      this.overwatch = bounding && this.slotIndex() % 2 !== sq.bound;
+      this.overwatch = bounding && this.slotIndex() % 2 !== sq.bound && flat(u.pos, sq.anchor) < 16 && w.time > (this.hurry || 0);
       const held = this.cover && !this.coverBad(this.cover, threat) && this.cover.prop.alive !== false && (!this.cover.terrain || w.time - this.cover.t < 10);
-      if (!held || (!this.overwatch && this.cover.dist2(slot) > 100)) {
+      if (!held || (!this.overwatch && this.cover.dist2(slot) > 100 && w.time - (this.coverAt || 0) > 4)) {
         this.releaseCover();
         const range = sq.retreating || lowHp || suppressed ? 14 : 12;
         const from = sq.retreating || lowHp || suppressed ? u.pos : slot;
         let cv = this.findCover(from, threat, range);
         // no solid cover about: use the lie of the land, a dip or reverse slope to fight from
         if (!cv && w.time > this.defT) { this.defT = w.time + 1.5; cv = this.findDefilade(from, threat, range + 4); }
-        if (cv) { this.cover = cv; cv.owner = u; }
+        if (cv) { this.cover = cv; cv.owner = u; this.coverAt = w.time; }
       }
       if (this.cover) {
         // peek from tall cover, crouch behind low cover
@@ -549,6 +556,11 @@ export class Brain {
       this.goal = slot;
     }
     this.goal.y = 0;
+    if (this.mission === null || !this.mission) {
+      const nv = w.nav; nv.build(w.props, w.propVer);
+      const gc = nv.cellOf(this.goal.x, this.goal.z);
+      if (nv.blocked[gc] && !this.cover) { const oc = nv.open(gc); if (oc >= 0) { const q = nv.center(oc, { x: 0, z: 0 }); this.goal.x = q.x; this.goal.z = q.z; } }
+    }
     // out of ammunition and nothing in sight: go to the nearest friendly ammo crate
     {
       const main = u.weapons[0];
@@ -744,6 +756,9 @@ export class Brain {
     if (this.pi < path.length - 1) {
       const dx = nx.x - wp.x, dz = nx.z - wp.z, l = Math.hypot(dx, dz) || 1, lane = ((this.u.id % 5) - 2) * 0.55;
       this.laneP.x = wp.x - (dz / l) * lane; this.laneP.z = wp.z + (dx / l) * lane;
+      // the lane offset must never push the waypoint into a wall: beside props, stay on the route itself
+      const nv = w.nav;
+      if (nv.blocked[nv.cellOf(this.laneP.x, this.laneP.z)] || w.segBlocked(wp.x, wp.z, this.laneP.x, this.laneP.z, 0.45)) return wp;
       return this.laneP;
     }
     return wp;
@@ -753,6 +768,25 @@ export class Brain {
   // sidestep, then a different cover or slot
   watchdog(dt, gd, wl) {
     const u = this.u, w = this.w;
+    // slow-progress check: wanting to be somewhere and gaining almost no ground (dithering between
+    // covers, turning on the spot, queuing behind a mate) for several seconds: drop the fancy
+    // behaviour and just go there for a spell
+    this.progT = (this.progT || 0) + dt;
+    this.turned = (this.turned || 0) + Math.abs(wrap(u.facing - (this.lastFace ?? u.facing))); this.lastFace = u.facing;
+    if (this.progT >= 4) {
+      const mv = this.progPos ? Math.hypot(u.pos.x - this.progPos.x, u.pos.z - this.progPos.z) : 9;
+      const wants = gd > 3 && !u.busy && !this.mission && !u.down;
+      const spinning = this.turned > 5 && mv < 2.5;
+      if (wants && (mv < 1.3 || spinning)) {
+        this.hurry = w.time + 7;
+        this.hurries = (this.hurries || 0) + 1;
+        if (spinning) { this.target = null; this.seen = false; this.react = 0.6; this.lastAim = null; }
+        if (this.cover) { this.badCover = this.cover; this.badUntil = w.time + 15; this.releaseCover(); }
+        this.repath = true; this.path = null;
+        if (this.hurries % 2 === 0) this.squad.stalled(u);
+      } else if (mv > 4) this.hurries = 0;
+      this.progT = 0; this.turned = 0; this.progPos = this.progPos || V(); this.progPos.copy(u.pos);
+    }
     this.stuckT += dt;
     if (this.stuckT < 0.5) return;
     const moved = this.lastPos.distanceTo(u.pos);
@@ -892,7 +926,7 @@ export class Brain {
       if (inCover && !this.cover.high && sup > 0.6) c.fire = false;
       // caught in the open under heavy fire, or a gunner settling in: go prone for a while
       if (!this.cover && (sup > 0.5 || (def.id === 'mg' && wl < 0.2 && this.seenT > 1.5))) this.proneUntil = w.time + rand(2, 4);
-      c.prone = w.time < (this.proneUntil || 0) && !sq.retreating && gd < 3; // crawling a long way is lingering
+      c.prone = w.time < (this.proneUntil || 0) && !sq.retreating && gd < 3 && w.time > (this.hurry || 0); // crawling a long way is lingering
     } else {
       this.react = Math.max(this.react, 0.15);
       c.fire = false;
@@ -910,7 +944,7 @@ export class Brain {
       // no cover and an enemy about: the covering half lies down; anyone shot at goes to ground
       if (!this.cover && sup > 0.4) this.proneUntil = w.time + rand(2, 4);
       const lieLow = !this.cover && sq.cautious && !sq.holding && !sq.retreating && gd < 2.5 && (this.overwatch || sq.size < 4);
-      c.prone = (w.time < (this.proneUntil || 0) && gd < 1) || lieLow;
+      c.prone = ((w.time < (this.proneUntil || 0) && gd < 1) || lieLow) && w.time > (this.hurry || 0);
       // look where trouble was, or where we're going
       const look = sq.contact && w.time - sq.contact.t < 8 ? sq.contact.pos : sq.holding && gd < 1 ? sq.watch : null;
       // keep the gun on the last spot for a moment after losing sight, instead of snapping away
