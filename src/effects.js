@@ -474,11 +474,6 @@ export class Effects {
     this.add.emit({ pos, life: 0.14, size: [0.14, 0.02], color: [PAL.plasma, PAL.plasma1], alpha: [0.8, 0], floor: false });
   }
 
-  flame(pos, vel) {
-    this.add.emit({ pos, vel, life: 0.42 + Math.random() * 0.2, size: [0.06, 0.9], color: [PAL.fire0, PAL.fire1], alpha: [0.9, 0], drag: 2.2, grav: -1.5 });
-    if (Math.random() < 0.3) this.norm.emit({ pos: pos.clone().addScaledVector(vel, 0.3), vel: vel.clone().multiplyScalar(0.5), life: 1.0, size: [0.3, 1.1], color: [PAL.smoke0, PAL.smoke1], alpha: [0.35, 0], drag: 1.5, grav: -1 });
-  }
-
   burn(pos) {
     this.add.emit({ pos: pos.clone().add(this.dir(0.2)), vel: new THREE.Vector3(this.rnd(0.2), 1.2, this.rnd(0.2)), life: 0.4, size: [0.25, 0.05], color: [PAL.fire0, PAL.fire1], alpha: [0.9, 0], floor: false });
   }

@@ -396,7 +396,7 @@ export class Unit {
       if (!this.mod.noHeat) w.heat += def.heat;
       if (w.heat >= 1) { w.heat = 1; w.locked = 1.6; world.fx.steam(this.muzzle(), new THREE.Vector3(0, 0.8, 0), 4, 0.35); }
     } else if (!this.god) w.mag--;
-    this.recoil = def.kind === 'flame' ? 0.15 : 1;
+    this.recoil = 1;
     if (w.mag <= 0 && !def.heat && def.kind !== 'throw') this.startReload();
     return true;
   }

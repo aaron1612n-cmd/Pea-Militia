@@ -530,7 +530,7 @@ export class Brain {
         if (want !== this.peeking && w.time - (this.peekT || 0) > 0.9) { this.peeking = want; this.peekT = w.time; }
         const shooting = this.peeking;
         this.goal = this.cover.high && shooting ? new THREE.Vector3(this.cover.px, 0, this.cover.pz) : new THREE.Vector3(this.cover.x, 0, this.cover.z);
-      } else if (this.seen && (def.id === 'smg' || def.id === 'flame') && !lowHp && !suppressed) {
+      } else if (this.seen && def.id === 'smg' && !lowHp && !suppressed) {
         // close-range weapons press in to their range
         const d = this.target.pos.distanceTo(u.pos);
         const want = (def.ideal[0] + def.ideal[1]) / 2;
@@ -859,7 +859,7 @@ export class Brain {
       if (this.clearT <= 0) { this.clearT = 0.12; this.clear = this.shotClear(aim, def); }
       this.blockT = this.clear ? 0 : this.blockT + dt;
       this.lastAim = aim; this.lastAimT = w.time;
-      const inRange = d < def.range * (def.kind === 'flame' ? 1 : 0.95);
+      const inRange = d < def.range * 0.95;
       // bursts with pauses; low cover means kneeling between bursts
       let fire = false;
       if (this.react <= 0 && inRange && !this.blocked && this.clear && sup < 0.85) {

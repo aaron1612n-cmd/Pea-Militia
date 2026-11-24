@@ -107,12 +107,15 @@ const BODY_PTS = [];
 for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) BODY_PTS.push(new THREE.Vector3(sx * B.x, sy * B.y, sz * B.z));
 for (const sx of [-1, 1]) for (const sy of [-1, 1]) BODY_PTS.push(new THREE.Vector3(sx * (U.PACK[0] / 2 - 0.02), U.PACK_Y - U.BODY_Y + sy * (U.PACK[1] / 2 - 0.02), -U.D / 2 - U.PACK[2] + 0.03));
 
+// the head and helmet lift the body's contact points so it never sinks into the ground
+for (const [x, y, z] of [[0, 0.4, 0.0], [-0.08, 0.3, 0.04], [0.08, 0.3, 0.04], [0, 0.3, -0.07]]) BODY_PTS.push(new THREE.Vector3(x, y, z));
+
 // where the limbs hang from, in the body's frame
 const ANCHOR = [
-  { at: new THREE.Vector3(0.27, 0.0, 0.04), len: 0.07, r: U.HAND[1] / 2 }, // left hand (+x)
-  { at: new THREE.Vector3(-0.27, 0.0, 0.04), len: 0.07, r: U.HAND[1] / 2 },
-  { at: new THREE.Vector3(-U.FOOT_X, -U.H / 2 - 0.04, 0.02), len: 0.14, r: U.FOOT[1] / 2 }, // right foot
-  { at: new THREE.Vector3(U.FOOT_X, -U.H / 2 - 0.04, 0.02), len: 0.14, r: U.FOOT[1] / 2 },
+  { at: new THREE.Vector3(0.2, -0.16, 0.05), len: 0.12, r: 0.03 }, // left hand (+x)
+  { at: new THREE.Vector3(-0.2, -0.16, 0.05), len: 0.12, r: 0.03 },
+  { at: new THREE.Vector3(-U.FOOT_X, -U.H / 2 - 0.34, 0.03), len: 0.12, r: 0.03 }, // right foot
+  { at: new THREE.Vector3(U.FOOT_X, -U.H / 2 - 0.34, 0.03), len: 0.12, r: 0.03 },
 ];
 const HX = U.W / 2, HY = U.H / 2, HZ = U.D / 2;
 

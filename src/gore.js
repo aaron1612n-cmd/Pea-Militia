@@ -17,20 +17,20 @@ import { rayBox } from './physics.js';
 //    blasts burst, plasma burns (little blood, more chunks), fire draws none
 // All pooled: four decal meshes, one droplet mesh, one gib mesh and the crowd's wound mesh.
 const KEY = 'sm.gore';
-const BLOOD = [new THREE.Color('#9a1a1a'), new THREE.Color('#5c0e0e')];
+const BLOOD = [new THREE.Color('#4a0a0a'), new THREE.Color('#2a0606')]; // mist: dark, never bright
 const GIB_MAX = 220, DROP_MAX = 520, HOLD = 50, FADE = 20;
 const UP = new THREE.Vector3(0, 1, 0);
 const TRIM = TEAMS.map((t) => new THREE.Color(t.trim));
-const SHELL = TEAMS.map((t) => new THREE.Color(t.body));
+const SHELL = ['#3b3e3d', '#4a4a45', '#2d302f'].map((c) => new THREE.Color(c)); // torn armour plate: dull steel, never a team colour
 const FOOTC = new THREE.Color('#1d2126');
 const CHUNK = [new THREE.Color('#7a1212'), new THREE.Color('#5a0d0d'), new THREE.Color('#9b2323')];
-const DROPC = [new THREE.Color('#8a1616'), new THREE.Color('#6e1010'), new THREE.Color('#701212')];
+const DROPC = [new THREE.Color('#5c0c0c'), new THREE.Color('#450909'), new THREE.Color('#6b1010'), new THREE.Color('#380707')];
 const TAU = Math.PI * 2;
 
 function splatTexture(kind) {
   return canvasTex(128, (g, S) => {
     const h = S / 2;
-    g.fillStyle = 'rgba(105,14,14,0.92)';
+    g.fillStyle = 'rgba(86,9,9,0.94)';
     if (kind === 'pool') {
       // wet pool: lobed body, dark rim, bright glossy streak
       g.beginPath();
@@ -67,7 +67,7 @@ function splatTexture(kind) {
     for (let i = 0; i < 14; i++) {
       const a = Math.random() * TAU, d = h * (0.4 + Math.random() * 0.5), r = 1.5 + Math.random() * 6;
       g.beginPath(); g.arc(h + Math.cos(a) * d, h + Math.sin(a) * d, r, 0, TAU); g.fill();
-      if (Math.random() < 0.5) { g.lineWidth = r * 0.8; g.strokeStyle = 'rgba(105,14,14,0.85)'; g.beginPath(); g.moveTo(h + Math.cos(a) * r0, h + Math.sin(a) * r0); g.lineTo(h + Math.cos(a) * d, h + Math.sin(a) * d); g.stroke(); }
+      if (Math.random() < 0.5) { g.lineWidth = r * 0.8; g.strokeStyle = 'rgba(86,9,9,0.85)'; g.beginPath(); g.moveTo(h + Math.cos(a) * r0, h + Math.sin(a) * r0); g.lineTo(h + Math.cos(a) * d, h + Math.sin(a) * d); g.stroke(); }
     }
   });
 }
@@ -84,6 +84,7 @@ class DecalSet {
     this.pos = Array.from({ length: n }, () => new THREE.Vector3());
     this.quat = Array.from({ length: n }, () => new THREE.Quaternion());
     this.m = new THREE.Matrix4(); this.s = new THREE.Vector3(); this.p = new THREE.Vector3();
+    this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3).fill(1), 3);
     this.tick = 0;
     this._x = new THREE.Vector3(); this._y = new THREE.Vector3(); this._z = new THREE.Vector3();
   }
@@ -137,6 +138,9 @@ class DecalSet {
       if (this.grow[i] > sz) { sz = this.size[i] = Math.min(this.grow[i], sz + dt * 0.12); touch = true; }
       if (slow) {
         this.age[i] += 0.25;
+        // wet blood is dark and glossy; it browns and dulls as it dries
+        const dry = Math.min(1, this.age[i] / 60);
+        this.mesh.instanceColor.setXYZ(i, 1 - 0.25 * dry, 1 - 0.55 * dry, 1 - 0.6 * dry); dirty = true; this.mesh.instanceColor.needsUpdate = true;
         const over = this.age[i] - HOLD;
         if (over >= 0) { const k = Math.max(0, 1 - over / FADE); if (!k) this.age[i] = 1e9; sz *= k; touch = true; }
       } else if (!touch) continue;
@@ -166,7 +170,7 @@ export class Gore {
     this.si = 0;
     // droplets: small beads, stretched a little along their flight
     const dg = new THREE.IcosahedronGeometry(1, 0);
-    this.dropMesh = new THREE.InstancedMesh(dg, new THREE.MeshBasicMaterial({ color: '#ffffff', fog: true }), DROP_MAX);
+    this.dropMesh = new THREE.InstancedMesh(dg, new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.1, metalness: 0.05 }), DROP_MAX); // wet and glossy
     this.dropMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(DROP_MAX * 3), 3);
     this.dropMesh.count = 0; this.dropMesh.frustumCulled = false;
     scene.add(this.dropMesh);
@@ -208,13 +212,22 @@ export class Gore {
     this.runs = this.runs.filter((r) => !(u.wounds || []).includes(r));
   }
 
+  // a drag trail: wavy, broken, never a ruler line, with spatter and flicked drops either side
+  smear(x, z, dx, dz, dd) {
+    if (!dd) return;
+    const nx = -dz / dd, nz = dx / dd, a = Math.atan2(dx, dz) + Math.PI;
+    if (Math.random() > 0.35) this.streaks.add(x + nx * this.rnd(0.14), z + nz * this.rnd(0.14), (0.25 + dd * (0.5 + Math.random() * 0.7)) * (0.6 + Math.random() * 0.7), 0, a + this.rnd(0.4));
+    for (let k = (Math.random() * 3) | 0; k > 0; k--) this.splat(x + nx * this.rnd(0.4) + dx * this.rnd(0.5), z + nz * this.rnd(0.4) + dz * this.rnd(0.5), 0.07 + Math.random() * 0.17);
+    if (Math.random() < 0.6) this.drop(this.p.set(x, height(x, z) + 0.12, z), this.v.set(nx * this.rnd(2.2) + dx / dd * 0.6, 0.6 + Math.random() * 1.4, nz * this.rnd(2.2) + dz / dd * 0.6), 0.012 + Math.random() * 0.02, Math.random() < 0.3);
+  }
+
   rnd(s = 1) { return (Math.random() * 2 - 1) * s; }
   splat(x, z, size) { if (this.level) this.splats[this.si++ % 3].add(x, z, size); }
 
   // ---- droplets ----
   drop(pos, vel, size = 0.03, big = false) {
     if (this.drops.length >= DROP_MAX) this.drops.shift();
-    this.drops.push({ p: pos.clone(), v: vel.clone(), size, big, c: (Math.random() * 3) | 0, k: 0.04 / Math.max(size, 0.012) * (0.7 + Math.random() * 0.6) });
+    this.drops.push({ p: pos.clone(), v: vel.clone(), size, big, c: (Math.random() * 4) | 0, k: 0.04 / Math.max(size, 0.012) * (0.7 + Math.random() * 0.6) });
   }
 
   // a spray of droplets from pos along dir: speed range, spread, count
@@ -223,13 +236,13 @@ export class Gore {
     n = Math.ceil(n * (this.level === 2 ? 1 : 0.5));
     for (let i = 0; i < n; i++) {
       const v = dir.clone().multiplyScalar(v0 + Math.random() * (v1 - v0)).add(this.v.set(this.rnd(spread), this.rnd(spread), this.rnd(spread)).multiplyScalar(v1 * 0.5));
-      this.drop(pos, v, size * (0.6 + Math.random() * 0.9), Math.random() < 0.35);
+      this.drop(pos, v, size * (0.25 + Math.random() * Math.random() * 1.7), Math.random() < 0.3); // many fine drops, a few fat ones
     }
   }
 
   mist(pos, vel, size, n = 1, alpha = 0.5) {
     if (!this.level) return;
-    for (let i = 0; i < n; i++) this.fx.norm.emit({ pos, vel: vel.clone().add(this.fx.dir(0.8)), life: 0.5 + Math.random() * 0.4, size: [size * 0.4, size * (0.9 + Math.random() * 0.6)], color: BLOOD, alpha: [alpha, 0], drag: 2.5, grav: 1.5 });
+    for (let i = 0; i < n; i++) this.fx.norm.emit({ pos, vel: vel.clone().add(this.fx.dir(0.8)), life: 0.4 + Math.random() * 0.4, size: [size * 0.2, size * (0.45 + Math.random() * 0.35)], color: BLOOD, alpha: [alpha * 0.4, 0], drag: 3, grav: 2.2 });
   }
 
   // ---- wounds on the body (drawn by crowd.js, wrapped onto the shell by wounds.js) ----
@@ -503,10 +516,17 @@ export class Gore {
       // arterial pulses for the first couple of seconds
       b.pulse = (b.pulse ?? 0) - dt;
       if (b.pulse <= 0 && b.t < 2.2 && L2(this) && b.kind !== 'plasma') { b.pulse = 0.32; const a = Math.random() * TAU; this.spray(bp, this.v.set(Math.cos(a) * 0.5, 0.9, Math.sin(a) * 0.5), 7, 3, 6.5, 0.25, 0.03); }
+      // a body flying through the air throws blood off along its path
+      const bv = u.rag.body.v, fly = bv.length();
+      if (!u.rag.asleep && fly > 2.5 && L2(this) && b.t < 6) {
+        const nd = 1 + ((Math.random() * 3) | 0);
+        for (let k = 0; k < nd; k++) this.drop(this.p.copy(bp).add(this.v.set(this.rnd(0.25), this.rnd(0.25), this.rnd(0.25))), this.hitV.copy(bv).multiplyScalar(0.25 + Math.random() * 0.5).add(this.hitD.set(this.rnd(1.6), Math.random() * 1.2, this.rnd(1.6))), 0.012 + Math.random() * Math.random() * 0.045, Math.random() < 0.35);
+        if (Math.random() < 0.3) this.mist(bp, bv.clone().multiplyScalar(0.3), 0.5, 1, 0.35);
+      }
       // smears where the body slides
       if (!u.rag.asleep && b.last) {
         const dx = bp.x - b.last.x, dz = bp.z - b.last.z, dd = Math.hypot(dx, dz);
-        if (dd > 0.35) { this.streaks.add(bp.x - dx * 0.5, bp.z - dz * 0.5, 0.35 + dd, 0, Math.atan2(dx, dz) + Math.PI); b.last.set(bp.x, 0, bp.z); }
+        if (dd > 0.3) { this.smear(bp.x - dx * 0.5, bp.z - dz * 0.5, dx, dz, dd); b.last.set(bp.x, 0, bp.z); }
       } else if (!b.last) b.last = new THREE.Vector3(bp.x, 0, bp.z);
       b.drip -= dt;
       if (b.drip <= 0 && b.t < 3) { b.drip = 0.12; this.spray(bp, UP, 2, 0.5, 2.5, 1.2, 0.03); this.splat(bp.x + this.rnd(0.4), bp.z + this.rnd(0.4), 0.2 + Math.random() * 0.2); }
@@ -529,7 +549,7 @@ export class Gore {
       if (u.down && L2(this)) {
         const l = u.smear || (u.smear = new THREE.Vector3(u.pos.x, 0, u.pos.z));
         const dx = u.pos.x - l.x, dz = u.pos.z - l.z, dd = Math.hypot(dx, dz);
-        if (dd > 0.4) { this.streaks.add(u.pos.x - dx * 0.5, u.pos.z - dz * 0.5, 0.4 + dd, 0, Math.atan2(dx, dz) + Math.PI); l.set(u.pos.x, 0, u.pos.z); }
+        if (dd > 0.4) { this.smear(u.pos.x - dx * 0.5, u.pos.z - dz * 0.5, dx, dz, dd); l.set(u.pos.x, 0, u.pos.z); }
       }
     }
     // bleeding wounds creep down the shell

@@ -221,9 +221,6 @@ export class Audio {
         this.tone(d, { dur: 0.22, type: 'sawtooth', f: 1400, f2: 180, peak: 0.16 });
         this.tone(d, { dur: 0.18, type: 'sine', f: 600, f2: 90, peak: 0.25 });
         break;
-      case 'flame':
-        this.noiseBurst(d, { dur: 0.16, type: 'bandpass', f: 700, q: 0.6, peak: 0.25, attack: 0.03 });
-        break;
       case 'steam':
         this.tone(d, { dur: 0.22, f: 90, f2: 40, peak: 0.8 });
         this.noiseBurst(d, { dur: 0.7, type: 'highpass', f: 2500, peak: 0.35, attack: 0.01 });
