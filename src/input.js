@@ -38,6 +38,11 @@ export class Input {
     if (this.onChange) this.onChange();
   }
 
+  // Jump climbs the stance ladder first: prone -> crouch -> standing, and only then leaves the ground.
+  jumpPress() {
+    if (this.prone) { this.prone = false; this.crouchToggle = true; } else if (this.crouchToggle) this.crouchToggle = false; else this.jumpQueued = true;
+  }
+
   bind(jumpBtn) {
     const c = this.canvas;
     c.addEventListener('contextmenu', (e) => e.preventDefault());
@@ -151,11 +156,11 @@ export class Input {
     addEventListener('keydown', (e) => {
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;
       if (GAME.has(e.code) || e.code === 'Tab') e.preventDefault();
-      if (e.code === 'Space' && !e.repeat) this.jumpQueued = true;
+      if (e.code === 'Space' && !e.repeat) this.jumpPress();
       if (!e.repeat && e.code === WHEEL) this.actions.push({ type: 'wheelDown' });
       if (!e.repeat && KEYS[e.code]) this.actions.push({ type: KEYS[e.code] });
       if (!e.repeat && e.code === 'KeyZ') this.prone = !this.prone;
-      if (!e.repeat && (e.code === 'KeyC' || e.code === 'ControlLeft' || e.code === 'Space')) this.prone = false;
+      if (!e.repeat && (e.code === 'KeyC' || e.code === 'ControlLeft')) this.prone = false;
       if (!e.repeat && /^Digit[1-9]$/.test(e.code)) this.actions.push({ type: 'slot', n: +e.code.slice(5) - 1 });
       this.keys.add(e.code);
       if (this.touch && GAME.has(e.code)) this.setTouch(false);
@@ -169,7 +174,7 @@ export class Input {
       if (Math.abs(this.wheel) > 40) { this.actions.push({ type: this.wheel > 0 ? 'next' : 'prev' }); this.wheel = 0; }
     }, { passive: false });
 
-    const jump = (e) => { e.preventDefault(); e.stopPropagation(); this.jumpQueued = true; this.jumpTouch = true; jumpBtn.classList.add('down'); };
+    const jump = (e) => { e.preventDefault(); e.stopPropagation(); this.jumpPress(); this.jumpTouch = true; jumpBtn.classList.add('down'); };
     const up = () => { this.jumpTouch = false; jumpBtn.classList.remove('down'); };
     jumpBtn.addEventListener('pointerdown', jump);
     jumpBtn.addEventListener('pointerup', up);

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { gaitFor, footAt, hipBob } from './gait.js';
 
 // The soldier: a human figure a little over a metre tall. A torso block (pelvis to shoulder line),
 // a head that turns toward what it is aiming at, a pack, and four limbs of two jointed segments:
@@ -66,6 +67,8 @@ const M = new THREE.Matrix4();
 const M2 = new THREE.Matrix4();
 const smooth = (a, b, x) => THREE.MathUtils.smoothstep(x, a, b);
 const lerp = THREE.MathUtils.lerp;
+const FO = { along: 0, lift: 0, pitch: 0, stance: 0 };
+const HIP_UP = 0.035, ANKLE = 0.092; // hip joint above the body's bottom; ankle above the sole
 
 function compose(out, x, y, z, rx = 0, ry = 0, rz = 0) {
   E.set(rx, ry, rz, 'YXZ');
@@ -93,16 +96,6 @@ export function makePose() {
   };
 }
 
-// One foot over a walk cycle: on the ground and sliding back for 60%, then lifting through.
-function footAt(p, stride) {
-  const STANCE = 0.6;
-  if (p < STANCE) return { along: lerp(0.5, -0.5, p / STANCE) * stride, lift: 0, pitch: 0 };
-  const k = (p - STANCE) / (1 - STANCE);
-  const lift = Math.sin(k * Math.PI);
-  // toe up on the way through, never dipping below the ground
-  return { along: lerp(-0.5, 0.5, smooth(0, 1, k)) * stride, lift, pitch: Math.sin(k * Math.PI * 2) * 0.18 * lift };
-}
-
 // s: { t, walk, cycle, stride, mx, mz (local move dir), air, rise, land, kneel, aimPitch, twist,
 //      ready (0 lowered .. 1 shouldered), recoil, reload (-1 or 0..1), throw (-1 or 0..1),
 //      flinch, ads (0..1, first person centre), fp (first person view), dead (-1 or 0..1 topple), weapon, sprint }
@@ -110,23 +103,72 @@ function poseCore(s, out) {
   const t = s.t || 0, walk = s.walk || 0, kneel = s.kneel || 0, air = s.air || 0;
   const mx = s.mx ?? 0, mz = s.mz ?? 1;
   const cyc = s.cycle || 0;
-  const stride = s.stride ?? 0.3;
   const dead = s.dead ?? -1;
+  // gait: everything about the stride follows ground speed (see gait.js)
+  const g = gaitFor(s.speed ?? walk * 2.2);
+  const w = walk;
+  const ground = 1 - air;
+  const kneelStill = kneel * (1 - w); // one knee down; moving crouched is a walk with bent legs
+  out.gait = g;
 
-  // ---- body: bob twice per cycle, sway once, lean into the walk, sink on landing/kneeling
+  // ---- feet: planted while they carry the body, lifted and swung through between strikes
+  const sx = [0, 0], sy = [0, 0], sz = [0, 0], srx = [0, 0];
+  if (dead < 0) {
+    for (let i = 0; i < 2; i++) {
+      const side = i === 0 ? -1 : 1;
+      footAt((cyc + (i ? 0.5 : 0)) % 1, g, FO);
+      let x = side * lerp(U.FOOT_X, 0.065, g.run * w), y = 0, z = 0, rx = 0;
+      x += mx * FO.along * w * 0.7; // side steps are shorter
+      z += mz * FO.along * w;
+      y += FO.lift * w * (1 - 0.45 * kneel);
+      rx = -FO.pitch * w * Math.max(0, mz);
+      // the foot rolls about its heel at touchdown and its toe at push-off, never into the ground
+      { const pt = -rx; y += pt > 0 ? 0.085 * Math.sin(pt) : 0.135 * Math.sin(-pt); }
+      // in the air the legs tuck on the way up and reach for the ground on the way down
+      if (air > 0) {
+        const rise = s.rise || 0;
+        const az = i ? -0.09 : 0.11, ay = (i ? 0.17 : 0.1) * (rise > 0 ? 1 : 0.5) + 0.03;
+        z = lerp(z, az, air); y = lerp(y, ay, air); rx = lerp(rx, (i ? 0.5 : -0.2), air);
+      }
+      // kneel: one foot forward, the other tucked back up on its toe
+      if (kneelStill > 0) {
+        z = lerp(z, i ? 0.25 : -0.26, kneelStill);
+        y = lerp(y, i ? 0 : 0.108, kneelStill);
+        rx = lerp(rx, i ? 0 : 0.9, kneelStill);
+      }
+      sx[i] = x; sy[i] = y; sz[i] = z; srx[i] = rx;
+    }
+  }
+
+  // ---- body: breathes at rest, bobs and dips with the stride, leans into the run, sinks on landing
   const breathe = Math.sin(t * 1.7) * 0.006 * (1 - walk);
-  const bob = -Math.abs(Math.cos(cyc * Math.PI * 2)) * 0.03 * walk + 0.015 * walk;
   const land = (s.land || 0) * 0.07;
-  const drop = kneel * U.KNEEL_DROP + land - air * 0.02 * (s.rise || 0);
-  const lean = 0.09 * walk * (s.sprint ? 1.8 : 1) + 0.12 * kneel + (s.flinch || 0) * -0.1;
-  const sway = Math.sin(cyc * Math.PI * 2) * 0.03 * walk;
+  const bobY = ground * w * hipBob(cyc, g) * (1 - 0.7 * kneel);
+  const drop = kneel * U.KNEEL_DROP * (1 - 0.15 * w) + land - air * 0.02 * (s.rise || 0);
+  const lean = g.lean * w * ground + 0.12 * kneel + (s.flinch || 0) * -0.1;
+  const sway = Math.sin(cyc * Math.PI * 2) * (0.02 + 0.035 * g.run) * w * ground;
   // lean toward the move direction (pitch for forward/back, roll for sideways)
-  const pitchLean = lean * (walk > 0.05 ? mz : 1) + 0.05 * air * (s.rise || 0);
-  const rollLean = -lean * (walk > 0.05 ? mx : 0) * 0.7 + sway;
-  let by = U.BODY_Y + bob + breathe - drop;
+  const mzf = w > 0.05 ? (mz > 0 ? mz : mz * 0.3) : 1;
+  const pitchLean = lean * mzf + 0.05 * air * (s.rise || 0);
+  const rollLean = -lean * (w > 0.05 ? mx : 0) * 0.7 + sway;
+  // the shoulders turn against the hips as the arms swing
+  const yaw = -Math.sin(cyc * Math.PI * 2) * g.twist * w * ground * Math.max(0, mz);
+  let by = U.BODY_Y + bobY + breathe - drop;
+  // never ask a leg to reach further than it can: lower the hips until both feet are in reach
+  if (dead < 0) {
+    let hip = by - U.H / 2 + HIP_UP;
+    for (let i = 0; i < 2; i++) {
+      const hx = (i === 0 ? -1 : 1) * U.HIP_X;
+      const dx = sx[i] - hx, dz = sz[i];
+      const reach = (U.LEG[0] + U.LEG[1]) * 0.985;
+      const lim = sy[i] + ANKLE + Math.sqrt(Math.max(0, reach * reach - dx * dx - dz * dz));
+      if (lim < hip) hip = lim;
+    }
+    by = hip + U.H / 2 - HIP_UP;
+  }
   // the body pivots about its base so leaning doesn't swing the feet
   const base = by - U.H / 2;
-  E.set(pitchLean, 0, rollLean, 'YXZ');
+  E.set(pitchLean, yaw, rollLean, 'YXZ');
   Q.setFromEuler(E);
   T.set(0, U.H / 2, 0).applyQuaternion(Q);
   out.body.compose(P.set(0, base + T.y, T.z), Q, S1);
@@ -144,34 +186,16 @@ function poseCore(s, out) {
     by = py + T.y;
   }
 
+  out.pitch = g.lean * w * ground * mzf; // the run's lean alone: held items follow it
   attachToBody(out, THREE.MathUtils.clamp(s.twist || 0, -0.5, 0.5) * 0.3, THREE.MathUtils.clamp(s.aimPitch || 0, -0.6, 0.6) * 0.35 * (dead >= 0 ? 0 : 1));
 
-  // ---- feet
   for (let i = 0; i < 2; i++) {
     const side = i === 0 ? -1 : 1;
-    let x = side * U.FOOT_X, y = 0, z = 0, rx = 0;
     if (dead >= 0) {
       // lying on its back: the legs stretch out ahead of the hips, toes up
       const k = smooth(0, 1, dead);
-      rx = -k * 1.25;
-      z = lerp(0, 0.36, k);
-      x *= lerp(1, 1.25, k);
-      y = lerp(0, 0.055, k);
-    } else {
-      const f = footAt((cyc + (i ? 0.5 : 0)) % 1, stride);
-      const w = walk;
-      x += mx * f.along * w * 0.6; // side steps are shorter
-      z += mz * f.along * w;
-      y += f.lift * 0.045 * w + air * (0.03 + (i ? 0.02 : 0));
-      rx = -f.pitch * w * mz + air * 0.25;
-      // kneel: one foot forward, the other tucked back up on its toe
-      if (kneel > 0) {
-        z = lerp(z, i ? 0.25 : -0.26, kneel);
-        y = lerp(y, i ? 0 : 0.108, kneel);
-        rx = lerp(rx, i ? 0 : 0.9, kneel);
-      }
-    }
-    compose(out.feet[i], x, y, z, rx, 0, 0);
+      compose(out.feet[i], side * U.FOOT_X * lerp(1, 1.25, k), lerp(0, 0.055, k), lerp(0, 0.36, k), -k * 1.25, 0, 0);
+    } else compose(out.feet[i], sx[i], sy[i], sz[i], srx[i], 0, 0);
   }
 
   // ---- weapon and hands
@@ -240,12 +264,61 @@ function poseCore(s, out) {
 const R = new THREE.Matrix4();
 const R2 = new THREE.Matrix4();
 const G = new THREE.Vector3();
+const HP = new THREE.Vector3(), HL = new THREE.Matrix4(), HR = new THREE.Matrix4();
 const V3 = new THREE.Vector3();
 export const PRONE = { PIVOT: U.D / 2 + 0.02, BACK: 0.5, GUN_Y: 0.3, ANGLE: Math.PI / 2 * 0.94 };
 export function pose(s, out = makePose()) {
   poseCore(s, out);
+  followLean(s, out);
+  freeArm(s, out);
   postures(s, out);
+  crawl(s, out);
   return out;
+}
+
+// The gun rides with the chest as the body leans into a run, so the two never swing into each other.
+const LR = new THREE.Matrix4(), LT = new THREE.Matrix4();
+function followLean(s, out) {
+  const a = (out.pitch || 0) * (0.5 + 0.5 * (1 - (s.ready ?? 1)));
+  if (Math.abs(a) < 0.003 || (s.dead ?? -1) >= 0) return;
+  LR.makeTranslation(0, U.LIFT, 0).multiply(LT.makeRotationX(a)).multiply(M2.makeTranslation(0, -U.LIFT, 0));
+  out.weapon.premultiply(LR); out.hands[0].premultiply(LR); out.hands[1].premultiply(LR);
+  out.muzzle.applyMatrix4(LR);
+}
+
+// Sprinting with a gun: it rides in the right hand at the hip while the left arm, released from
+// the fore-end, pumps against the legs with the elbow bent. k: 0 on the gun .. 1 swinging free.
+const FH = new THREE.Vector3(), FP = new THREE.Vector3(), FQ = new THREE.Quaternion(), FQ2 = new THREE.Quaternion(), FS = new THREE.Vector3();
+function freeArm(s, out) {
+  const k = s.free || 0;
+  if (k < 0.001 || (s.dead ?? -1) >= 0 || (s.prone || 0) > 0.01 || !out.gait) return;
+  const g = out.gait;
+  const sw = Math.cos((s.cycle || 0) * Math.PI * 2); // left arm forward as the right foot lands
+  const fwd = Math.max(0, sw);
+  compose(M, U.SH_X + 0.025, -0.2 + 0.07 * g.run + 0.09 * fwd, 0.05 + sw * g.swing * 1.25, -0.5 - 0.6 * g.run - 0.3 * sw, 0, 0.15);
+  M2.multiplyMatrices(out.body, M);
+  const h = out.hands[0];
+  h.decompose(FP, FQ, FS);
+  M2.decompose(FH, FQ2, FS);
+  FP.lerp(FH, k); FQ.slerp(FQ2, k);
+  h.compose(FP, FQ, S1);
+}
+
+// Crawling on the belly: the feet take turns pushing, and a downed soldier hauls forward on one hand.
+function crawl(s, out) {
+  const k = smooth(0, 1, s.prone || 0), w = (s.walk || 0) * k;
+  if (w < 0.01) return;
+  const c = (s.cycle || 0) * Math.PI * 2;
+  for (let i = 0; i < 2; i++) {
+    const a = c + (i ? Math.PI : 0), f = out.feet[i];
+    f.elements[14] += Math.sin(a) * 0.07 * w;
+    f.elements[13] += Math.max(0, -Math.cos(a)) * 0.04 * w;
+  }
+  if (s.down) {
+    const h = out.hands[0], a = c + Math.PI * 0.5;
+    h.elements[14] += Math.sin(a) * 0.05 * w;
+    h.elements[13] += Math.max(0, Math.cos(a)) * 0.04 * w - 0.03 * w;
+  }
 }
 
 function postures(s, out) {
@@ -270,6 +343,9 @@ function postures(s, out) {
     R.makeTranslation(0, P0 + 0.05 * Math.sin(Math.PI * k) , -PRONE.BACK * k).multiply(R2.makeRotationX(th)).multiply(M.makeTranslation(0, -P0, 0));
     for (const m of upper) m.premultiply(R);
     for (const f of out.feet) { f.premultiply(R); f.elements[13] -= 0.03 * k * k * k; } // toes rest on the ground
+    // the head and neck lift to look where the gun points, instead of pressing the face into the dirt
+    HP.setFromMatrixPosition(out.head);
+    out.head.premultiply(HL.makeTranslation(-HP.x, -HP.y, -HP.z)).premultiply(HR.makeRotationX(-th * 0.9)).premultiply(HL.makeTranslation(HP.x, HP.y, HP.z));
     // the gun keeps its aim; it moves out past the head, butt just clear of it, low to the ground,
     G.setFromMatrixPosition(out.weapon);
     let headZ = -Infinity;

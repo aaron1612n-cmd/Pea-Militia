@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { U, pose, makePose } from './rig.js';
+import { strideLength } from './gait.js';
 import { WEAPONS, makeWeapon } from './weapons.js';
 import { wrap } from './physics.js';
 import { Ragdoll } from './ragdoll.js';
@@ -7,14 +8,13 @@ import { CLASSES, NEUTRAL } from './classes.js';
 
 export const RADIUS = U.RADIUS;
 export const WALK = 2.2; // m/s
-export const SPRINT = 1.65;
+export const SPRINT = 1.9; // a real sprint: with the stride in gait.js this reads as running, not speed walking
 const GRAVITY = 17;
 const lerp = THREE.MathUtils.lerp;
 const JUMP_V = 4.8;
 // The fastest any soldier can run on their own: walk pace times the sprint multiplier. One source
 // of truth; weapon, stance and suppression modifiers only ever slow a soldier from here.
 export const MAX_SPEED = WALK * SPRINT * 1.75; // fastest class (assault) mid-dash
-const CADENCE = 1.9; // steps per second per foot at walking pace
 
 let nextId = 1;
 
@@ -206,17 +206,19 @@ export class Unit {
       this.facing = Math.atan2(from.pos.x - this.pos.x, from.pos.z - this.pos.z);
       if (from.team !== undefined) from.kills++;
     }
-    // ragdoll: thrown along the killing hit, harder for heavy hits and blasts
+    // ragdoll: a body is heavy. A bullet shoves it a step or two and the legs give way under it;
+    // only a blast throws it. The kick is momentum over mass, so heavy rounds push a little harder.
     const h = this.lastHit;
     const kick = new THREE.Vector3();
+    this.heavy = h?.kind === 'blast';
     if (h && h.dir && this.t - h.t < 0.05) {
-      const k = h.kind === 'blast' ? 1.5 : THREE.MathUtils.clamp(1.6 + h.dmg / 25, 1.8, 5);
+      const k = h.kind === 'blast' ? THREE.MathUtils.clamp(2.4 + h.dmg / 70, 2.4, 6) : THREE.MathUtils.clamp(0.35 + h.dmg / 200, 0.4, 1.2);
       kick.copy(h.dir).setY(0).normalize().multiplyScalar(k);
-      kick.y = h.kind === 'blast' ? 1.5 : 0.6 + Math.random() * 0.6;
+      kick.y = h.kind === 'blast' ? 2.2 + Math.random() * 1.2 : 0.05 + Math.random() * 0.15;
     } else {
-      // burned or bled out: slump forward or back
+      // burned or bled out: the knees go and the body slumps where it stood
       const a = this.facing + (Math.random() < 0.5 ? 0 : Math.PI) + (Math.random() - 0.5);
-      kick.set(Math.sin(a) * 1.3, 0.2, Math.cos(a) * 1.3);
+      kick.set(Math.sin(a) * 0.35, 0, Math.cos(a) * 0.35);
     }
     this.vel.set(0, 0, 0);
     this.rag = new Ragdoll(this, kick);
@@ -331,11 +333,13 @@ export class Unit {
     if (this.winded && this.stamina > 0.35) this.winded = false;
     const cantFight = this.down || this.stagger > 0.35 || this.bandageT > 0 || this.jamT > 0 || (this.shock > 0 && !this.isPlayer);
     const prone = (c.prone || this.down || (this.shock > 0 && !this.isPlayer)) && this.grounded ? 1 : 0;
-    if (prone) sprint = false;
+    // getting up goes prone -> crouch -> standing, never straight from the dirt to a sprint
+    const rising = !prone && (this.proneK || 0) > 0.3;
+    if (prone || rising) sprint = false;
     this.proneK = (this.proneK || 0) + (prone - (this.proneK || 0)) * (1 - Math.exp(-5 * dt));
     const lean = !sprint && this.proneK < 0.3 ? THREE.MathUtils.clamp(c.lean || 0, -1, 1) : 0;
     this.leanK = (this.leanK || 0) + (lean - (this.leanK || 0)) * (1 - Math.exp(-10 * dt));
-    const kneel = c.kneel && !sprint && !prone ? 1 : 0;
+    const kneel = (c.kneel || rising) && !sprint && !prone ? 1 : 0;
     this.kneelK += (kneel - this.kneelK) * (1 - Math.exp(-9 * dt));
     const speed = WALK * this.speedK * this.mod.speed * (c.speed ?? 1) * (def.move || 1) * (sprint ? SPRINT : 1) * (1 - 0.6 * this.kneelK) * (1 - 0.72 * this.proneK) * (1 - 0.5 * Math.abs(this.leanK)) * (1 - 0.25 * this.suppression) * (1 - 0.28 * this.ads) * (this.reloadT > 0 ? 0.82 : 1) * (1 - 0.12 * this.recoilBuild) * (1 - 0.55 * this.leg) * (this.down ? 0.28 : 1) * (this.stagger > 0 ? 0.45 : 1) * (this.shock > 0 && !this.isPlayer ? 0.2 : 1) * (this.bandageT > 0 ? 0.2 : 1);
     this.sprinting = sprint;
@@ -459,10 +463,10 @@ export class Unit {
       this.pos.x = b.x; this.pos.z = b.z;
       this.pos.y = world ? world.groundAt(b.x, b.z, b.y) : 0;
       const th = this.rag.takeThump();
-      if (th > 2.2 && this.t - this.lastThud > 0.25 && world?.audio) {
+      if (th > 1.1 && this.t - this.lastThud > 0.25 && world?.audio) {
         this.lastThud = this.t;
-        world.audio.play('thud', b, Math.min(1, th / 6));
-        if (th > 3.5) world.fx?.dust(b.clone().setY(this.pos.y + 0.05), 2, 0.5);
+        world.audio.play('thud', b, Math.min(1, 0.4 + th / 5)); // a body landing is a dull weight, even from a slump
+        if (th > 2.4) world.fx?.dust(b.clone().setY(this.pos.y + 0.05), 2, 0.5);
       }
       this.animate(dt);
       return;
@@ -481,8 +485,10 @@ export class Unit {
 
   animate(dt) {
     const speed = Math.hypot(this.vel.x, this.vel.z);
-    const k = THREE.MathUtils.clamp(speed / WALK, 0, 1.6);
-    this.walk += ((this.grounded && this.alive ? Math.min(1, k) : 0) - this.walk) * (1 - Math.exp(-10 * dt));
+    // gait speed: the ground speed, eased so the stride doesn't jitter with every velocity wobble
+    this.gspeed = (this.gspeed ?? speed) + (speed - (this.gspeed ?? speed)) * (1 - Math.exp(-14 * dt));
+    const gs = this.gspeed;
+    this.walk += ((this.grounded && this.alive ? THREE.MathUtils.smoothstep(gs, 0.08, 0.5) : 0) - this.walk) * (1 - Math.exp(-10 * dt));
     if (speed > 0.05) {
       // move direction in the body's frame, for feet and lean
       const c = Math.cos(this.facing), s = Math.sin(this.facing);
@@ -491,16 +497,17 @@ export class Unit {
       this.mz += (lz - this.mz) * (1 - Math.exp(-12 * dt));
     }
     if (this.grounded) {
-      const cadence = CADENCE * (0.7 + 0.3 * Math.min(k, 1.6));
-      this.cycle = (this.cycle + cadence * dt) % 1;
-      this.stride = THREE.MathUtils.clamp(speed / cadence * 0.6, 0.02, 0.7);
+      // the stride advances by distance covered, so a planted foot moves back exactly as fast as the soldier moves on
+      this.cycle = (this.cycle + speed * dt / strideLength(gs)) % 1;
+      this.stride = strideLength(gs);
     }
+    this.freeK = (this.freeK || 0) + ((this.sprinting ? 1 : 0) - (this.freeK || 0)) * (1 - Math.exp(-9 * dt));
     this.air += ((this.grounded ? 0 : 1) - this.air) * (1 - Math.exp(-(this.grounded ? 22 : 14) * dt));
     this.landT += dt;
     const lt = this.landT;
     const land = this.landK * (lt < 0.05 ? lt / 0.05 : 1 - THREE.MathUtils.smoothstep(lt, 0.05, 0.34));
     const s = this.poseState;
-    s.t = this.t; s.walk = this.walk; s.cycle = this.cycle; s.stride = this.stride ?? 0.3;
+    s.t = this.t; s.walk = this.walk; s.cycle = this.cycle; s.stride = this.stride ?? 0.3; s.speed = this.gspeed || 0; s.free = this.freeK; s.down = this.down;
     s.mx = this.mx; s.mz = this.mz; s.air = this.air; s.rise = THREE.MathUtils.clamp(this.vel.y / JUMP_V, -1, 1);
     s.land = land; s.kneel = this.kneelK; s.aimPitch = THREE.MathUtils.clamp(this.aimPitch, -0.9, 0.9);
     s.twist = this.twist; s.ready = this.ready; s.recoil = this.recoil;

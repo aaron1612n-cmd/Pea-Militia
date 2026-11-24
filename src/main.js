@@ -718,6 +718,7 @@ function updatePlayer(dt, inp) {
   c.sprint = !building && inp.sprint && mv.y > 0.3;
   c.kneel = !building && inp.crouch;
   c.prone = !building && inp.prone;
+  { const st = input.prone ? 'prone' : input.crouchToggle ? 'crouch' : 'stand'; if (crouchBtn.dataset.stance !== st) { crouchBtn.dataset.stance = st; crouchBtn.setAttribute('aria-pressed', st !== 'stand'); } }
   c.lean = building ? 0 : inp.lean;
   c.faceYaw = cam.mode === 'over' ? undefined : cam.bodyYaw;
   c.aimAt = building ? null : aimPoint.clone();

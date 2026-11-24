@@ -23,6 +23,8 @@ class Box {
     this.rest = 0;
     this.asleep = false;
     this.hits = 0; // ground contacts this step
+    this.legs = 0; // 1 while the legs hold the body up, falling to 0 as they give way
+    this.fall = 0; this.tip = new THREE.Vector3();
     this.thump = 0; // hardest landing speed since last read
   }
 
@@ -41,6 +43,17 @@ class Box {
   step(dt, world) {
     if (this.asleep) return;
     this.v.y -= GRAV * dt;
+    // the legs still carry the body for a moment after the hit, then buckle: a falling soldier
+    // sags, folds and topples over, instead of dropping like a plank
+    if (this.legs > 0) {
+      this.legs = Math.max(0, this.legs - dt / 0.6);
+      const k = this.legs * this.legs;
+      this.v.y += GRAV * dt * k * 0.92;
+      this.v.x *= Math.exp(-5 * k * dt); this.v.z *= Math.exp(-5 * k * dt);
+      // gravity pulls the unsupported top of the body over, along the way it was pushed
+      const f = (1 - this.legs) * this.fall * dt;
+      this.w.x += this.tip.x * f; this.w.z += this.tip.z * f;
+    }
     this.pos.addScaledVector(this.v, dt);
     const wl = this.w.length();
     if (wl > 1e-6) {
@@ -68,19 +81,19 @@ class Box {
         _n.set(0, 1, 0);
         const rn = _t.crossVectors(_r, _n);
         const k = 1 / this.m + this.applyInvI(rn, rn).cross(_r).dot(_n);
-        const e = -vn > 3 ? 0.18 : 0;
+        const e = 0; // a dead weight doesn't bounce
         const jn = (-(1 + e) * vn) / k;
         // friction against the sliding part, capped by the normal impulse
         const tx = vp.x, tz = vp.z, ts = Math.hypot(tx, tz);
-        const jf = ts > 1e-4 ? Math.min(ts * this.m * 0.5, jn * 0.7) / ts : 0;
+        const jf = ts > 1e-4 ? Math.min(ts * this.m * 0.9, jn * 1.1) / ts : 0;
         this.impulseAt(_r, _p.set(-tx * jf, jn, -tz * jf));
       }
     }
     if (deepest > 0) this.pos.y += deepest * 0.85;
     // rolling resistance and air drag so bodies settle instead of rocking
-    const damp = this.hits ? Math.exp(-3.2 * dt) : Math.exp(-0.15 * dt);
+    const damp = this.hits ? Math.exp(-6.5 * dt) : Math.exp(-0.15 * dt);
     this.w.multiplyScalar(damp);
-    if (this.hits >= 2) this.v.x *= Math.exp(-1.5 * dt), this.v.z *= Math.exp(-1.5 * dt);
+    if (this.hits >= 2) this.v.x *= Math.exp(-4 * dt), this.v.z *= Math.exp(-4 * dt);
     // edge of the slab and prop sides: push the box centre out horizontally
     if (world) {
       const probe = this.probe || (this.probe = { pos: new THREE.Vector3(), vel: this.v });
@@ -126,11 +139,20 @@ export class Ragdoll {
     this.body = new Box(new THREE.Vector3(U.W / 2, U.H / 2, U.D / 2 + 0.06), 1, BODY_PTS);
     m.decompose(this.body.pos, this.body.q, _v);
     this.body.v.copy(unit.vel).add(kick);
-    // the hit lands high on the body, so it topples away from the shot, with a little twist
+    // the hit lands high on the body, so it topples away from the shot, slowly: weight, not a spin
     const hitAt = new THREE.Vector3(0, 0.3 + Math.random() * 0.15, 0).applyQuaternion(this.body.q);
     const horiz = _v.copy(kick).setY(0);
-    this.body.w.crossVectors(hitAt, horiz).multiplyScalar(6.5);
-    this.body.w.y += (Math.random() - 0.5) * Math.min(4, kick.length());
+    const blast = unit.heavy;
+    this.body.w.crossVectors(hitAt, horiz).multiplyScalar(blast ? 4 : 1.1);
+    this.body.w.y += (Math.random() - 0.5) * Math.min(blast ? 3 : 0.8, kick.length());
+    // standing soldiers buckle at the knees; one thrown by a blast or already airborne has nothing to stand on
+    if (unit.grounded && !blast) {
+      this.body.legs = 1;
+      const hl = horiz.length() || 1;
+      // fall along the push; a slump with no push falls forward or back at random
+      this.body.tip.set(horiz.z / hl, 0, -horiz.x / hl);
+      this.body.fall = 5.5 + Math.random() * 2;
+    }
     // limbs start where the pose had them
     this.limbs = [];
     const hm = new THREE.Matrix4();
@@ -187,10 +209,10 @@ export class Ragdoll {
     _qi.copy(b.q).invert();
     for (const l of this.limbs) {
       // verlet with damping
-      _v.subVectors(l.p, l.o).multiplyScalar(0.985);
+      _v.subVectors(l.p, l.o).multiplyScalar(0.955); // limp limbs: heavy, they swing little and settle fast
       l.o.copy(l.p);
       l.p.add(_v);
-      l.p.y -= GRAV * dt * dt;
+      l.p.y -= GRAV * dt * dt * 1.25;
       // tether to the anchor on the body
       _r.copy(l.a.at).applyQuaternion(b.q).add(b.pos);
       _t.subVectors(l.p, _r);
