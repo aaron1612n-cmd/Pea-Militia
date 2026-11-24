@@ -443,7 +443,7 @@ export class Battle {
     const sm = shooter.mod?.spread ?? 1;
     if (shooter.mod?.dmgOut > 1 && def.damage) def = { ...def, damage: def.damage * shooter.mod.dmgOut, dps: def.dps && def.dps * shooter.mod.dmgOut };
     const steady = sm * (shooter.isPlayer ? (shooter.ads > 0.5 ? 0.45 : 1) : 1);
-    const s = (def.spread || 0) * steady * (1 + moving * 1.2 + shooter.suppression * 1.5) * (1 - 0.35 * shooter.kneelK);
+    const s = (def.spread || 0) * steady * (1 + moving * 1.2 + shooter.suppression * 1.5) * (1 - 0.35 * shooter.kneelK) * (1 + (shooter.arm || 0) * 1.5 + (shooter.shock > 0 ? 2 : 0) + (shooter.leg || 0) * 0.4);
     dir = this.spread(dir, s);
     this.stats.shots++;
     if (def.kind === 'hitscan') this.hitscan(shooter, m, dir, def);
@@ -469,8 +469,9 @@ export class Battle {
     const end = hit.point;
     this.fx.tracer(from.clone().addScaledVector(dir, 0.15), end, def.id === 'mg' ? 0.02 : 0.014);
     this.suppress(shooter, from, end);
+    this.corpseShots(from, dir, hit.t, def.damage);
     if (hit.vehicle) { hit.vehicle.hit(def.damage, 'bullet', shooter, this); this.fx.impact(end, hit.normal, 'metal'); }
-    else if (hit.unit) this.damageUnit(hit.unit, def.damage, shooter, 'bullet', dir);
+    else if (hit.unit) this.damageUnit(hit.unit, def.damage, shooter, 'bullet', dir, hit.point);
     else if (hit.prop) { this.damageProp(hit.prop, def.damage * 0.15, shooter); this.fx.impact(end, hit.normal, hit.prop.type === 'wall' || hit.prop.type === 'drum' || hit.prop.type === 'trap' ? 'metalhole' : 'dust'); }
     else if (hit.ground) this.fx.impact(end, hit.normal, 'dust');
   }
@@ -490,20 +491,64 @@ export class Battle {
     }
   }
 
-  damageUnit(u, dmg, from, kind, dir) {
+  // where on the body a point is: head and torso kill, limbs cripple and bleed
+  hitZone(u, pt) {
+    if (!pt || (u.proneK || 0) > 0.5) return 'torso';
+    const h = (pt.y - u.pos.y) / (U.TOP - (u.kneelK || 0) * U.KNEEL_DROP);
+    if (h > 0.8) return 'head';
+    if (h < 0.3) return 'leg';
+    const lx = (pt.x - u.pos.x) * Math.cos(u.facing) - (pt.z - u.pos.z) * Math.sin(u.facing);
+    if (Math.abs(lx) > U.W * 0.36) return 'arm';
+    return 'torso';
+  }
+
+  damageUnit(u, dmg, from, kind, dir, point) {
     if (!u.alive) return;
     if (u.isPlayer && this.god) return;
+    let zone = 'torso';
+    if (kind === 'bullet' && point) {
+      zone = this.hitZone(u, point);
+      dmg *= { head: 2.6, torso: 1.15, arm: 0.6, leg: 0.7 }[zone];
+    }
     const c = u.center();
     this.fx.impact(c.clone().addScaledVector(dir || UP, -0.25), dir ? dir.clone().negate() : UP, 'metal');
     if (Math.random() < 0.5) this.fx.debris(c, TEAMS[u.team].body, 2);
     this.fx.gore.hit(c, dir, dmg, kind, u);
-    u.lastHit = { dir: dir ? dir.clone() : null, dmg, kind, t: u.t };
-    u.hurt(dmg, from, this, kind);
-    if (u.alive && dir && (kind === 'bullet' || kind === 'plasma') && this.fx.gore.level) u.impulse(dir.clone().setY(0).normalize().multiplyScalar(Math.min(2.4, dmg / 35)));
+    u.lastHit = { dir: dir ? dir.clone() : null, dmg, kind, t: u.t, zone };
+    u.hurt(dmg, from, this, kind, zone);
+    if (u.alive && dir && (kind === 'bullet' || kind === 'plasma') && this.fx.gore.level) u.impulse(dir.clone().setY(0).normalize().multiplyScalar(Math.min(1.6, dmg / 50)));
     if (from && from === this.player) this.onHitMarker?.(!u.alive);
     if (u.isPlayer) this.onPlayerHurt?.(dmg, from);
     if (u.squad && from?.pos) u.squad.know(from, from.pos, true);
     if (u.brain) u.brain.hurtBy(from);
+  }
+
+  // The dead stay on the field and keep taking punishment: rounds through the body tear more
+  // wounds and eventually the corpse comes apart. They never stop a bullet.
+  corpseShots(from, dir, maxT, dmg) {
+    const c = V(), mx = from.x + dir.x * maxT / 2, mz = from.z + dir.z * maxT / 2;
+    for (const u of this.unitGrid.near(mx, mz, Math.min(maxT / 2 + 1, 40), this.tmpA)) {
+      if (u.alive || !u.rag || u.removed) continue;
+      c.copy(u.rag.body.pos);
+      const ax = c.x - from.x, ay = c.y - from.y, az = c.z - from.z;
+      const along = ax * dir.x + ay * dir.y + az * dir.z;
+      if (along < 0 || along > maxT) continue;
+      const px = ax - dir.x * along, py = ay - dir.y * along, pz = az - dir.z * along;
+      if (px * px + py * py + pz * pz > 0.2) continue;
+      this.hitCorpse(u, dir, dmg, 'bullet');
+    }
+  }
+
+  hitCorpse(u, dir, dmg, kind, c) {
+    c = c || u.rag.body.pos.clone();
+    u.corpseHp -= dmg;
+    this.fx.gore.hit(c, dir, dmg * 0.8, kind, u);
+    this.fx.impact(c, dir ? dir.clone().negate() : UP, 'metal');
+    u.rag.kick(dir.clone().setY(0.1).multiplyScalar(Math.min(2.2, dmg / 30)));
+    if (u.corpseHp <= 0 || (kind === 'blast' && dmg > 30)) {
+      this.fx.gore.dismember(u, kind === 'blast' ? 2 + Math.floor(Math.random() * 3) : 1, kind === 'blast' ? 6 : 3);
+      if (u.corpseHp <= 0) u.corpseHp = 35;
+    }
   }
 
   damageProp(p, dmg, from) {
@@ -621,6 +666,11 @@ export class Battle {
       u.center(c);
       const d = c.distanceTo(pos);
       if (d < r * 2.2 && u.alive) { u.suppression = Math.min(1, u.suppression + 0.6 * (1 - d / (r * 2.2))); u.squad?.know(owner, pos, true); }
+      // shell shock: a close blast leaves a soldier deaf, dazed and cowering
+      if (u.alive && d < r * 1.6) {
+        const sh = 2.5 + 5 * (1 - d / (r * 1.6));
+        if (u.shock < sh) { u.shock = sh; if (u.isPlayer) { this.onShock?.(sh); } else if (!u.isPlayer) this.audio.play('moan', c, 0.6); }
+      }
       if (d > r) continue;
       const shield = this.los(from, c) ? 1 : 0.3;
       const k = Math.pow(1 - d / r, 0.7) * shield;
@@ -628,8 +678,10 @@ export class Battle {
       if (push.lengthSq() < 1e-4) push.set(Math.random() - 0.5, 0, Math.random() - 0.5);
       push.normalize().multiplyScalar(6 * k).add(new THREE.Vector3(0, 3.5 * k, 0));
       if (u.alive) this.damageUnit(u, dmg * k, owner, 'blast', push.clone().normalize());
+      else if (u.rag) this.hitCorpse(u, push.clone().normalize(), dmg * k, 'blast', c.clone());
       if (!(u.isPlayer && this.god)) u.impulse(push);
     }
+    this.shrapnel(from, r, team, owner, dmg);
     for (const v of this.vehicles) {
       if (!v.alive) continue;
       const dx = Math.abs(pos.x - v.pos.x), dz = Math.abs(pos.z - v.pos.z);
@@ -642,6 +694,24 @@ export class Battle {
     for (const p of [...this.propGrid.near(pos.x, pos.z, r + 2, this.tmpB)]) {
       const d = Math.hypot(p.box.x - pos.x, p.box.z - pos.z) - Math.max(p.box.hx, p.box.hz) * 0.6;
       if (d < r) this.damageProp(p, dmg * 1.2 * (1 - Math.max(0, d) / r), owner);
+    }
+  }
+
+  // fragments fly out in all directions; cover stops them, soldiers in the open don't
+  shrapnel(from, r, team, owner, dmg) {
+    const n = Math.min(14, 6 + Math.round(r * 2)), d = V();
+    for (let i = 0; i < n; i++) {
+      const a = Math.random() * Math.PI * 2, e = (Math.random() * 0.5 - 0.05) * Math.PI / 2;
+      d.set(Math.cos(a) * Math.cos(e), Math.sin(e), Math.sin(a) * Math.cos(e));
+      const range = r * 3.2;
+      const hit = this.raycast(from, d, range, {});
+      if (hit.unit && !(team >= 0 && hit.unit.team === team && hit.unit !== owner)) this.damageUnit(hit.unit, Math.min(60, 14 + dmg * 0.12), owner, 'bullet', d.clone(), hit.point);
+      else if (hit.unit && hit.unit.team === team) continue;
+      if (i % 3 === 0 && (hit.ground || hit.prop)) this.fx.impact(hit.point, hit.normal, 'dust');
+    }
+    for (const u of this.unitGrid.near(from.x, from.z, r * 2, this.tmpA)) if (!u.alive && u.rag && !u.removed && Math.random() < 0.25) {
+      const c = u.rag.body.pos, dx = c.x - from.x, dz = c.z - from.z, dd = Math.hypot(dx, dz);
+      if (dd < r * 2) this.hitCorpse(u, V().set(dx, 0.2, dz).normalize(), 20, 'bullet');
     }
   }
 
@@ -717,7 +787,7 @@ export class Battle {
   // a medic gets a fallen soldier back on their feet
   revive(u) {
     u.alive = true; u.rag = null; u.hp = 45; u.deadT = 0; u.vel.set(0, 0, 0); u.suppression = 0; u.burn = 0; u.flinch = 0;
-    u.wound = 0; u.lost = 0; u.wounds = null;
+    u.wound = 0; u.lost = 0; u.wounds = null; u.bleed = 0; u.leg = 0; u.arm = 0; u.down = false; u.shock = 0; u.stagger = 0; u.corpseHp = 70;
     u.onRevive?.();
     this.events.push({ type: 'revive', unit: u });
   }
@@ -931,7 +1001,12 @@ export class Battle {
     this.callins.update(dt);
     this.updatePoints(dt);
     this.updateTeams(dt);
-    for (const u of [...this.units]) if (!u.alive && u !== this.player && u.deadT > 14) this.removeUnit(u);
+    {
+      // the dead are left where they fell; only the oldest go once there are too many
+      const dead = this.units.filter((u) => !u.alive && u !== this.player);
+      dead.sort((a, b) => b.deadT - a.deadT);
+      for (let i = 0; i < dead.length; i++) if (dead[i].deadT > 240 || i < dead.length - 36) this.removeUnit(dead[i]);
+    }
     this.squads = this.squads.filter((s) => s.members.length);
     this.fx.update(dt);
     return dt;

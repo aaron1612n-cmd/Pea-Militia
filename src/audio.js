@@ -243,6 +243,23 @@ export class Audio {
         this.noiseBurst(d, { dur: 0.12, f: 600, f2: 200, peak: 0.35 });
         this.tone(d, { t: 0.05, dur: 0.07, type: 'triangle', f: 1100 + Math.random() * 500, f2: 800, peak: 0.08 });
         break;
+      case 'scream':
+        this.tone(d, { dur: 0.9, type: 'sawtooth', f: 520 + Math.random() * 160, f2: 240, peak: 0.22, attack: 0.04 });
+        this.tone(d, { t: 0.02, dur: 0.8, type: 'square', f: 1040, f2: 480, peak: 0.05, attack: 0.05 });
+        this.noiseBurst(d, { dur: 0.9, type: 'bandpass', f: 1200, f2: 700, q: 2, peak: 0.12, attack: 0.05 });
+        break;
+      case 'moan':
+        this.tone(d, { dur: 1.4, type: 'sawtooth', f: 190 + Math.random() * 40, f2: 120, peak: 0.13, attack: 0.25 });
+        this.noiseBurst(d, { dur: 1.2, type: 'bandpass', f: 600, q: 2, peak: 0.06, attack: 0.3 });
+        break;
+      case 'grunt':
+        this.tone(d, { dur: 0.22, type: 'sawtooth', f: 210, f2: 110, peak: 0.2 });
+        this.noiseBurst(d, { dur: 0.2, type: 'bandpass', f: 700, q: 1.5, peak: 0.15 });
+        break;
+      case 'jam':
+        this.tone(d, { dur: 0.04, type: 'square', f: 1400, peak: 0.1 });
+        this.tone(d, { t: 0.18, dur: 0.05, type: 'square', f: 700, peak: 0.07 });
+        break;
       case 'whiz':
         this.noiseBurst(d, { dur: 0.16, type: 'bandpass', f: 4200, f2: 1600, q: 3, peak: 0.6, attack: 0.03 });
         break;
