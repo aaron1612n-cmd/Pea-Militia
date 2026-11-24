@@ -96,6 +96,7 @@ $('wheelX').addEventListener('click', () => openWheel(false));
 $('wheelX').addEventListener('pointerdown', (e) => e.stopPropagation());
 
 let battle = new Battle(scene, fx, audio);
+fx.gore.world = battle;
 let player = null;
 let state = 'menu'; // menu | play | pause | end
 let settings = { mode: 'battle', teams: 2, size: 50, tickets: 4, view: '3p', playerTeam: 0 };
@@ -183,6 +184,7 @@ form.addEventListener('submit', (e) => {
 function showcase() {
   battle.dispose();
   battle = new Battle(scene, fx, audio);
+  fx.gore.world = battle;
   battle.configure({ teams: 2, size: 0, tickets: 0, mode: 'menu' });
   buildMap(battle, { seed: 7, teams: 2 });
   // a few squads standing about so the field isn't empty
@@ -229,6 +231,7 @@ function startBattle(s) {
   fx.gore.clear();
   battle.dispose();
   battle = new Battle(scene, fx, audio);
+  fx.gore.world = battle;
   const tickets = Math.round(settings.size * settings.tickets);
   battle.configure({ teams: settings.teams, size: settings.size, tickets, mode: settings.mode, playerTeam: settings.playerTeam });
   buildMap(battle, { seed: 7 + Math.floor(Math.random() * 1000), teams: settings.teams, points: settings.mode === 'battle' });
@@ -305,6 +308,7 @@ function toggleFree(on = cam.mode !== 'free', start = false) {
     const gx = THREE.MathUtils.clamp(cam.fr.x, -HALF + 2, HALF - 2), gz = THREE.MathUtils.clamp(cam.fr.z, -HALF + 2, HALF - 2);
     player.pos.set(gx, 0, gz); player.vel.set(0, 0, 0);
     player.hp = player.maxHp; player.alive = true; player.deadT = 0; player.respawnT = 0; player.grounded = false;
+    player.wound = 0; player.lost = 0; player.wounds = null; player.rag = null; fx.gore.forget(player);
     for (const w of player.weapons) { w.mag = w.def.mag; }
     if (!battle.units.includes(player)) battle.units.push(player);
     cam.yaw = cam.yaw; cam.mode = settings.view; cam.blend = settings.view === '1p' ? 1 : 0;
@@ -677,6 +681,8 @@ function respawnPlayer() {
   player.alive = true;
   player.hp = player.maxHp;
   player.burn = 0;
+  player.wound = 0; player.lost = 0; player.wounds = null; player.rag = null; player.flinch = 0; player.suppression = 0;
+  fx.gore.forget(player);
   player.respawnT = 0;
   player.deadT = 0;
   player.reloadT = player.throwT = 0;
