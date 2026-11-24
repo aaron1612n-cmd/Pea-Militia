@@ -168,7 +168,10 @@ export class Hud {
     // weapon
     const w = veh ? veh.hudWeapon() : player.weapon, def = w.def;
     const ammo = def.heat ? `${Math.round(w.heat * 100)}%` : `${w.mag}${w.reserve === Infinity ? '' : ` / ${w.reserve}`}`;
-    const label = veh ? def.name : player.reloadT > 0 ? 'Reloading' : def.name;
+    const dry = !veh && !def.heat && w.mag <= 0 && w.reserve <= 0 && def.mag !== Infinity;
+    const label = veh ? def.name : player.reloadT > 0 ? (player.reloadEmpty ? 'Empty reload' : 'Quick reload') : player.jamT > 0 ? 'Jammed' : dry ? 'Out of ammo · find a crate' : def.name;
+    const low = !veh && !def.heat && def.mag !== Infinity && (w.mag <= def.mag * 0.25 || (w.reserve !== Infinity && w.reserve < def.mag));
+    if (low !== this.last.low) { this.ammo.classList.toggle('low', low); this.last.low = low; }
     if (ammo !== this.last.ammo) { this.ammo.textContent = ammo; this.last.ammo = ammo; }
     if (label !== this.last.label) { this.wname.textContent = label; this.last.label = label; }
     this.heatBar.hidden = !def.heat;

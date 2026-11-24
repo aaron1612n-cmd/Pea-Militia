@@ -30,6 +30,20 @@ export const WEAPONS = {
     mag: 1, reserve: 5, reload: 0.7, range: 22, pierce: 0.9, sound: 'throw', ideal: [6, 18], burst: [1, 1], proj: 'grenade',
   },
 };
+// Handling per weapon. rc: recoil kick per shot in radians (up, side), how fast it builds into
+// a climbing pattern (build per shot, capped at 1), and how fast the view settles (rec/s).
+// sway: breathing and fatigue multiplier. chamber: a tactical reload keeps one round in the breech.
+// tac / empty: reload time multipliers for topping up a part-used magazine vs. an empty gun.
+const HANDLING = {
+  rifle: { rc: { up: 0.024, side: 0.006, build: 0.2, rec: 0.9 }, sway: 1, chamber: true, tac: 0.72, empty: 1.0, rack: 0.4, pattern: [0.4, -0.2, 0.5, -0.3] },
+  smg: { rc: { up: 0.0075, side: 0.004, build: 0.07, rec: 1.3 }, sway: 0.75, chamber: true, tac: 0.75, empty: 1.0, rack: 0.3, pattern: [0.5, 1, 0.6, -0.4, -1, -0.5, 0.3, 0.9] },
+  mg: { rc: { up: 0.009, side: 0.0055, build: 0.045, rec: 0.7 }, sway: 1.5, chamber: false, tac: 0.9, empty: 1.0, rack: 0.6, pattern: [0.3, 0.8, 1, 0.5, -0.2, -0.7, -1, -0.5] },
+  plasma: { rc: { up: 0.007, side: 0.003, build: 0.05, rec: 1.2 }, sway: 0.8, chamber: false, tac: 1, empty: 1, rack: 0, pattern: [0, 0.5, -0.5] },
+  launcher: { rc: { up: 0.034, side: 0.008, build: 0.5, rec: 0.7 }, sway: 1.5, chamber: false, tac: 1, empty: 1, rack: 0, pattern: [0.5] },
+  grenade: { rc: { up: 0, side: 0, build: 0, rec: 1 }, sway: 1, chamber: false, tac: 1, empty: 1, rack: 0, pattern: [0] },
+};
+for (const [id, h] of Object.entries(HANDLING)) Object.assign(WEAPONS[id], h);
+
 export const SLOTS = ['rifle', 'smg', 'mg', 'plasma', 'launcher', 'grenade'];
 
 // ---------------- models ----------------
@@ -262,3 +276,23 @@ export function projectileModel(type) {
 }
 
 for (const [id, w] of Object.entries(WEAPONS)) w.id = id;
+
+// A weapon in a soldier's hands: the loaded magazine plus spare magazines in the pouch.
+// `reserve` is the total rounds in the pouch; setting it (resupply, respawn) refills whole magazines.
+export function makeWeapon(id) {
+  const def = WEAPONS[id];
+  const finite = Number.isFinite(def.reserve ?? Infinity) && def.reserve !== undefined;
+  const w = {
+    id, def, mag: def.mag, heat: 0, locked: 0, spare: [], inf: !finite,
+    get reserve() { return this.inf ? Infinity : this.spare.reduce((a, b) => a + b, 0); },
+    set reserve(n) {
+      this.spare.length = 0;
+      if (!Number.isFinite(n)) { this.inf = true; return; }
+      this.inf = false;
+      let left = n;
+      while (left > 0) { const m = Math.min(def.mag, left); this.spare.push(m); left -= m; }
+    },
+  };
+  if (finite) w.reserve = def.reserve;
+  return w;
+}

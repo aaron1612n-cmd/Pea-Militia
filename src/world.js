@@ -89,3 +89,24 @@ export function pointMarker(r) {
   g.userData = { ring, flag, wave };
   return g;
 }
+
+// A wooden ammunition crate with iron straps and a stencilled lid, set beside a control point.
+let crateGeo = null;
+export function ammoCrate() {
+  if (!crateGeo) {
+    crateGeo = {
+      body: new THREE.BoxGeometry(0.9, 0.5, 0.55),
+      strap: new THREE.BoxGeometry(0.06, 0.52, 0.57),
+      lid: new THREE.BoxGeometry(0.5, 0.01, 0.3),
+      wood: new THREE.MeshStandardMaterial({ color: '#5d6340', roughness: 0.9, flatShading: true }),
+      iron: new THREE.MeshStandardMaterial({ color: '#2a2f34', roughness: 0.5, metalness: 0.6 }),
+      mark: new THREE.MeshStandardMaterial({ color: '#d9c98a', roughness: 0.8 }),
+    };
+  }
+  const g = new THREE.Group();
+  const b = new THREE.Mesh(crateGeo.body, crateGeo.wood); b.position.y = 0.25; b.castShadow = b.receiveShadow = true; g.add(b);
+  for (const x of [-0.3, 0.3]) { const st = new THREE.Mesh(crateGeo.strap, crateGeo.iron); st.position.set(x, 0.25, 0); g.add(st); }
+  const l = new THREE.Mesh(crateGeo.lid, crateGeo.mark); l.position.y = 0.506; g.add(l);
+  const top = new THREE.Mesh(crateGeo.body, crateGeo.wood); top.scale.set(0.7, 0.55, 0.7); top.position.set(0.05, 0.64, 0.02); top.rotation.y = 0.3; top.castShadow = true; g.add(top);
+  return g;
+}
