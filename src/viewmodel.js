@@ -12,7 +12,20 @@ const S = new THREE.Vector3(1, 1, 1);
 // viewmodel size: the gun is drawn at true size for the soldier, in its own pass with its own field of view
 const VM_SCALE = 1.0;
 export const VM_FOV = 56; // vertical degrees, independent of the world camera's zoom
-const BODY_AT = new THREE.Matrix4().makeTranslation(0, -0.5, 0.12).multiply(new THREE.Matrix4().makeRotationY(Math.PI));
+const FLIP = new THREE.Matrix4().makeRotationY(Math.PI);
+const BODY = new THREE.Matrix4();
+// Per weapon, in the scaled gun frame (metres, grip at the origin, barrel along +z):
+//  relief: eye to rear sight when aiming; rz: where the rear sight sits along the gun;
+//  zoom: world field of view factor while aiming (iron sights are a modest step in);
+//  rh / lh: trigger hand [y, z] on the grip, support hand [y, z] on the handguard, foregrip, handle or tube.
+export const VIEW = {
+  rifle: { relief: 0.27, rz: 0.019, zoom: 0.76, rh: [-0.032, -0.006], lh: [-0.04, 0.19] },
+  smg: { relief: 0.24, rz: 0.0, zoom: 0.82, rh: [-0.032, -0.006], lh: [-0.03, 0.18] },
+  mg: { relief: 0.31, rz: 0.013, zoom: 0.78, rh: [-0.032, -0.006], lh: [-0.055, 0.28] },
+  plasma: { relief: 0.33, rz: 0.019, zoom: 0.8, rh: [-0.032, -0.006], lh: [-0.03, 0.17] },
+  launcher: { relief: 0.44, rz: 0.01, zoom: 0.78, rh: [-0.032, -0.006], lh: [-0.02, 0.15] },
+};
+const DEF_VIEW = VIEW.rifle;
 const L = new THREE.Matrix4();
 const M = new THREE.Matrix4();
 const lerp = THREE.MathUtils.lerp;
@@ -53,8 +66,10 @@ export class ViewModel {
     const air = u.air;
 
     camera.updateMatrixWorld();
-    // the (unseen) body the arms hang from sits just below and behind the eyes
-    p.body.multiplyMatrices(camera.matrixWorld, BODY_AT);
+    // the (unseen) body the arms hang from sits below and behind the eyes; aiming lifts the
+    // shoulders so the arms stay short and bent instead of stretching out to the gun
+    BODY.makeTranslation(0, lerp(-0.5, -0.3, a), lerp(0.12, 0.1, a)).multiply(FLIP);
+    p.body.multiplyMatrices(camera.matrixWorld, BODY);
     const sw = this.sway.x * (1 - 0.6 * a), sh = this.sway.y * (1 - 0.6 * a);
     if (h.oneHand) {
       // grenade: held low right; a throw swings it up and forward
@@ -75,23 +90,27 @@ export class ViewModel {
       p.muzzle.setFromMatrixPosition(p.hands[1]);
       return p;
     }
-    // hip: low and right, angled a touch inward; sights: the bore sits just under the crosshair.
-    // Aiming pushes the gun out to arm's length so the rear sight is a small notch, not a wall,
-    // and the receiver stays below the line of sight.
-    const vs = lerp(VM_SCALE, 0.9, a);
-    const sightDrop = h.sight * vs;
-    const x = lerp(0.15, 0, a) + bobX + sw - this.sprintK * 0.02;
-    const y = lerp(-0.16, -sightDrop, a) + bobY + breathe + sh - rl * h.anim.drop - this.sprintK * 0.05 - air * 0.02;
-    const z = lerp(-0.34, -0.58, a) + rec * h.anim.kick * (1 + rb * 0.7) + rack * 0.035 + jam * 0.01;
-    const yaw = lerp(0.05, 0, a) + this.sprintK * 0.7 + sw * 2;
+    // hip: low and right, angled a touch inward. Aiming brings the rear sight to a believable eye
+    // relief on the line of sight (centre of the view), with the gun's sight line level with it,
+    // so the notch, the post and the crosshair stack up. A wall close ahead pulls the gun back and
+    // tips the muzzle up (high ready) and takes the sights away.
+    const V = VIEW[u.weapon.id] || DEF_VIEW;
+    const wall = u.wallK || 0;
+    const ae = smooth(0, 1, a) * (1 - wall); // eased in and out
+    const sightY = h.sight;
+    const x = lerp(0.12, 0, ae) + bobX + sw - this.sprintK * 0.02 - wall * 0.02;
+    const y = lerp(-0.12, -sightY, ae) + bobY + breathe + sh - rl * h.anim.drop - this.sprintK * 0.05 - air * 0.02 + wall * 0.02;
+    const z = lerp(-0.32, -V.relief + V.rz, ae) + rec * h.anim.kick * (1 + rb * 0.7) + rack * 0.035 + jam * 0.01 + wall * 0.13;
+    const yaw = lerp(0.05, 0, ae) + this.sprintK * 0.7 + sw * 2 + wall * 0.1;
     // (positive x rotation tips the barrel down)
-    const pitch = -rec * h.anim.climb * (1 + rb * 0.9) * (1 - 0.5 * a) - rb * 0.05 * (1 - 0.4 * a) + rack * 0.1 + jam * 0.05 + rl * h.anim.tilt + this.sprintK * 0.35 + sh * 2;
-    E.set(pitch, Math.PI + yaw + rb * 0.03 * Math.sin(u.shotIdx * 2.1), -rl * h.anim.roll + bobX * 2 + rb * 0.04 * Math.sin(u.shotIdx * 1.7), 'YXZ');
+    const pitch = -rec * h.anim.climb * (1 + rb * 0.9) * (1 - 0.5 * ae) - rb * 0.05 * (1 - 0.4 * ae) + rack * 0.1 + jam * 0.05 + rl * h.anim.tilt + this.sprintK * 0.35 + sh * 2 - wall * 0.5;
+    E.set(pitch, Math.PI + yaw + rb * 0.03 * Math.sin(u.shotIdx * 2.1), -rl * h.anim.roll + bobX * 2 + rb * 0.04 * Math.sin(u.shotIdx * 1.7) + wall * 0.05, 'YXZ');
     Q.setFromEuler(E);
-    L.compose(P.set(x, y, z), Q, S.setScalar(vs));
+    L.compose(P.set(x, y, z), Q, S1);
     p.weapon.multiplyMatrices(camera.matrixWorld, L);
-    p.hands[1].multiplyMatrices(p.weapon, M.makeTranslation(0, -0.032, -0.006));
-    p.hands[0].multiplyMatrices(p.weapon, M.makeTranslation(0, lerp(h.foreY, h.anim.hand[0], rl), lerp(h.fore, h.anim.hand[1], rl)));
+    // trigger hand on the grip, support hand cupping the handguard (or the magazine mid-reload)
+    p.hands[1].multiplyMatrices(p.weapon, M.makeTranslation(0, V.rh[0], V.rh[1]));
+    p.hands[0].multiplyMatrices(p.weapon, M.makeTranslation(0, lerp(V.lh[0], h.anim.hand[0], rl), lerp(V.lh[1], h.anim.hand[1], rl)));
     p.showWeapon = true;
     p.muzzle.copy(h.muzzle).applyMatrix4(p.weapon);
     return p;
