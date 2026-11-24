@@ -6,15 +6,15 @@ import { MAT, Kit, instance, profile, roundRect, turned, rod, ring, bolt, pipe, 
 // kind: hitscan | projectile | flame | throw
 export const WEAPONS = {
   rifle: {
-    name: 'Rifle', kind: 'hitscan', auto: false, interval: 0.42, damage: 48, spread: 0.004, mag: 8, reserve: 64,
+    name: 'Rifle', kind: 'hitscan', auto: false, interval: 0.42, damage: 90, spread: 0.004, mag: 8, reserve: 48,
     reload: 1.7, range: 70, pierce: 0.15, tracer: '#ffdca8', sound: 'rifle', ideal: [14, 34], burst: [1, 1],
   },
   smg: {
-    name: 'SMG', kind: 'hitscan', auto: true, interval: 0.075, damage: 13, spread: 0.035, mag: 40, reserve: 240,
+    name: 'SMG', kind: 'hitscan', auto: true, interval: 0.075, damage: 30, spread: 0.035, mag: 30, reserve: 150,
     reload: 1.9, range: 32, pierce: 0.05, tracer: '#ffd08a', sound: 'smg', ideal: [4, 14], burst: [4, 9],
   },
   mg: {
-    name: 'MG', kind: 'hitscan', auto: true, interval: 0.1, damage: 19, spread: 0.022, mag: 90, reserve: 270,
+    name: 'MG', kind: 'hitscan', auto: true, interval: 0.1, damage: 40, spread: 0.022, mag: 75, reserve: 225,
     reload: 3.2, range: 55, pierce: 0.12, tracer: '#ffc070', sound: 'mg', ideal: [10, 30], burst: [6, 12], move: 0.8,
   },
   plasma: {

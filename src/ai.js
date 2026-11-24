@@ -243,7 +243,7 @@ export class Squad {
 
     // wary: an enemy within ~100 m, seen or not. Move cover to cover in bounds, never stroll across open ground
     this.cautious = false; this.foePos = null;
-    let fd = 100;
+    let fd = 150;
     for (const m of alive) { const b = m.brain; if (b && b.foe && b.foeD < fd) { fd = b.foeD; this.foePos = b.foe; this.cautious = true; } }
     if (this.cautious && this.objective && flat(lead.pos, this.objective.pos) < this.objective.r * 1.2) this.cautious = false;
     const fight = this.inContact();
@@ -412,10 +412,25 @@ export class Brain {
   think() {
     const u = this.u, w = this.w, sq = this.squad;
     const def = u.weapon.def;
+    // too hurt to fight: crawl to a medic, or away from the fire
+    if (u.down) {
+      let g = null, bd = 1e9;
+      for (const m of w.nearUnits(u.pos.x, u.pos.z, 45)) {
+        if (!m.alive || m === u || m.team !== u.team || m.kind !== 'medic') continue;
+        const d = Math.hypot(m.pos.x - u.pos.x, m.pos.z - u.pos.z);
+        if (d < bd) { bd = d; g = m; }
+      }
+      const th = sq.contact?.pos || sq.foePos;
+      if (g) this.goal = g.pos.clone();
+      else if (th) { const dx = u.pos.x - th.x, dz = u.pos.z - th.z, l = Math.hypot(dx, dz) || 1; this.goal = new THREE.Vector3(u.pos.x + dx / l * 10, 0, u.pos.z + dz / l * 10); }
+      else this.goal = u.pos.clone();
+      this.goal.y = 0; this.releaseCover(); this.target = null; this.seen = false; this.mission = null;
+      return;
+    }
     const eye = u.eye(V());
     // nearest hostile on foot within 100 m, seen or not: the squad goes cautious when one is about
     this.foe = null; this.foeD = 1e9;
-    for (const e of w.nearUnits(u.pos.x, u.pos.z, 100)) {
+    for (const e of w.nearUnits(u.pos.x, u.pos.z, 150)) {
       if (!e.alive || !hostile(e.team, u.team)) continue;
       const d = Math.hypot(e.pos.x - u.pos.x, e.pos.z - u.pos.z);
       if (d < this.foeD) { this.foeD = d; this.foe = e.pos; }
@@ -617,13 +632,13 @@ export class Brain {
       const d = Math.hypot(m.pos.x - u.pos.x, m.pos.z - u.pos.z);
       if (d > 40) continue;
       let sc;
-      if (!m.alive) { if (m.isPlayer || m.deadT > 10 || d > 30) continue; sc = d - 8; }
-      else if (m.hp < 75) sc = d + m.hp * 0.15;
+      if (!m.alive) { if (m.isPlayer || m.deadT > 10 || d > 30 || m.lost || m.corpseHp < 40) continue; sc = d - 8; }
+      else if (m.hp < 75 || m.bleed > 0.1 || m.down) sc = d + m.hp * 0.15 - (m.down ? 12 : 0);
       else continue;
       if (sc >= bs) continue;
       // not into the middle of a firefight
       let danger = false;
-      for (const e of w.nearUnits(m.pos.x, m.pos.z, 13)) if (e.alive && hostile(e.team, u.team)) { danger = true; break; }
+      for (const e of w.nearUnits(m.pos.x, m.pos.z, m.down ? 9 : 13)) if (e.alive && hostile(e.team, u.team)) { danger = true; break; }
       if (danger) continue;
       bs = sc; best = { unit: m, kind: m.alive ? 'heal' : 'revive' };
     }
@@ -637,8 +652,11 @@ export class Brain {
     const d = Math.hypot(t.pos.x - u.pos.x, t.pos.z - u.pos.z);
     if (d > 2.4) { this.reviveT = 0; return false; }
     c.aimAt = null; c.fire = false; c.kneel = true;
-    if (m.kind === 'heal') t.hp = Math.min(t.maxHp, t.hp + 16 * dt);
-    else {
+    if (m.kind === 'heal') {
+      // bandage: kneel beside them and wrap the wound, which stops the bleeding
+      this.reviveT = (this.reviveT || 0) + dt;
+      if (this.reviveT >= (t.down ? 3 : 2)) { t.bandage(28); this.reviveT = 0; this.mission = null; this.w.audio.play('reload', t.pos, 0.5); }
+    } else {
       this.reviveT = (this.reviveT || 0) + dt;
       if (this.reviveT >= 2.5) { this.w.revive(t); this.reviveT = 0; this.mission = null; }
     }
