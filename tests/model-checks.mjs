@@ -5,7 +5,7 @@
 export const exposeParts = () => {
   const c = window.__game.crowd;
   const PART_GEO = {
-    body: c.body.geometry, pack: c.pack.geometry, boot: c.boot.geometry, hand: c.hand.geometry,
+    body: c.body.geometry, pack: c.pack.geometry, boot: c.boot.geometry, handL: c.handL.geometry, handR: c.handR.geometry,
     thigh: c.thigh.geometry, shin: c.shin.geometry, upperArm: c.upperArm.geometry, foreArm: c.foreArm.geometry,
   };
   for (const [k, m] of Object.entries(c.gear)) PART_GEO[`gear-${k}`] = m.geometry;
@@ -55,7 +55,7 @@ export const modelChecks = () => {
     for (let i = 0; i < p.count; i += step) pts.push(new THREE.Vector3().fromBufferAttribute(p, i));
     return pts;
   };
-  const S = { boot: sample(crowd.boot.geometry), body: sample(crowd.body.geometry, 400), pack: sample(crowd.pack.geometry), head: sample(crowd.head.geometry), helmet: sample(crowd.helmet.geometry), hand: sample(crowd.hand.geometry) };
+  const S = { boot: sample(crowd.boot.geometry), body: sample(crowd.body.geometry, 400), pack: sample(crowd.pack.geometry), head: sample(crowd.head.geometry), helmet: sample(crowd.helmet.geometry), hand: sample(crowd.handL.geometry) };
   const bodyInv = new THREE.Matrix4();
   const v = new THREE.Vector3();
   // inside the torso block (rounded), a little smaller so touching surfaces don't count
@@ -78,10 +78,16 @@ export const modelChecks = () => {
   const phases = [];
   const W = Object.keys(HOLD);
   for (const t of [0, 0.9, 1.8, 2.7]) phases.push({ name: `idle ${t}`, t, ready: 0.55 });
+  // walking, jogging and sprinting every way, at the speed the gait expects (see gait.js)
   for (const [mx, mz, label] of [[0, 1, 'fwd'], [1, 0, 'strafe'], [0, -1, 'back'], [0.7, 0.7, 'diag']]) {
-    for (let c = 0; c < 1; c += 0.125) phases.push({ name: `walk ${label} ${c.toFixed(2)}`, walk: 1, cycle: c, stride: 0.6, mx, mz, ready: 1 });
+    for (const [speed, gname] of [[1.4, 'walk'], [2.2, 'jog']]) {
+      for (let c = 0; c < 1; c += 0.125) phases.push({ name: `${gname} ${label} ${c.toFixed(2)}`, walk: 1, cycle: c, speed, mx, mz, ready: 1, run: speed > 2 });
+    }
   }
-  phases.push({ name: 'sprint', walk: 1, cycle: 0.3, stride: 0.7, sprint: true, ready: 0.15 });
+  for (let c = 0; c < 1; c += 0.125) phases.push({ name: `sprint ${c.toFixed(2)}`, walk: 1, cycle: c, speed: 3.8, sprint: true, free: 1, ready: 0.15, run: true });
+  for (let c = 0; c < 1; c += 0.25) phases.push({ name: `sprint aimed ${c.toFixed(2)}`, walk: 1, cycle: c, speed: 3.8, ready: 1, run: true });
+  for (let c = 0; c < 1; c += 0.25) phases.push({ name: `crouch walk ${c.toFixed(2)}`, walk: 1, cycle: c, speed: 0.9, kneel: 1, ready: 1 });
+  for (let c = 0; c < 1; c += 0.25) phases.push({ name: `crawl ${c.toFixed(2)}`, walk: 1, cycle: c, speed: 0.6, prone: 1, ready: 1 }, { name: `wounded crawl ${c.toFixed(2)}`, walk: 1, cycle: c, speed: 0.6, prone: 1, ready: 1, down: true });
   phases.push({ name: 'kneel', kneel: 1, ready: 1 }, { name: 'kneel lowered', kneel: 1, ready: 0.55 });
   phases.push({ name: 'jump rise', air: 1, rise: 1 }, { name: 'jump fall', air: 1, rise: -1 }, { name: 'land', land: 1 });
   for (const p of [-0.9, -0.4, 0.4, 0.9]) phases.push({ name: `aim pitch ${p}`, aimPitch: p, ready: 1 });
@@ -103,7 +109,7 @@ export const modelChecks = () => {
       pose(s, pz);
       bodyInv.copy(pz.body).invert();
       const dead = (ph.dead ?? -1) >= 0;
-      const r = { name: `${ph.name} [${s.weapon}]`, minY: Infinity, clips: [], loose: [], air: !!ph.air };
+      const r = { name: `${ph.name} [${s.weapon}]`, minY: Infinity, clips: [], loose: [], air: !!ph.air || !!ph.run };
       // boots on the ground, never below it, never inside the body
       for (let i = 0; i < 2; i++) {
         r.minY = Math.min(r.minY, minY(S.boot, pz.feet[i]));
@@ -124,7 +130,7 @@ export const modelChecks = () => {
         const hand = new THREE.Vector3().setFromMatrixPosition(pz.hands[1]);
         const gd = grip.distanceTo(hand);
         if (gd > (s.weapon === 'grenade' ? 0.1 : 0.06)) r.loose.push(`grip ${gd.toFixed(3)}`);
-        if (s.weapon !== 'grenade' && ph.reload === undefined) {
+        if (s.weapon !== 'grenade' && ph.reload === undefined && !ph.free && !ph.down) {
           const h0 = new THREE.Vector3().setFromMatrixPosition(pz.hands[0]);
           let best = Infinity;
           for (const p of wverts[s.weapon]) best = Math.min(best, h0.distanceTo(v.copy(p).applyMatrix4(m)));
