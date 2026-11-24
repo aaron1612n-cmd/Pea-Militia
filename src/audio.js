@@ -21,7 +21,14 @@ export class Audio {
     this.master.gain.value = 0.55;
     const comp = c.createDynamicsCompressor();
     comp.threshold.value = -16;
-    this.master.connect(comp).connect(c.destination);
+    // "ears": a low-pass that closes under suppression / after a blast, plus a ringing tone
+    this.ears = c.createBiquadFilter();
+    this.ears.type = 'lowpass'; this.ears.frequency.value = 20000; this.ears.Q.value = 0.5;
+    this.master.connect(this.ears).connect(comp).connect(c.destination);
+    this.ringG = c.createGain(); this.ringG.gain.value = 0;
+    const ro = c.createOscillator(); ro.type = 'sine'; ro.frequency.value = 3900;
+    ro.connect(this.ringG).connect(comp); ro.start();
+    this.deaf = 0; this.sup = 0;
     const len = c.sampleRate * 1.5;
     this.noise = c.createBuffer(1, len, c.sampleRate);
     const d = this.noise.getChannelData(0);
@@ -79,6 +86,37 @@ export class Audio {
     setTimeout(rumble, 4000);
   }
 
+  // per-frame: hearing closes with suppression/deafness; ringing follows deafness
+  tick(dt, sup) {
+    if (!this.ctx) return;
+    this.sup = sup;
+    this.deaf = Math.max(0, this.deaf - dt / 6);
+    const h = Math.min(1, Math.max(this.deaf, sup * 0.7));
+    const t = this.ctx.currentTime;
+    this.ears.frequency.setTargetAtTime(20000 * Math.pow(0.025, h), t, 0.08);
+    this.ringG.gain.setTargetAtTime(this.muted ? 0 : Math.min(0.06, this.deaf * this.deaf * 0.09), t, 0.12);
+  }
+
+  // a blast close to the listener: deafness (muffle + ringing) scaled by closeness
+  blast(dist, r) {
+    const k = Math.max(0, 1 - dist / (r * 5));
+    if (k > 0.05) this.deaf = Math.min(1, Math.max(this.deaf, k * 1.1));
+  }
+
+  // supersonic bullet passing the listener: sharp crack then a whip, panned to a random side
+  crack(near) {
+    const c = this.ctx;
+    if (!c || this.muted) return;
+    const d = c.createGain(); d.gain.value = 0.35 + near * 0.5;
+    const pan = c.createStereoPanner ? c.createStereoPanner() : null;
+    if (pan) { pan.pan.value = Math.random() < 0.5 ? -0.7 : 0.7; d.connect(pan).connect(this.master); } else d.connect(this.master);
+    if (this.verb) { const s = c.createGain(); s.gain.value = 0.3; d.connect(s).connect(this.verb); }
+    const sd = this.sd; this.sd = 0;
+    this.noiseBurst(d, { dur: 0.025, type: 'highpass', f: 3500, peak: 0.9, attack: 0.001 });
+    this.noiseBurst(d, { t: 0.01, dur: 0.14, type: 'bandpass', f: 5200, f2: 1400, q: 2.5, peak: 0.55, attack: 0.01 });
+    this.sd = sd;
+  }
+
   setMuted(m) { this.muted = m; if (this.master) this.master.gain.value = m ? 0 : 0.55; }
 
   // returns an output node for a sound at world position p, or null if too far / throttled
@@ -119,10 +157,11 @@ export class Audio {
     if (panner) { panner.pan.value = pan; head.connect(panner).connect(this.master); } else head.connect(this.master);
     if (this.verb) {
       const send = c.createGain();
-      send.gain.value = 0.25 + Math.min(0.9, dist / 40);
+      send.gain.value = 0.2 + Math.min(1.1, dist / 30);
       head.connect(send).connect(this.verb);
     }
     this.near = dist < 10;
+    this.sd = Math.min(1.6, dist / 343); // speed of sound: far shots and blasts arrive late
     return gain;
   }
 
@@ -133,7 +172,7 @@ export class Audio {
     s.playbackRate.value = 0.8 + Math.random() * 0.4;
     const flt = c.createBiquadFilter();
     flt.type = type; flt.frequency.value = f; flt.Q.value = q;
-    const now = c.currentTime + t;
+    const now = c.currentTime + t + (this.sd || 0);
     if (f2) flt.frequency.exponentialRampToValueAtTime(f2, now + dur);
     const e = c.createGain();
     e.gain.setValueAtTime(0.0001, now);
@@ -147,7 +186,7 @@ export class Audio {
     const c = this.ctx;
     const o = c.createOscillator();
     o.type = type;
-    const now = c.currentTime + t;
+    const now = c.currentTime + t + (this.sd || 0);
     o.frequency.setValueAtTime(f, now);
     if (f2) o.frequency.exponentialRampToValueAtTime(f2, now + dur);
     const e = c.createGain();
@@ -160,6 +199,7 @@ export class Audio {
   }
 
   play(kind, p, vol = 1) {
+    this.sd = 0;
     const d = this.out(p, kind + (p ? Math.round(p.x) + ',' + Math.round(p.z) : ''), vol);
     if (!d) return;
     switch (kind) {

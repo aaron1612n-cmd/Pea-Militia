@@ -95,7 +95,11 @@ function openWheel(on) {
 $('wheelX').addEventListener('click', () => openWheel(false));
 $('wheelX').addEventListener('pointerdown', (e) => e.stopPropagation());
 
+let sup = 0; // suppression 0..1: rises on near misses and blasts, fades when quiet
+const suppEl = document.getElementById('supp');
+let suppBlur = -1;
 let battle = new Battle(scene, fx, audio);
+fx.gore.world = battle;
 let player = null;
 let state = 'menu'; // menu | play | pause | end
 let settings = { mode: 'battle', teams: 2, size: 50, tickets: 4, view: '3p', playerTeam: 0 };
@@ -183,6 +187,7 @@ form.addEventListener('submit', (e) => {
 function showcase() {
   battle.dispose();
   battle = new Battle(scene, fx, audio);
+  fx.gore.world = battle;
   battle.configure({ teams: 2, size: 0, tickets: 0, mode: 'menu' });
   buildMap(battle, { seed: 7, teams: 2 });
   // a few squads standing about so the field isn't empty
@@ -229,6 +234,7 @@ function startBattle(s) {
   fx.gore.clear();
   battle.dispose();
   battle = new Battle(scene, fx, audio);
+  fx.gore.world = battle;
   const tickets = Math.round(settings.size * settings.tickets);
   battle.configure({ teams: settings.teams, size: settings.size, tickets, mode: settings.mode, playerTeam: settings.playerTeam });
   buildMap(battle, { seed: 7 + Math.floor(Math.random() * 1000), teams: settings.teams, points: settings.mode === 'battle' });
@@ -263,6 +269,13 @@ function startBattle(s) {
       if (t.id === settings.playerTeam) { battle.spawnTeamVehicle(t, false, 1, 'walker'); } // some for you to climb into
     }
   }
+  battle.onNearMiss = (k) => { sup = Math.min(1, sup + k * 0.35); };
+  battle.onBlast = (pos, r) => {
+    if (!player) return;
+    const d = pos.distanceTo(player.pos);
+    audio.blast(d, r);
+    sup = Math.min(1, sup + Math.max(0, 1 - d / (r * 6)) * 0.9);
+  };
   battle.onHitMarker = (kill) => { hud.hit(kill); if (kill) audio.play('ping', null, 0.4); };
   battle.onPlayerHurt = (dmg) => { hud.hurt(dmg); bloodScreen(Math.ceil(dmg / 15), 0.5); cam.shake = Math.min(1, cam.shake + dmg / 60); };
   battle.onKill = (u, from) => {
@@ -305,6 +318,7 @@ function toggleFree(on = cam.mode !== 'free', start = false) {
     const gx = THREE.MathUtils.clamp(cam.fr.x, -HALF + 2, HALF - 2), gz = THREE.MathUtils.clamp(cam.fr.z, -HALF + 2, HALF - 2);
     player.pos.set(gx, 0, gz); player.vel.set(0, 0, 0);
     player.hp = player.maxHp; player.alive = true; player.deadT = 0; player.respawnT = 0; player.grounded = false;
+    player.wound = 0; player.lost = 0; player.wounds = null; player.rag = null; fx.gore.forget(player);
     for (const w of player.weapons) { w.mag = w.def.mag; }
     if (!battle.units.includes(player)) battle.units.push(player);
     cam.yaw = cam.yaw; cam.mode = settings.view; cam.blend = settings.view === '1p' ? 1 : 0;
@@ -677,6 +691,8 @@ function respawnPlayer() {
   player.alive = true;
   player.hp = player.maxHp;
   player.burn = 0;
+  player.wound = 0; player.lost = 0; player.wounds = null; player.rag = null; player.flinch = 0; player.suppression = 0;
+  fx.gore.forget(player);
   player.respawnT = 0;
   player.deadT = 0;
   player.reloadT = player.throwT = 0;
@@ -801,6 +817,15 @@ function frame(_t, fixedDt) {
     callinVisuals();
   }
   if (state === 'menu') for (const u of battle.units) u.animate(dt);
+  if (state === 'play') {
+    sup = Math.max(0, sup - dt * 0.3);
+    if (player?.alive === false) sup = 0;
+    if (!reduced && sup > 0.2) cam.shake = Math.max(cam.shake, sup * 0.35);
+    const b = reduced ? 0 : Math.round(sup * sup * 12) / 2; // half-pixel steps so the filter isn't restyled every frame
+    if (b !== suppBlur) { suppBlur = b; canvas.style.filter = b ? `blur(${b}px)` : ''; }
+    suppEl.style.opacity = sup.toFixed(2);
+  } else { sup = 0; if (suppBlur) { suppBlur = 0; canvas.style.filter = ''; suppEl.style.opacity = 0; } }
+  audio.tick(dt, sup);
   audio.listener.x = camera.position.x; audio.listener.z = camera.position.z; audio.listener.yaw = state === 'menu' ? 0 : cam.yaw;
   // shadows follow what the camera is looking at
   const look = state === 'menu' ? new THREE.Vector3() : cam.mode === 'over' ? new THREE.Vector3(cam.over.x, 0, cam.over.z) : cam.mode === 'free' ? cam.fr.clone().add(cam.forward().setY(0).normalize().multiplyScalar(22)).setY(0) : player.pos.clone().add(cam.forward().setY(0).multiplyScalar(12));
