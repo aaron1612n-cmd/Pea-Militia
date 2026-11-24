@@ -3,7 +3,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { U, setWeaponBounds, solveLegs, solveArms } from './rig.js';
 import { GEAR, MARKS, KIND_IDS, kindKey } from './gear.js';
 import { markMaterial, partMatrix } from './hitmarks.js';
-import { torsoGeo, headGeo, helmetGeo, bootGeo, fistGeo, LIMB, HEAD_COLORS } from './anatomy.js';
+import { torsoGeo, headGeo, helmetGeo, bootGeo, handGeos, LIMB, HEAD_COLORS } from './anatomy.js';
 import { WEAPONS, weaponParts } from './weapons.js';
 import { TEAMS } from './factions.js';
 import { makeWoundMesh, makeDentBody, DENT_CAP, MAX_DENTS } from './wounds.js';
@@ -17,7 +17,7 @@ export const PART_GEO = {
   helmet: helmetGeo(),
   pack: new RoundedBoxGeometry(...U.PACK, 3, 0.04),
   boot: bootGeo(),
-  hand: fistGeo(),
+  ...(() => { const h = handGeos(); return { handL: h.left, handR: h.right }; })(),
 };
 
 const MP = new THREE.Vector3(), MN = new THREE.Vector3(), MQ = new THREE.Quaternion(), MQ2 = new THREE.Quaternion(), MM = new THREE.Matrix4(), MS = new THREE.Vector3(), Z = new THREE.Vector3(0, 0, 1);
@@ -25,9 +25,9 @@ const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 const UI_COL = TEAMS.map((t) => new THREE.Color(t.ui));
 const HELM_COL = TEAMS.map((t) => new THREE.Color(t.ui).multiplyScalar(0.72));
 const PALE = new THREE.Color('#d9d6cb');
-const TROUSER = TEAMS.map((t) => new THREE.Color(t.trim).multiplyScalar(1.15));
+const TROUSER = TEAMS.map((t) => new THREE.Color(t.trim).multiplyScalar(1.75));
 const WOUND = new THREE.Color('#5a1212');
-const BODY_COL = TEAMS.map((t) => new THREE.Color(t.body));
+const BODY_COL = TEAMS.map((t) => new THREE.Color(t.body).multiplyScalar(1.45)); // field uniform: lighter than the armour accents so the figure reads
 const TRIM_COL = TEAMS.map((t) => new THREE.Color(t.trim));
 const PACK_COL = TEAMS.map((t) => new THREE.Color(t.body).multiplyScalar(0.62));
 const DARK = new THREE.Color('#1d2126');
@@ -52,8 +52,9 @@ export class Crowd {
     this.pack = mk(PART_GEO.pack, std({ color: '#ffffff', roughness: 0.8, metalness: 0.05 }), cap, true);
     const fixed = std({ color: '#ffffff', roughness: 0.7, metalness: 0.05, vertexColors: true });
     this.boot = mk(PART_GEO.boot, fixed, cap * 2, false);
-    this.hand = mk(PART_GEO.hand, fixed, cap * 2, false);
-    const cloth = std({ color: '#ffffff', roughness: 0.85, metalness: 0.02 });
+    this.handL = mk(PART_GEO.handL, fixed, cap, false);
+    this.handR = mk(PART_GEO.handR, fixed, cap, false);
+    const cloth = std({ color: '#ffffff', roughness: 0.85, metalness: 0.02, vertexColors: true });
     this.upperArm = mk(LIMB.upperArm, cloth, cap * 2, true);
     this.foreArm = mk(LIMB.foreArm, cloth, cap * 2, true);
     this.thigh = mk(LIMB.thigh, cloth, cap * 2, true);
@@ -66,7 +67,7 @@ export class Crowd {
       this.gear[k] = mk(GEAR[k], gearMat, cap, true); this.gear[k].name = `crowd-gear-${k}`;
       if (MARKS[k]) { this.marks[k] = mk(MARKS[k], markMat, cap, false); this.marks[k].name = `crowd-mark-${k}`; }
     }
-    this.body.name = 'crowd-body'; this.head.name = 'crowd-head'; this.helmet.name = 'crowd-helmet'; this.boot.name = 'crowd-boots'; this.hand.name = 'crowd-hands';
+    this.body.name = 'crowd-body'; this.head.name = 'crowd-head'; this.helmet.name = 'crowd-helmet'; this.boot.name = 'crowd-boots'; this.handL.name = 'crowd-hands-left'; this.handR.name = 'crowd-hands-right';
     this.nl = 0; this.na = 0;
     this.mark = mk(new THREE.PlaneGeometry(1, 1), markMaterial(), cap * 10, false); this.mark.name = 'crowd-hitmarks'; this.mark.castShadow = false; this.nm = 0;
     // weapons: one instanced mesh per (weapon, material)
@@ -89,13 +90,13 @@ export class Crowd {
     this.dentBody = makeDentBody(DENT_CAP, this.body.material);
     scene.add(this.dentBody);
     this.nd = 0;
-    this.n = 0; this.nf = 0; this.nh = 0; this.nl = 0; this.na = 0;
+    this.n = 0; this.nf = 0; this.nh = 0; this.nhl = 0; this.nhr = 0; this.nl = 0; this.na = 0;
     this.wn = {};
     this.tmp = new THREE.Matrix4();
   }
 
   begin() {
-    this.n = this.nf = this.nh = this.nw = this.nl = this.na = this.nd = this.nm = 0;
+    this.n = this.nf = this.nh = this.nhl = this.nhr = this.nw = this.nl = this.na = this.nd = this.nm = 0;
     for (const id in this.weapons) this.wn[id] = 0;
     for (const k of KIND_IDS) this.gn[k] = this.mn[k] = 0;
   }
@@ -186,7 +187,7 @@ export class Crowd {
       if (opts.lost & (1 << k)) continue;
       if (this.nh >= this.cap * 2) break;
       const j = this.nh++;
-      this.hand.setMatrixAt(j, t.multiplyMatrices(world, h));
+      if (k === 0) this.handL.setMatrixAt(this.nhl++, t.multiplyMatrices(world, h)); else this.handR.setMatrixAt(this.nhr++, t.multiplyMatrices(world, h));
       this.upperArm.setMatrixAt(j, t.multiplyMatrices(world, p.arms[k][0]));
       this.upperArm.instanceColor.setXYZ(j, sc.r, sc.g, sc.b);
       this.foreArm.setMatrixAt(j, t.multiplyMatrices(world, p.arms[k][1]));
@@ -210,7 +211,7 @@ export class Crowd {
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
     };
     fin(this.body, this.n); fin(this.head, this.n); fin(this.helmet, this.n); fin(this.pack, this.n);
-    fin(this.boot, this.nf); fin(this.hand, this.nh); fin(this.upperArm, this.nh); fin(this.foreArm, this.nh);
+    fin(this.boot, this.nf); fin(this.handL, this.nhl); fin(this.handR, this.nhr); fin(this.upperArm, this.nh); fin(this.foreArm, this.nh);
     fin(this.thigh, this.nl); fin(this.shin, this.nl);
     fin(this.mark, this.nm);
     fin(this.wound, this.nw); fin(this.dentBody, this.nd);
