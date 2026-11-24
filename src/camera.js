@@ -25,6 +25,7 @@ export class PlayerCam {
     this.roll = 0;
     this.cockpit = false; // vehicle first person
     this.fpFov = 84;
+    this.adsZoom = 0.76; // first person field of view factor when fully aimed (set per weapon)
     this.pos = V();
     this.focus = V();
     // overview
@@ -157,7 +158,7 @@ export class PlayerCam {
       cam.rotation.y += (Math.random() - 0.5) * s;
     }
     const base = THREE.MathUtils.lerp(this.fov, this.fpFov, this.blend);
-    this.setFov(THREE.MathUtils.lerp(base, base * 0.6, this.ads), dt);
+    this.setFov(THREE.MathUtils.lerp(base, base * THREE.MathUtils.lerp(0.6, this.adsZoom, this.blend), this.ads), dt);
   }
 
   // Chase camera: high and over the right shoulder, so the hull sits low in the frame and the
