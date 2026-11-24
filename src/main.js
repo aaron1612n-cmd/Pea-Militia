@@ -7,7 +7,7 @@ import { height, updateGround } from './terrain.js';
 import { Input } from './input.js';
 import { PlayerCam } from './camera.js';
 import { Unit } from './unit.js';
-import { U, pose, makePose, HOLD, solveLegs } from './rig.js';
+import { U, pose, makePose, HOLD, solveLegs, solveArms } from './rig.js';
 import { Crowd } from './crowd.js';
 import { Battle, SQUAD_MIX, SQUAD_SIZE, KINDS, HOLD_WIN } from './battle.js';
 import { buildMap } from './map.js';
@@ -17,7 +17,7 @@ import { Hud } from './hud.js';
 import { SLOTS, WEAPONS, weaponModel } from './weapons.js';
 import { Sandbox } from './sandbox.js';
 import { TEAMS, hostile } from './factions.js';
-import { ViewModel } from './viewmodel.js';
+import { ViewModel, VM_FOV } from './viewmodel.js';
 import { Cockpit } from './cockpit.js';
 import { MAX_SPEED } from './unit.js';
 import { Wheel, ORDERS, issue as issueOrder, tick as tickOrders } from './orders.js';
@@ -73,6 +73,30 @@ let cockpitVeh = null;
 const fx = new Effects(scene);
 const audio = new Audio();
 const crowd = new Crowd(scene, 700);
+// First-person gun and arms get their own scene, camera and depth: the gun never pokes into walls,
+// and its field of view stays put when the world camera zooms to aim.
+const vmScene = new THREE.Scene();
+const vmHemi = new THREE.HemisphereLight('#ffffff', '#777777', 1);
+const vmSun = new THREE.DirectionalLight('#ffffff', 1);
+vmScene.add(vmHemi, vmSun, vmSun.target);
+const vmCamera = new THREE.PerspectiveCamera(VM_FOV, 1, 0.02, 6);
+const vmCrowd = new Crowd(vmScene, 2);
+let vmOn = false;
+function renderWorld() {
+  renderer.render(scene, camera);
+  if (!vmOn) return;
+  vmCamera.position.copy(camera.position);
+  vmCamera.quaternion.copy(camera.quaternion);
+  const fov = camera.aspect < 0.8 ? VM_FOV + 12 : VM_FOV;
+  if (vmCamera.aspect !== camera.aspect || vmCamera.fov !== fov) { vmCamera.aspect = camera.aspect; vmCamera.fov = fov; vmCamera.updateProjectionMatrix(); }
+  vmHemi.color.copy(hemi.color); vmHemi.groundColor.copy(hemi.groundColor); vmHemi.intensity = hemi.intensity;
+  vmSun.color.copy(sun.color); vmSun.intensity = sun.intensity;
+  vmSun.position.copy(sun.position).sub(sun.target.position);
+  renderer.autoClear = false;
+  renderer.clearDepth();
+  renderer.render(vmScene, vmCamera);
+  renderer.autoClear = true;
+}
 const hud = new Hud();
 const input = new Input(canvas, {
   stick: $('stick'), knob: $('knob'), jumpBtn: $('jump'), fireBtn: $('fire'),
@@ -708,17 +732,21 @@ const viewPose = makePose();
 const LOD_FAR = 70; // beyond this, soldiers draw as the plain block, hands, feet, arms and weapon
 function drawUnits() {
   crowd.begin();
+  vmCrowd.begin();
+  vmOn = false;
   const fp = state !== 'menu' && player && cam.mode === '1p' && cam.blend > 0.6;
   for (const u of battle.units) {
     if (u.removed || u.vehicle) continue;
     if (u === player && fp) {
       if (!u.alive) continue;
-      crowd.add(vm.identity, vm.pose, u.team, { body: false, weapon: u.weapon.id });
+      vmCrowd.add(vm.identity, vm.pose, u.team, { body: false, weapon: u.weapon.id });
+      vmOn = true;
       continue;
     }
-    crowd.add(u.world, u.poseOut, u.team, { weapon: u.weapon.id, wound: u.wound, lost: u.lost, wounds: u.wounds, kind: u.kind, far: u.pos.distanceToSquared(camera.position) > LOD_FAR * LOD_FAR });
+    crowd.add(u.world, u.poseOut, u.team, { weapon: u.weapon.id, seed: u.id, wound: u.wound, lost: u.lost, wounds: u.wounds, kind: u.kind, far: u.pos.distanceToSquared(camera.position) > LOD_FAR * LOD_FAR });
   }
   crowd.end();
+  vmCrowd.end();
 }
 
 // ---------------- loop ----------------
@@ -839,7 +867,7 @@ function frame(_t, fixedDt) {
   drawUnits();
   updateGround(camera);
   sky.position.copy(camera.position); // the dome rides with the eye so no part falls past the far plane
-  renderer.render(scene, camera);
+  renderWorld();
 }
 renderer.setAnimationLoop(frame);
 
@@ -860,12 +888,12 @@ if (params.has('play')) startBattle({ mode: params.get('play') || 'battle' });
 
 // Test hooks for the check suite.
 window.__game = { maxSpeed: MAX_SPEED,
-  THREE, scene, camera, renderer, cam, input, crowd, fx, SLOTS, U, pose, makePose, solveLegs, HOLD, HALF, weaponModel,
+  THREE, scene, camera, renderer, cam, input, crowd, fx, SLOTS, U, pose, makePose, solveLegs, solveArms, HOLD, HALF, weaponModel,
   height, get battle() { return battle; }, get player() { return player; }, get state() { return state; },
   sandbox, atmo, start: startBattle, openMenu, pause,
   freeze(on = true) { frozen = on; },
   // render one frame now (for screenshots while frozen)
-  render() { drawUnits(); updateGround(camera); sky.position.copy(camera.position); renderer.render(scene, camera); },
+  render() { drawUnits(); updateGround(camera); sky.position.copy(camera.position); renderWorld(); },
   view(pos, target) { cam.frozen = true; camera.position.set(...pos); camera.lookAt(...target); sun.position.set(target[0], 0, target[2]).add(SUN); sun.target.position.set(...target); },
   unfreezeCam() { cam.frozen = false; },
   // Deterministic fast-forward for the check suite: run n frames of fixed dt, independent of how

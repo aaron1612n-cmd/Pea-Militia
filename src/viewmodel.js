@@ -9,9 +9,10 @@ const Q = new THREE.Quaternion();
 const P = new THREE.Vector3();
 const S1 = new THREE.Vector3(1, 1, 1);
 const S = new THREE.Vector3(1, 1, 1);
-const HAND_S = new THREE.Matrix4().makeScale(0.9, 0.9, 0.9);
-// the gun is drawn a bit smaller up close so it frames the view instead of filling it
-const VM_SCALE = 0.8;
+// viewmodel size: the gun is drawn at true size for the soldier, in its own pass with its own field of view
+const VM_SCALE = 1.0;
+export const VM_FOV = 56; // vertical degrees, independent of the world camera's zoom
+const BODY_AT = new THREE.Matrix4().makeTranslation(0, -0.5, 0.12).multiply(new THREE.Matrix4().makeRotationY(Math.PI));
 const L = new THREE.Matrix4();
 const M = new THREE.Matrix4();
 const lerp = THREE.MathUtils.lerp;
@@ -47,6 +48,8 @@ export class ViewModel {
     const air = u.air;
 
     camera.updateMatrixWorld();
+    // the (unseen) body the arms hang from sits just below and behind the eyes
+    p.body.multiplyMatrices(camera.matrixWorld, BODY_AT);
     const sw = this.sway.x * (1 - 0.6 * a), sh = this.sway.y * (1 - 0.6 * a);
     if (h.oneHand) {
       // grenade: held low right; a throw swings it up and forward
@@ -70,11 +73,11 @@ export class ViewModel {
     // hip: low and right, angled a touch inward; sights: the bore sits just under the crosshair.
     // Aiming pushes the gun out to arm's length so the rear sight is a small notch, not a wall,
     // and the receiver stays below the line of sight.
-    const vs = lerp(VM_SCALE, 0.68, a); // a little smaller again when aiming
+    const vs = lerp(VM_SCALE, 0.9, a);
     const sightDrop = h.sight * vs;
-    const x = lerp(0.19, 0, a) + bobX + sw - this.sprintK * 0.02;
-    const y = lerp(-0.25, -sightDrop, a) + bobY + breathe + sh - rl * h.anim.drop - this.sprintK * 0.05 - air * 0.02;
-    const z = lerp(-0.42, -0.3, a) + rec * h.anim.kick;
+    const x = lerp(0.15, 0, a) + bobX + sw - this.sprintK * 0.02;
+    const y = lerp(-0.16, -sightDrop, a) + bobY + breathe + sh - rl * h.anim.drop - this.sprintK * 0.05 - air * 0.02;
+    const z = lerp(-0.34, -0.58, a) + rec * h.anim.kick;
     const yaw = lerp(0.05, 0, a) + this.sprintK * 0.7 + sw * 2;
     // (positive x rotation tips the barrel down)
     const pitch = -rec * h.anim.climb * (1 - 0.5 * a) + rl * h.anim.tilt + this.sprintK * 0.35 + sh * 2;
@@ -82,9 +85,8 @@ export class ViewModel {
     Q.setFromEuler(E);
     L.compose(P.set(x, y, z), Q, S.setScalar(vs));
     p.weapon.multiplyMatrices(camera.matrixWorld, L);
-    p.hands[1].multiplyMatrices(p.weapon, M.makeTranslation(0, -0.045, -0.01));
+    p.hands[1].multiplyMatrices(p.weapon, M.makeTranslation(0, -0.032, -0.006));
     p.hands[0].multiplyMatrices(p.weapon, M.makeTranslation(0, lerp(h.foreY, h.anim.hand[0], rl), lerp(h.fore, h.anim.hand[1], rl)));
-    p.hands[0].multiply(HAND_S); p.hands[1].multiply(HAND_S);
     p.showWeapon = true;
     p.muzzle.copy(h.muzzle).applyMatrix4(p.weapon);
     return p;

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { torsoGeo } from './anatomy.js';
 import { canvasTex } from './effects.js';
 import { U } from './rig.js';
 
@@ -100,7 +100,7 @@ export function makeWoundMesh(n) {
 
 // fine copy of the body that takes dents
 export function makeDentBody(n, material) {
-  const geo = new RoundedBoxGeometry(U.W, U.H, U.D, 9, U.R);
+  const geo = torsoGeo(9);
   for (let k = 0; k < MAX_DENTS; k++) geo.setAttribute(`aD${k}`, new THREE.InstancedBufferAttribute(new Float32Array(n * 4), 4));
   const mat = material.clone();
   mat.onBeforeCompile = (sh) => {
