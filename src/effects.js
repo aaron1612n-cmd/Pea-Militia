@@ -150,6 +150,22 @@ function scorchTexture() {
     }
   });
 }
+// a shell crater seen from above: dark scorched pit, churned lighter lip, dirt thrown out in rays
+function craterTexture() {
+  return canvasTex(256, (g, S) => {
+    const h = S / 2;
+    g.strokeStyle = 'rgba(58,46,34,0.45)';
+    for (let i = 0; i < 40; i++) {
+      const a = Math.random() * Math.PI * 2, r0 = h * 0.55, r1 = h * (0.75 + Math.random() * 0.25);
+      g.lineWidth = 1 + Math.random() * 3;
+      g.beginPath(); g.moveTo(h + Math.cos(a) * r0, h + Math.sin(a) * r0); g.lineTo(h + Math.cos(a) * r1, h + Math.sin(a) * r1); g.stroke();
+    }
+    const gr = g.createRadialGradient(h, h, h * 0.2, h, h, h * 0.8);
+    gr.addColorStop(0, 'rgba(18,15,12,0.92)'); gr.addColorStop(0.5, 'rgba(34,28,22,0.85)');
+    gr.addColorStop(0.68, 'rgba(96,80,60,0.75)'); gr.addColorStop(0.82, 'rgba(70,58,44,0.35)'); gr.addColorStop(1, 'rgba(60,50,40,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, S, S);
+  });
+}
 function mergeTwo(a, b) {
   const g = new THREE.BufferGeometry();
   const pa = a.attributes.position.array, pb = b.attributes.position.array;
@@ -248,6 +264,13 @@ export class Effects {
     // marks left on the field: bullet scuffs and blast scorches (ring buffers of instances)
     this.holes = decalMesh(scene, 1800, holeTexture(), 0.9);
     this.scorch = decalMesh(scene, 60, scorchTexture(), 0.92);
+    this.craters = decalMesh(scene, 48, craterTexture(), 1);
+    this.craters.renderOrder = 0;
+    // shell fragments and clods left lying around blast sites
+    const sg = new THREE.IcosahedronGeometry(0.07, 0).scale(1.6, 0.5, 1);
+    this.shrap = new THREE.InstancedMesh(sg, new THREE.MeshStandardMaterial({ color: '#4a4640', roughness: 0.8, metalness: 0.4, flatShading: true }), 240);
+    this.shrap.count = 0; this.shrap.frustumCulled = false; this.shrap.userData.next = 0;
+    scene.add(this.shrap);
     this.gore = new Gore(scene, this);
     // things that keep smoking for a while (blast sites, burning bodies)
     this.emitters = [];
@@ -418,6 +441,18 @@ export class Effects {
     ring.m.position.set(pos.x, Math.max(gy, pos.y - 0.4) + 0.05, pos.z);
     ring.t = 0; ring.r = r; ring.m.visible = true;
     if (pos.y < gy + 1.2) stamp(this.scorch, new THREE.Vector3(pos.x, Math.max(gy, pos.y - 0.4), pos.z), normalAt(pos.x, pos.z), r * (1.1 + Math.random() * 0.3));
+    if (r >= 1.6 && pos.y < gy + 1.2) {
+      stamp(this.craters, new THREE.Vector3(pos.x, Math.max(gy, pos.y - 0.4), pos.z), normalAt(pos.x, pos.z), r * 2.3);
+      const sh = this.shrap, n = Math.min(10, Math.round(r * 3));
+      for (let i = 0; i < n; i++) {
+        const a = Math.random() * Math.PI * 2, d = r * (0.6 + Math.random() * 1.6);
+        const x = pos.x + Math.cos(a) * d, z = pos.z + Math.sin(a) * d, j = sh.userData.next++ % 240;
+        _dq.setFromEuler(new THREE.Euler((Math.random() - 0.5) * 0.8, Math.random() * 6.3, (Math.random() - 0.5) * 0.8));
+        sh.setMatrixAt(j, _dm.compose(_dp.set(x, height(x, z) + 0.02, z), _dq, _ds.setScalar(0.7 + Math.random() * 1.4)));
+        sh.count = Math.min(240, Math.max(sh.count, j + 1));
+      }
+      sh.instanceMatrix.needsUpdate = true;
+    }
     // a smoke column that keeps rising for a few seconds
     const at = pos.clone();
     this.emitters.push({ t: 0, life: 4 + k * 2, rate: 7, acc: 0, fn: (e, fx) => {

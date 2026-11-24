@@ -345,6 +345,27 @@ export class Gore {
     for (let k = 0; k < chunks; k++) { const s = 0.05 + Math.random() * 0.08; this.addGib(c, rag.body.v, [s, s * 0.75, s * 1.15], CHUNK[k % 3], sp * 1.2); }
   }
 
+  // tear pieces off a body that is already down: limbs, chunks, a lot of blood
+  dismember(u, n, speed = 4) {
+    const L = this.level, rag = u.rag;
+    if (L < 2 || !rag) return;
+    u.lost = u.lost || 0;
+    const order = [0, 1, 2, 3].sort(() => Math.random() - 0.5);
+    for (let k = 0, done = 0; k < 4 && done < n; k++) {
+      const li = order[k], bit = li < 2 ? 1 << li : 4 << (li - 2);
+      if ((u.lost & bit) || !rag.limbs[li]) continue;
+      u.lost |= bit; done++;
+      const l = rag.limbs[li];
+      this.addGib(l.p, rag.body.v, li < 2 ? [0.1, 0.1, 0.12] : [0.15, 0.085, 0.25], li < 2 ? TRIM[u.team] : FOOTC, speed * 1.1);
+      this.spray(l.p, UP, 6, 1, 4, 1.4, 0.035);
+    }
+    const c = rag.body.pos;
+    for (let k = 0; k < 4 + n * 2; k++) { const s2 = 0.05 + Math.random() * 0.08; this.addGib(c, rag.body.v, [s2, s2 * 0.75, s2 * 1.15], CHUNK[k % 3], speed * 1.2); }
+    this.spray(c, UP, 12, 2, 6, 1.2, 0.035);
+    this.splat(c.x + this.rnd(0.8), c.z + this.rnd(0.8), 0.5 + Math.random() * 0.4);
+    this.pools.add(c.x, c.z, 1.0 + Math.random() * 0.6, 1);
+  }
+
   addGib(p, base, size, color, speed, dir) {
     const g = {
       p: p.clone(), v: new THREE.Vector3(this.rnd(), 0.7 + Math.random() * 0.9, this.rnd()).multiplyScalar(speed * (0.5 + Math.random() * 0.7)).addScaledVector(base, 0.5),
@@ -494,7 +515,8 @@ export class Gore {
     // wounded soldiers drip as they move: worse wounds drip faster, leaving a trail of spots
     for (let i = this.live.length - 1; i >= 0; i--) {
       const u = this.live[i];
-      if (!u.alive || u.removed || !(u.wound > 0.05)) { this.live.splice(i, 1); continue; }
+      if (!u.alive || u.removed || !(u.wound > 0.05 || u.bleed > 0.05)) { this.live.splice(i, 1); continue; }
+      if (u.bleed > 0.05) u.wound = Math.max(u.wound || 0, Math.min(1, u.bleed / 2.5));
       u.dripT = (u.dripT ?? 0) - dt;
       if (u.dripT <= 0) {
         u.dripT = 0.55 / (0.3 + u.wound * 2.5) * (0.6 + Math.random() * 0.8);
@@ -502,6 +524,12 @@ export class Gore {
         this.v.set(u.vel.x * 0.5 + this.rnd(0.4), 0.2 + Math.random() * 0.5, u.vel.z * 0.5 + this.rnd(0.4));
         this.drop(this.p.set(c.x + this.rnd(0.12), c.y - 0.2 + this.rnd(0.3), c.z + this.rnd(0.12)), this.v, 0.026 + Math.random() * 0.016, true);
         if (u.wound > 0.5 && sp > 0.5 && L2(this)) this.splat(u.pos.x, u.pos.z, 0.12 + Math.random() * 0.12);
+      }
+      // a crawling man drags a long smear behind him
+      if (u.down && L2(this)) {
+        const l = u.smear || (u.smear = new THREE.Vector3(u.pos.x, 0, u.pos.z));
+        const dx = u.pos.x - l.x, dz = u.pos.z - l.z, dd = Math.hypot(dx, dz);
+        if (dd > 0.4) { this.streaks.add(u.pos.x - dx * 0.5, u.pos.z - dz * 0.5, 0.4 + dd, 0, Math.atan2(dx, dz) + Math.PI); l.set(u.pos.x, 0, u.pos.z); }
       }
     }
     // bleeding wounds creep down the shell

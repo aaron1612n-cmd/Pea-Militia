@@ -12,13 +12,14 @@ const PX = 2.2; // compass pixels per degree
 
 // Heads-up display: points and tickets, radar, health, weapon, crosshair, hit markers,
 // a short feed of the player's kills and point captures.
+const EYE = new THREE.Vector3(), TGT = new THREE.Vector3();
 export class Hud {
   constructor() {
     this.el = $('hud');
     this.hp = $('hpbar'); this.hpNum = $('hpnum'); this.stam = $('stambar');
     this.wname = $('wname'); this.ammo = $('ammo');
     this.heat = $('heat'); this.heatBar = this.heat.parentElement;
-    this.cross = $('cross'); this.hitEl = $('hitmark'); this.hurtEl = $('hurt');
+    this.cross = $('cross'); this.hitEl = $('hitmark'); this.hurtEl = $('hurt'); this.bleedEl = $('bleed'); this.bandBtn = $('bandBtn');
     this.pointsEl = $('points'); this.ticketsEl = $('tickets');
     this.feed = $('feed'); this.banner = $('banner');
     this.cap = $('capture'); this.capText = $('capText'); this.capFill = $('capFill');
@@ -76,12 +77,14 @@ export class Hud {
     // enemies you or your squad have tagged: an orange diamond with the range, seen through cover
     g.font = `600 ${Math.round(11 * dpr)}px "Chakra Petch", sans-serif`; g.textAlign = 'center';
     for (const e of [...battle.units, ...battle.vehicles]) {
-      if (!e.alive || e.team === player.team || !(battle.time < (e.markedUntil || 0))) continue;
+      if (!e.alive || e.team === player.team || !(battle.time < (e.markedUntil || 0)) || battle.time - (e.seenAt ?? -9) > 0.6) continue; // only while actually in sight
       const d = Math.hypot(e.pos.x - player.pos.x, e.pos.z - player.pos.z);
       V.set(e.pos.x, e.pos.y + (e.crew ? 4 : 2.1), e.pos.z).project(camera);
       if (V.z > 1 || Math.abs(V.x) > 1 || Math.abs(V.y) > 1) continue;
+      // fog of war: a tag only shows while you can actually see the target, never through cover
+      if (!battle.los(player.eye(EYE), e.center(TGT))) continue;
       const x = (V.x * 0.5 + 0.5) * W, y = (-V.y * 0.5 + 0.5) * H, s = 7 * dpr;
-      g.globalAlpha = Math.min(1, (e.markedUntil - battle.time) / 2);
+      g.globalAlpha = Math.min(1, (e.markedUntil - battle.time) / 2, 1 - (battle.time - e.seenAt) / 0.6);
       g.fillStyle = '#ff7a1a'; g.strokeStyle = '#101316'; g.lineWidth = 1.5 * dpr;
       g.beginPath(); g.moveTo(x, y - s); g.lineTo(x + s, y); g.lineTo(x, y + s); g.lineTo(x - s, y); g.closePath(); g.fill(); g.stroke();
       g.lineWidth = 3 * dpr; g.strokeText(`${Math.round(d)}m`, x, y - s - 4 * dpr); g.fillText(`${Math.round(d)}m`, x, y - s - 4 * dpr);
@@ -140,6 +143,12 @@ export class Hud {
     // suppression: the edges close in under fire
     const sp = Math.round((player.alive ? player.suppression : 0) * 20) / 20;
     if (sp !== this.last.sp) { this.last.sp = sp; this.supp.style.opacity = Math.min(1, sp * 1.3); }
+    // bleeding: nothing heals on its own, so say so and offer the bandage
+    {
+      const b = player.alive && player.bleed > 0.05, txt = !b ? '' : player.bandageT > 0 ? 'Bandaging…' : player.bleed > 1.2 ? 'BLEEDING BADLY · J to bandage' : 'Bleeding · J to bandage';
+      if (txt !== this.last.bl) { this.last.bl = txt; this.bleedEl.hidden = !txt; this.bleedEl.textContent = txt; this.bleedEl.classList.toggle('bad', player.bleed > 1.2); }
+      if (this.bandBtn && this.bandBtn.hidden === !!b) this.bandBtn.hidden = !b;
+    }
     // health
     const st = Math.round((player.stamina ?? 1) * 50) / 50;
     if (st !== this.last.st || !!player.winded !== this.last.wd) {
@@ -288,8 +297,7 @@ export class Hud {
       if (Math.abs(x) > W * 0.75 || Math.abs(z) > W * 0.75) continue;
       const foe = u.team !== player.team;
       // enemies show only when somebody on your side has them in sight or they're shooting
-      if (foe && u.t - u.lastShot > 1.5 && !(battle.time < (u.spottedUntil || 0))) continue;
-      if (foe) this.foe(c, x, z, k, battle.time < (u.markedUntil || 0), rot);
+      if (foe) { this.ghost(c, u, battle, X, Z, k, rot); continue; }
       else {
         c.fillStyle = TEAMS[u.team].ui;
         const r = (u.squad === player.squad ? 3.4 : 2.6) * k;
@@ -299,7 +307,7 @@ export class Hud {
     for (const v of battle.vehicles) {
       if (!v.alive || v === player.vehicle) continue;
       const foe = v.team !== player.team;
-      if (foe && v.t - v.lastShot > 2 && !(battle.time < (v.spottedUntil || 0))) continue;
+      if (foe) { this.ghost(c, v, battle, X, Z, k * 1.6, rot); continue; }
       c.save();
       c.translate(X(v.pos.x), Z(v.pos.z));
       c.rotate(-v.yaw + Math.PI);
@@ -308,7 +316,6 @@ export class Hud {
       c.fillStyle = '#101316';
       c.fillRect(-1 * k, -7 * k, 2 * k, 6 * k);
       c.restore();
-      if (foe) this.foe(c, X(v.pos.x), Z(v.pos.z), k * 1.6, battle.time < (v.markedUntil || 0), rot);
     }
     // you
     c.save();
@@ -319,6 +326,20 @@ export class Hud {
     c.moveTo(0, -9 * k); c.lineTo(6 * k, 6 * k); c.lineTo(-6 * k, 6 * k); c.closePath();
     c.fill();
     c.restore();
+    c.restore();
+  }
+
+  // fog of war: seen now = solid diamond at its real spot; otherwise a fading hollow ghost at the last-known spot
+  ghost(c, e, battle, X, Z, k, rot) {
+    if (e.seenAt === undefined) return;
+    const age = battle.time - e.seenAt;
+    if (age < 0.6) { this.foe(c, X(e.pos.x), Z(e.pos.z), k, battle.time < (e.markedUntil || 0), rot); return; }
+    if (age > 9 || !e.lastKnown) return;
+    const r = 5 * k;
+    c.save(); c.translate(X(e.lastKnown.x), Z(e.lastKnown.z)); c.rotate(-rot);
+    c.globalAlpha = 0.75 * (1 - age / 9);
+    c.beginPath(); c.moveTo(0, -r); c.lineTo(r, 0); c.lineTo(0, r); c.lineTo(-r, 0); c.closePath();
+    c.setLineDash([2 * k, 2 * k]); c.lineWidth = 1.4 * k; c.strokeStyle = '#e2513b'; c.stroke();
     c.restore();
   }
 
