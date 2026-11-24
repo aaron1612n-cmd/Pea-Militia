@@ -3,7 +3,7 @@ import { MAT, Kit, instance, profile, roundRect, turned, rod, ring, bolt, pipe, 
 
 // Weapons: WW2 service arms, a little steam, a little future. Models are in hold units
 // (scaled by U.WEAPON_SCALE when drawn), grip at the origin, barrel along +z.
-// kind: hitscan | projectile | flame | throw
+// kind: hitscan | projectile | throw
 export const WEAPONS = {
   rifle: {
     name: 'Rifle', kind: 'hitscan', auto: false, interval: 0.42, damage: 90, spread: 0.004, mag: 8, reserve: 48,
@@ -21,10 +21,6 @@ export const WEAPONS = {
     name: 'Coil gun', kind: 'projectile', auto: true, interval: 0.24, damage: 30, splash: 14, radius: 1.3, speed: 32,
     gravity: 0, heat: 0.13, mag: Infinity, range: 40, pierce: 0.7, sound: 'plasma', ideal: [7, 22], burst: [3, 6], proj: 'plasma',
   },
-  flame: {
-    name: 'Flamer', kind: 'flame', auto: true, interval: 0.05, dps: 75, mag: 100, reserve: 300, reload: 2.4,
-    range: 7.5, pierce: 0.25, sound: 'flame', ideal: [1.5, 6], burst: [12, 30], move: 0.9,
-  },
   launcher: {
     name: 'Steam mortar', kind: 'projectile', auto: false, interval: 1.1, damage: 130, radius: 3.3, speed: 19, gravity: 9.8,
     mag: 1, reserve: 14, reload: 1.6, range: 40, pierce: 1, sound: 'steam', ideal: [9, 30], burst: [1, 1], proj: 'shell', speed2: 0.85,
@@ -34,7 +30,7 @@ export const WEAPONS = {
     mag: 1, reserve: 5, reload: 0.7, range: 22, pierce: 0.9, sound: 'throw', ideal: [6, 18], burst: [1, 1], proj: 'grenade',
   },
 };
-export const SLOTS = ['rifle', 'smg', 'mg', 'plasma', 'flame', 'launcher', 'grenade'];
+export const SLOTS = ['rifle', 'smg', 'mg', 'plasma', 'launcher', 'grenade'];
 
 // ---------------- models ----------------
 // Iron sights on top of every long gun: a notched rear block and a hooded front post, both on
@@ -180,32 +176,6 @@ function plasma(k) {
   return { muzzle: [0, 0.03, 0.585], sight: y };
 }
 
-function flame(k) {
-  // nozzle on a long wand, fuel tank with strap and pressure gauge, hose to the grip, pilot light
-  k.add(profile([[-0.05, -0.068], [-0.04, 0.02], [0.03, 0.03], [0.04, 0.0], [0.02, -0.072]], 0.038, 0.009), MAT.wood); // grip
-  k.add(profile(roundRect(-0.07, 0.02, 0.1, 0.07, 0.012), 0.04, 0.006), MAT.steel); // valve block
-  k.add(turned([[0, -0.1], [0.022, -0.1], [0.022, 0.46], [0, 0.46]], 12), MAT.darkSteel, { pos: [0, 0.04, 0] });
-  k.add(turned([[0.022, 0.45], [0.03, 0.48], [0.044, 0.54], [0.046, 0.57], [0.03, 0.575], [0, 0.575]], 14), MAT.steel, { pos: [0, 0.04, 0] }); // flared nozzle
-  for (const z of [0.1, 0.22, 0.34]) collar(k, 0.027, z, z + 0.015, 0.04, MAT.brass);
-  for (const a of [0, 1, 2, 3, 4, 5]) k.add(rod(0.004, 0.5, 0.57, 5), MAT.darkSteel, { pos: [Math.sin(a) * 0.036, 0.04 + Math.cos(a) * 0.036, 0], rot: [0, 0, 0] }); // nozzle cage
-  // fuel tank slung under the tube
-  k.add(turned([[0, -0.21], [0.03, -0.205], [0.052, -0.18], [0.058, -0.14], [0.058, 0.12], [0.052, 0.16], [0.03, 0.19], [0, 0.195]], 20), MAT.brass, { pos: [0, -0.085, 0.08] });
-  for (const z of [-0.05, 0.14]) { k.add(ring(0.06, 0.007, 20), MAT.darkSteel, { pos: [0, -0.085, z] }); }
-  k.add(pipe([[0, -0.03, 0.22], [0, -0.0, 0.26], [0, 0.03, 0.3]], 0.011, 10, 6), MAT.leather); // feed hose
-  k.add(pipe([[0, -0.03, 0.0], [0, -0.07, -0.02], [0, -0.09, 0.04]], 0.01, 10, 6), MAT.leather); // hose to the grip
-  k.add(turned([[0, 0], [0.024, 0], [0.024, 0.01], [0, 0.01]], 14), MAT.gauge, { pos: [-0.06, -0.085, 0.03], rot: [0, -Math.PI / 2, 0] }); // gauge
-  k.add(ring(0.026, 0.004, 14), MAT.darkSteel, { pos: [-0.06, -0.085, 0.03], rot: [0, Math.PI / 2, 0] });
-  k.add(ring(0.03, 0.005, 14), MAT.iron, { pos: [-0.045, 0.045, 0.15], rot: [0, Math.PI / 2, 0] }); // valve wheel
-  k.add(rod(0.0045, 0, 0.05, 6), MAT.iron, { pos: [-0.018, 0.045, 0.15], rot: [0, -Math.PI / 2, 0] }); // its spindle
-  k.add(rod(0.003, -0.03, 0.03, 5), MAT.iron, { pos: [-0.045, 0.045, 0.15], rot: [Math.PI / 2, 0, 0] }); // wheel spokes
-  k.add(rod(0.003, -0.03, 0.03, 5), MAT.iron, { pos: [-0.045, 0.045, 0.15] });
-  k.add(profile([[0.27, 0.01], [0.3, 0.01], [0.31, -0.065], [0.28, -0.07]], 0.032, 0.006), MAT.wood); // fore grip
-  k.add(ellipsoidGeo(0.012, 0.012, 0.018, 8, 6), MAT.ember, { pos: [0, 0.0, 0.54] }); // pilot light
-  k.add(pipe([[0, 0.0, 0.54], [0, 0.01, 0.47], [0, 0.03, 0.4]], 0.003, 8, 4), MAT.brass);
-  const y = sights(k, 0.085, 0.06, 0.42, 0.06);
-  return { muzzle: [0, 0.04, 0.575], sight: y };
-}
-
 function launcher(k) {
   // squat bell-mouth mortar tube, big copper boiler with gauge and relief valve, shoulder pad, folded legs
   k.add(profile([[-0.05, -0.068], [-0.045, 0.02], [0.03, 0.03], [0.045, 0.0], [0.02, -0.072]], 0.04, 0.009), MAT.wood); // grip
@@ -244,7 +214,7 @@ function grenade(k) {
   return { muzzle: [0, 0, 0.15], sight: 0 };
 }
 
-const BUILD = { rifle, smg, mg, plasma, flame, launcher, grenade };
+const BUILD = { rifle, smg, mg, plasma, launcher, grenade };
 const baked = new Map();
 
 export function weaponParts(id) {

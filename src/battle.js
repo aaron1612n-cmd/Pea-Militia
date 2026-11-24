@@ -1,3 +1,4 @@
+import { markUnit, markVehicle } from './hitmarks.js';
 import { CLASSES } from './classes.js';
 import * as THREE from 'three';
 import { Unit, RADIUS } from './unit.js';
@@ -23,8 +24,8 @@ export const KINDS = CLASSES;
 // squad mixes, one per army
 export const SQUAD_MIX = [
   ['rifleman', 'gunner', 'assault', 'rifleman', 'medic', 'assault', 'rifleman', 'coil', 'mortar'],
-  ['rifleman', 'gunner', 'gunner', 'assault', 'rifleman', 'medic', 'flamer', 'rifleman', 'mortar'],
-  ['coil', 'flamer', 'rifleman', 'medic', 'coil', 'assault', 'rifleman', 'gunner', 'coil'],
+  ['rifleman', 'gunner', 'gunner', 'assault', 'rifleman', 'medic', 'assault', 'rifleman', 'mortar'],
+  ['coil', 'assault', 'rifleman', 'medic', 'coil', 'assault', 'rifleman', 'gunner', 'coil'],
 ];
 export const SQUAD_SIZE = 6;
 export const HOLD_WIN = 60; // seconds holding every point
@@ -448,8 +449,7 @@ export class Battle {
     this.stats.shots++;
     if (def.kind === 'hitscan') this.hitscan(shooter, m, dir, def);
     else if (def.kind === 'projectile') this.launch(def.proj, m, dir.multiplyScalar(def.speed), shooter, def);
-    else if (def.kind === 'flame') this.flame(shooter, m, dir, def);
-    if (def.kind !== 'flame') this.fx.muzzle(m, dir, def.id === 'mg' ? 1.3 : 1);
+    this.fx.muzzle(m, dir, def.id === 'mg' ? 1.3 : 1);
     if (def.proj === 'shell') this.fx.steam(m, dir.clone().normalize().multiplyScalar(1.5), 4, 0.5);
     this.audio.play(def.sound, m, shooter.isPlayer ? 0.8 : 1);
     this.heard(shooter, m);
@@ -470,7 +470,7 @@ export class Battle {
     this.fx.tracer(from.clone().addScaledVector(dir, 0.15), end, def.id === 'mg' ? 0.02 : 0.014);
     this.suppress(shooter, from, end);
     this.corpseShots(from, dir, hit.t, def.damage);
-    if (hit.vehicle) { hit.vehicle.hit(def.damage, 'bullet', shooter, this); this.fx.impact(end, hit.normal, 'metal'); }
+    if (hit.vehicle) { hit.vehicle.hit(def.damage, 'bullet', shooter, this); this.fx.impact(end, hit.normal, 'metal'); markVehicle(hit.vehicle, from, dir, 0.12 + def.damage * 0.004); }
     else if (hit.unit) this.damageUnit(hit.unit, def.damage, shooter, 'bullet', dir, hit.point);
     else if (hit.prop) { this.damageProp(hit.prop, def.damage * 0.15, shooter); this.fx.impact(end, hit.normal, hit.prop.type === 'wall' || hit.prop.type === 'drum' || hit.prop.type === 'trap' ? 'metalhole' : 'dust'); }
     else if (hit.ground) this.fx.impact(end, hit.normal, 'dust');
@@ -514,6 +514,7 @@ export class Battle {
     this.fx.impact(c.clone().addScaledVector(dir || UP, -0.25), dir ? dir.clone().negate() : UP, 'metal');
     if (Math.random() < 0.5) this.fx.debris(c, TEAMS[u.team].body, 2);
     this.fx.gore.hit(c, dir, dmg, kind, u);
+    if (kind === 'bullet' || kind === 'plasma') markUnit(u, point || c, dir || UP, zone, kind, (kind === "plasma" ? 0.1 : 0.06) + Math.min(0.04, dmg / 1200));
     u.lastHit = { dir: dir ? dir.clone() : null, dmg, kind, t: u.t, zone };
     u.hurt(dmg, from, this, kind, zone);
     if (u.alive && dir && (kind === 'bullet' || kind === 'plasma') && this.fx.gore.level) u.impulse(dir.clone().setY(0).normalize().multiplyScalar(Math.min(1.6, dmg / 50)));
@@ -543,6 +544,7 @@ export class Battle {
     c = c || u.rag.body.pos.clone();
     u.corpseHp -= dmg;
     this.fx.gore.hit(c, dir, dmg * 0.8, kind, u);
+    if (kind === 'bullet' && dir) markUnit(u, c, dir, 'torso', kind, 0.05);
     this.fx.impact(c, dir ? dir.clone().negate() : UP, 'metal');
     u.rag.kick(dir.clone().setY(0.1).multiplyScalar(Math.min(2.2, dmg / 30)));
     if (u.corpseHp <= 0 || (kind === 'blast' && dmg > 30)) {
@@ -621,35 +623,6 @@ export class Battle {
     }
     const p = this.launch('grenade', hand, vel, u, def);
     p.fuse = def.fuse;
-  }
-
-  flame(shooter, from, dir, def) {
-    for (let i = 0; i < 3; i++) {
-      const v = this.spread(dir, 0.12).multiplyScalar(8 + Math.random() * 3);
-      this.fx.flame(from.clone().addScaledVector(dir, 0.1 + i * 0.12), v.add(shooter.vel));
-    }
-    const dmg = def.dps * def.interval;
-    const c = V();
-    for (const u of this.unitGrid.near(from.x, from.z, def.range + 1, this.tmpA)) {
-      if (!u.alive || u === shooter || u.team === shooter.team) continue;
-      u.center(c);
-      const v = c.clone().sub(from);
-      const along = v.dot(dir);
-      if (along < 0 || along > def.range) continue;
-      const perp = v.addScaledVector(dir, -along).length();
-      if (perp > 0.5 + along * 0.16) continue;
-      if (!this.los(from, c)) continue;
-      this.damageUnit(u, dmg, shooter, 'fire', dir);
-      u.burn = Math.max(u.burn, 2.8);
-      u.burnBy = shooter;
-      u.suppression = Math.min(1, u.suppression + 0.1);
-    }
-    for (const p of this.propGrid.near(from.x, from.z, def.range, this.tmpB)) {
-      if (p.type !== 'crate' && p.type !== 'drum') continue;
-      const pc = new THREE.Vector3(p.box.x, p.box.y0 + p.box.h / 2, p.box.z);
-      const along = V().subVectors(pc, from).dot(dir);
-      if (along > 0 && along < def.range && segDist(from, from.clone().addScaledVector(dir, def.range), pc) < 0.9) this.damageProp(p, dmg * 0.6, shooter);
-    }
   }
 
   explode(pos, r, dmg, owner, pierce = 1) {
@@ -787,7 +760,7 @@ export class Battle {
   // a medic gets a fallen soldier back on their feet
   revive(u) {
     u.alive = true; u.rag = null; u.hp = 45; u.deadT = 0; u.vel.set(0, 0, 0); u.suppression = 0; u.burn = 0; u.flinch = 0;
-    u.wound = 0; u.lost = 0; u.wounds = null; u.bleed = 0; u.leg = 0; u.arm = 0; u.down = false; u.shock = 0; u.stagger = 0; u.corpseHp = 70;
+    u.wound = 0; u.lost = 0; u.wounds = null; u.marks = null; u.bleed = 0; u.leg = 0; u.arm = 0; u.down = false; u.shock = 0; u.stagger = 0; u.corpseHp = 70;
     u.onRevive?.();
     this.events.push({ type: 'revive', unit: u });
   }

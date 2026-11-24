@@ -343,7 +343,7 @@ function toggleFree(on = cam.mode !== 'free', start = false) {
     const gx = THREE.MathUtils.clamp(cam.fr.x, -HALF + 2, HALF - 2), gz = THREE.MathUtils.clamp(cam.fr.z, -HALF + 2, HALF - 2);
     player.pos.set(gx, 0, gz); player.vel.set(0, 0, 0);
     player.hp = player.maxHp; player.alive = true; player.deadT = 0; player.respawnT = 0; player.grounded = false;
-    player.wound = 0; player.lost = 0; player.wounds = null; player.rag = null; fx.gore.forget(player);
+    player.wound = 0; player.lost = 0; player.wounds = null; player.marks = null; player.rag = null; fx.gore.forget(player);
     for (const w of player.weapons) { w.mag = w.def.mag; }
     if (!battle.units.includes(player)) battle.units.push(player);
     cam.yaw = cam.yaw; cam.mode = settings.view; cam.blend = settings.view === '1p' ? 1 : 0;
@@ -735,7 +735,7 @@ function respawnPlayer() {
   player.alive = true;
   player.hp = player.maxHp;
   player.burn = 0;
-  player.wound = 0; player.lost = 0; player.wounds = null; player.rag = null; player.flinch = 0; player.suppression = 0;
+  player.wound = 0; player.lost = 0; player.wounds = null; player.marks = null; player.rag = null; player.flinch = 0; player.suppression = 0;
   fx.gore.forget(player);
   player.respawnT = 0;
   player.deadT = 0;
@@ -763,7 +763,7 @@ function drawUnits() {
       vmOn = true;
       continue;
     }
-    crowd.add(u.world, u.poseOut, u.team, { weapon: u.weapon.id, seed: u.id, wound: u.wound, lost: u.lost, wounds: u.wounds, kind: u.kind, far: u.pos.distanceToSquared(camera.position) > LOD_FAR * LOD_FAR });
+    crowd.add(u.world, u.poseOut, u.team, { weapon: u.weapon.id, seed: u.id, wound: u.wound, lost: u.lost, wounds: u.wounds, marks: u.marks, kind: u.kind, far: u.pos.distanceToSquared(camera.position) > LOD_FAR * LOD_FAR });
   }
   crowd.end();
   vmCrowd.end();
@@ -834,7 +834,7 @@ function frame(_t, fixedDt) {
   if (state !== 'menu' && player) {
     // real recoil: each shot kicks the view up a little
     if (player.shots !== lastShots) {
-      const k = { rifle: 0.022, smg: 0.007, mg: 0.009, plasma: 0.008, flame: 0.001, launcher: 0.03, grenade: 0 }[player.weapon.id] ?? 0.01;
+      const k = { rifle: 0.022, smg: 0.007, mg: 0.009, plasma: 0.008, launcher: 0.03, grenade: 0 }[player.weapon.id] ?? 0.01;
       cam.pitch += k * (player.shots - lastShots > 3 ? 1 : player.shots - lastShots) * (1 - 0.4 * cam.ads);
       cam.yaw += (Math.random() - 0.5) * k * 0.6;
       lastShots = player.shots;

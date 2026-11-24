@@ -8,8 +8,6 @@ export const CLASSES = {
     brief: 'Fast, close range' },
   gunner: { name: 'Gunner', loadout: ['mg'], hp: 120, speed: 0.9, skill: { name: 'Overdrive', blurb: 'Fire 50% faster for 5s', dur: 5, cd: 18, mod: { rate: 1.5 } },
     brief: 'Heavy, sustained fire' },
-  flamer: { name: 'Flamer', loadout: ['flame', 'grenade'], hp: 130, speed: 0.92, skill: { name: 'Fireproof', blurb: 'Take half damage for 5s', dur: 5, cd: 20, mod: { dmgIn: 0.5, noBurn: true } },
-    brief: 'Tough, burns at close range' },
   mortar: { name: 'Mortar', loadout: ['launcher'], hp: 85, speed: 0.95, skill: { name: 'Rapid load', blurb: 'Shells 2.5x faster for 5s', dur: 5, cd: 18, mod: { rate: 2.5, quick: true } },
     brief: 'Shells over cover' },
   coil: { name: 'Coil gun', loadout: ['plasma', 'grenade'], hp: 100, speed: 1, skill: { name: 'Overcharge', blurb: 'No heat, +60% damage, 4s', dur: 4, cd: 18, mod: { dmgOut: 1.6, noHeat: true } },

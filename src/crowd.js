@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { U, setWeaponBounds, solveLegs, solveArms } from './rig.js';
 import { GEAR, MARKS, KIND_IDS, kindKey } from './gear.js';
+import { markMaterial, partMatrix } from './hitmarks.js';
 import { torsoGeo, headGeo, helmetGeo, bootGeo, fistGeo, LIMB, HEAD_COLORS } from './anatomy.js';
 import { WEAPONS, weaponParts } from './weapons.js';
 import { TEAMS } from './factions.js';
@@ -19,6 +20,7 @@ export const PART_GEO = {
   hand: fistGeo(),
 };
 
+const MP = new THREE.Vector3(), MN = new THREE.Vector3(), MQ = new THREE.Quaternion(), MQ2 = new THREE.Quaternion(), MM = new THREE.Matrix4(), MS = new THREE.Vector3(), Z = new THREE.Vector3(0, 0, 1);
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
 const UI_COL = TEAMS.map((t) => new THREE.Color(t.ui));
 const HELM_COL = TEAMS.map((t) => new THREE.Color(t.ui).multiplyScalar(0.72));
@@ -66,6 +68,7 @@ export class Crowd {
     }
     this.body.name = 'crowd-body'; this.head.name = 'crowd-head'; this.helmet.name = 'crowd-helmet'; this.boot.name = 'crowd-boots'; this.hand.name = 'crowd-hands';
     this.nl = 0; this.na = 0;
+    this.mark = mk(new THREE.PlaneGeometry(1, 1), markMaterial(), cap * 10, false); this.mark.name = 'crowd-hitmarks'; this.mark.castShadow = false; this.nm = 0;
     // weapons: one instanced mesh per (weapon, material)
     this.weapons = {};
     for (const id of Object.keys(WEAPONS)) {
@@ -92,7 +95,7 @@ export class Crowd {
   }
 
   begin() {
-    this.n = this.nf = this.nh = this.nw = this.nl = this.na = this.nd = 0;
+    this.n = this.nf = this.nh = this.nw = this.nl = this.na = this.nd = this.nm = 0;
     for (const id in this.weapons) this.wn[id] = 0;
     for (const k of KIND_IDS) this.gn[k] = this.mn[k] = 0;
   }
@@ -165,6 +168,16 @@ export class Crowd {
         this.boot.setMatrixAt(this.nf++, t.multiplyMatrices(world, p.feet[k]));
       }
     }
+    // holes, scorch and dents where rounds struck helmet, vest, pack and limbs (parts solved above)
+    if (opts.marks && !opts.far) for (const m of opts.marks) {
+      if (this.nm >= this.cap * 10) break;
+      solveLegs(p); solveArms(p);
+      const pm = t.multiplyMatrices(world, partMatrix(p, m.id));
+      const pos = MP.copy(m.p).applyMatrix4(pm);
+      const nw = MN.copy(m.n).transformDirection(pm);
+      MQ.setFromUnitVectors(Z, nw); MQ2.setFromAxisAngle(nw, m.r); MQ.premultiply(MQ2);
+      this.mark.setMatrixAt(this.nm++, MM.compose(pos.addScaledVector(nw, 0.004), MQ, MS.setScalar(m.s)));
+    }
     // arms reach from the shoulders to the hands (first person too, where the shoulders are below the view)
     solveArms(p);
     const sc = BODY_COL[team];
@@ -199,6 +212,7 @@ export class Crowd {
     fin(this.body, this.n); fin(this.head, this.n); fin(this.helmet, this.n); fin(this.pack, this.n);
     fin(this.boot, this.nf); fin(this.hand, this.nh); fin(this.upperArm, this.nh); fin(this.foreArm, this.nh);
     fin(this.thigh, this.nl); fin(this.shin, this.nl);
+    fin(this.mark, this.nm);
     fin(this.wound, this.nw); fin(this.dentBody, this.nd);
     const wg = this.wound.geometry.attributes, dg = this.dentBody.geometry.attributes;
     wg.aC.needsUpdate = wg.aS.needsUpdate = wg.aN.needsUpdate = true;
