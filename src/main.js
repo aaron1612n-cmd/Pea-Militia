@@ -606,7 +606,7 @@ function spotEnemy() {
     }
   }
   if (!tgt) { hud.say('No enemy in sight', 0.8); return; }
-  tgt.markedUntil = tgt.spottedUntil = battle.time + 10;
+  tgt.markedUntil = tgt.spottedUntil = battle.time + 10; tgt.seenAt = battle.time; (tgt.lastKnown || (tgt.lastKnown = new THREE.Vector3())).copy(tgt.pos);
   for (const sq of battle.squads) if (sq.team === player.team && sq.alive.length && sq.alive[0].pos.distanceTo(player.pos) < 120) sq.know(tgt, tgt.pos, true);
   audio.play('ping', null, 0.35);
   hud.say(`Enemy spotted · ${tgt.crew ? tgt.def.name : KINDS[tgt.kind]?.name || 'Soldier'}`, 1.2);
