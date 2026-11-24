@@ -7,6 +7,7 @@ import { torsoGeo, headGeo, helmetGeo, HELMET_KINDS, bootGeo, handGeos, packGeo,
 import { WEAPONS, weaponParts } from './weapons.js';
 import { TEAMS } from './factions.js';
 import { makeWoundMesh, makeDentBody, DENT_CAP, MAX_DENTS } from './wounds.js';
+import { stumpGeo, wreckHead, woundMaterial, LOST } from './wreck.js';
 
 // Draws every soldier with a handful of instanced meshes (one per body part and per weapon
 // material), so a few hundred units cost a few dozen draw calls.
@@ -31,6 +32,8 @@ const BODY_COL = TEAMS.map((t) => new THREE.Color(t.body).multiplyScalar(1.45));
 const TRIM_COL = TEAMS.map((t) => new THREE.Color(t.trim));
 const PACK_COL = TEAMS.map((t) => new THREE.Color(t.body).multiplyScalar(0.62));
 const DARK = new THREE.Color('#1d2126');
+const _sp = new THREE.Vector3(), _sq = new THREE.Quaternion(), _ss = new THREE.Vector3(), _sz = new THREE.Vector3(), _sm = new THREE.Matrix4();
+const NECK_UP = new THREE.Matrix4().makeRotationX(-Math.PI / 2), NECK_T = new THREE.Matrix4().makeTranslation(0, 0, 0.012), NECK_S = new THREE.Vector3(0.034, 0.034, 0.034);
 
 export class Crowd {
   constructor(scene, cap = 600) {
@@ -71,6 +74,11 @@ export class Crowd {
       if (MARKS[k]) { this.marks[k] = mk(MARKS[k], markMat, cap, false); this.marks[k].name = `crowd-mark-${k}`; }
     }
     this.body.name = 'crowd-body'; this.head.name = 'crowd-head'; this.boot.name = 'crowd-boots'; this.handL.name = 'crowd-hands-left'; this.handR.name = 'crowd-hands-right';
+    // wound faces where limbs and heads were torn off, and ruined heads (see wreck.js)
+    const wm = () => woundMaterial({ roughness: 0.5 });
+    this.stump = mk(stumpGeo(), wm(), 240, true); this.stump.name = 'crowd-stumps'; this.ns = 0;
+    this.wreckFace = mk(wreckHead('face'), wm(), 48, true); this.wreckFace.name = 'crowd-head-face'; this.nwf = 0;
+    this.wreckTop = mk(wreckHead('top'), wm(), 48, true); this.wreckTop.name = 'crowd-head-top'; this.nwt = 0;
     this.nl = 0; this.na = 0;
     this.mark = mk(new THREE.PlaneGeometry(1, 1), markMaterial(), cap * 10, false); this.mark.name = 'crowd-hitmarks'; this.mark.castShadow = false; this.nm = 0;
     // weapons: one instanced mesh per (weapon, material)
@@ -98,8 +106,19 @@ export class Crowd {
     this.tmp = new THREE.Matrix4();
   }
 
+  // a torn wound face at the start of limb segment `seg` (pos at its root, face toward its far end), pushed `adv` along it
+  addStump(world, seg, radius, color, adv = 0) {
+    if (this.ns >= 240) return;
+    _sm.multiplyMatrices(world, seg).decompose(_sp, _sq, _ss);
+    _sz.set(0, 0, 1).applyQuaternion(_sq);
+    _sp.addScaledVector(_sz, -0.5 * _ss.z * 0.2 + adv);
+    const j = this.ns++;
+    this.stump.setMatrixAt(j, _sm.compose(_sp, _sq, _ss.setScalar(radius)));
+    this.stump.instanceColor.setXYZ(j, color.r, color.g, color.b);
+  }
+
   begin() {
-    this.n = this.nf = this.nh = this.nhl = this.nhr = this.nw = this.nl = this.na = this.nd = this.nm = 0;
+    this.n = this.nf = this.nh = this.nhl = this.nhr = this.nw = this.nl = this.na = this.nd = this.nm = this.ns = this.nwf = this.nwt = 0;
     for (const id in this.weapons) this.wn[id] = 0;
     for (const k of KIND_IDS) this.gn[k] = this.mn[k] = 0;
     for (const k of HELMET_KINDS) this.hn[k] = 0;
@@ -141,13 +160,25 @@ export class Crowd {
           aN.setXYZ(j, w.nx, 0, w.nz);
         }
       }
-      this.head.setMatrixAt(i, t.multiplyMatrices(world, p.head));
-      const sk = TRIM_COL[team]; // the head is a dark balaclava under the headgear
-      this.head.instanceColor.setXYZ(i, sk.r * 1.6, sk.g * 1.6, sk.b * 1.6);
-      const hk = HELMET_KINDS.includes(opts.kind) ? opts.kind : 'rifleman', hi = this.hn[hk]++;
-      this.helmets[hk].setMatrixAt(hi, t.multiplyMatrices(world, p.head));
-      const hc = opts.kind === 'medic' ? PALE : HELM_COL[team];
-      this.helmets[hk].instanceColor.setXYZ(hi, hc.r, hc.g, hc.b);
+      const hl = opts.lost || 0, sk = TRIM_COL[team]; // the head is a dark balaclava under the headgear
+      const hm = t.multiplyMatrices(world, p.head);
+      if (hl & (LOST.HEAD | LOST.FACE | LOST.CROWN)) {
+        // ruined head: the helmet is gone, the neck or skull shows its wound
+        this.head.setMatrixAt(i, ZERO);
+        if (hl & LOST.HEAD) {
+          if (this.ns < 240) { const j = this.ns++; this.stump.setMatrixAt(j, _sm.multiplyMatrices(hm, NECK_UP).multiply(NECK_T).scale(NECK_S)); this.stump.instanceColor.setXYZ(j, sk.r * 1.6, sk.g * 1.6, sk.b * 1.6); }
+        } else {
+          const face = hl & LOST.FACE, w = face ? this.wreckFace : this.wreckTop, j = face ? this.nwf++ : this.nwt++;
+          if (j < 48) { w.setMatrixAt(j, hm); w.instanceColor.setXYZ(j, sk.r * 1.6, sk.g * 1.6, sk.b * 1.6); } else if (face) this.nwf--; else this.nwt--;
+        }
+      } else {
+        this.head.setMatrixAt(i, hm);
+        this.head.instanceColor.setXYZ(i, sk.r * 1.6, sk.g * 1.6, sk.b * 1.6);
+        const hk = HELMET_KINDS.includes(opts.kind) ? opts.kind : 'rifleman', hi = this.hn[hk]++;
+        this.helmets[hk].setMatrixAt(hi, t.multiplyMatrices(world, p.head));
+        const hc = opts.kind === 'medic' ? PALE : HELM_COL[team];
+        this.helmets[hk].instanceColor.setXYZ(hi, hc.r, hc.g, hc.b);
+      }
       this.pack.setMatrixAt(i, t.multiplyMatrices(world, p.pack));
       this.pack.instanceColor.setXYZ(i, PACK_COL[team].r, PACK_COL[team].g, PACK_COL[team].b);
       const lost = opts.lost || 0;
@@ -161,15 +192,17 @@ export class Crowd {
       solveLegs(p);
       const tc = TROUSER[team];
       for (let k = 0; k < 2; k++) {
-        if (lost & (4 << k) || this.nl + 1 > this.cap * 2) continue; // a torn-off foot takes its leg with it
+        if (lost & (LOST.LEG << k)) { this.addStump(world, p.legs[k][0], 0.056, tc, 0.03); continue; } // torn off at the hip: leg, shin and boot go together
+        if (this.nl + 1 > this.cap * 2) continue;
         const j = this.nl++;
         this.thigh.setMatrixAt(j, t.multiplyMatrices(world, p.legs[k][0]));
         this.thigh.instanceColor.setXYZ(j, tc.r, tc.g, tc.b);
+        if (lost & (LOST.SHIN << k)) { this.shin.setMatrixAt(j, ZERO); this.addStump(world, p.legs[k][1], 0.043, tc, 0.03); continue; } // torn off at the knee
         this.shin.setMatrixAt(j, t.multiplyMatrices(world, p.legs[k][1]));
         this.shin.instanceColor.setXYZ(j, tc.r, tc.g, tc.b);
       }
       for (let k = 0; k < p.feet.length; k++) {
-        if (lost & (4 << k)) continue;
+        if (lost & ((LOST.LEG | LOST.SHIN) << k)) continue;
         if (this.nf >= this.cap * 2) break;
         this.boot.setMatrixAt(this.nf++, t.multiplyMatrices(world, p.feet[k]));
       }
@@ -189,12 +222,14 @@ export class Crowd {
     const sc = BODY_COL[team];
     for (let k = 0; k < p.hands.length; k++) {
       const h = p.hands[k];
-      if (opts.lost & (1 << k)) continue;
+      const al = opts.lost || 0;
+      if (al & (LOST.ARM << k)) { this.addStump(world, p.arms[k][0], 0.039, sc, 0.03); continue; } // torn off at the shoulder
       if (this.nh >= this.cap * 2) break;
       const j = this.nh++;
-      if (k === 0) this.handL.setMatrixAt(this.nhl++, t.multiplyMatrices(world, h)); else this.handR.setMatrixAt(this.nhr++, t.multiplyMatrices(world, h));
       this.upperArm.setMatrixAt(j, t.multiplyMatrices(world, p.arms[k][0]));
       this.upperArm.instanceColor.setXYZ(j, sc.r, sc.g, sc.b);
+      if (al & (LOST.FORE << k)) { this.foreArm.setMatrixAt(j, ZERO); this.addStump(world, p.arms[k][1], 0.031, sc, 0.024); continue; } // torn off at the elbow, hand and all
+      if (k === 0) this.handL.setMatrixAt(this.nhl++, t.multiplyMatrices(world, h)); else this.handR.setMatrixAt(this.nhr++, t.multiplyMatrices(world, h));
       this.foreArm.setMatrixAt(j, t.multiplyMatrices(world, p.arms[k][1]));
       this.foreArm.instanceColor.setXYZ(j, sc.r, sc.g, sc.b);
     }
@@ -219,6 +254,7 @@ export class Crowd {
     fin(this.boot, this.nf); fin(this.handL, this.nhl); fin(this.handR, this.nhr); fin(this.upperArm, this.nh); fin(this.foreArm, this.nh);
     fin(this.thigh, this.nl); fin(this.shin, this.nl);
     fin(this.mark, this.nm);
+    fin(this.stump, this.ns); fin(this.wreckFace, this.nwf); fin(this.wreckTop, this.nwt);
     fin(this.wound, this.nw); fin(this.dentBody, this.nd);
     const wg = this.wound.geometry.attributes, dg = this.dentBody.geometry.attributes;
     wg.aC.needsUpdate = wg.aS.needsUpdate = wg.aN.needsUpdate = true;
