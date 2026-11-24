@@ -3,6 +3,7 @@ import { hostile } from './factions.js';
 import { wrap } from './physics.js';
 import { U } from './rig.js';
 import { height } from './terrain.js';
+import { PROPS } from './props.js';
 
 // Three layers of AI:
 //  Commander (one per army): every few seconds hands each squad an objective, a control point
@@ -13,6 +14,12 @@ import { height } from './terrain.js';
 //  Brain (one per soldier): spots enemies (line of sight, range, a short reaction delay),
 //    picks targets, aims with an error that tightens while tracking, fires in bursts, takes
 //    cover, throws grenades at clusters and at enemies dug in behind cover.
+//  Morale (per soldier): suppression, wounds, losing mates or the leader and being outnumbered
+//    wear it down; soldiers hesitate, cower, fall back, rout, and a beaten few surrender. A
+//    leader or friends close by, and quiet, win it back. A squad that mostly breaks retreats.
+//  Fireteams: pinned squads split, one half holds and suppresses while the other swings
+//    through dead ground to the enemy's flank. Contact reports pass to nearby squads, medics
+//    drag casualties out of the line of fire, and squads scatter from artillery and air strikes.
 
 const V = () => new THREE.Vector3();
 const rand = (a, b) => a + Math.random() * (b - a);
@@ -23,11 +30,56 @@ let SIGHT = BASE_SIGHT;
 // weather and darkness shorten how far soldiers can pick out an enemy
 export function setSight(k) { SIGHT = BASE_SIGHT * k; }
 
+const clamp = THREE.MathUtils.clamp;
+const stat = (w, k) => { const a = w.aiStats || (w.aiStats = {}); a[k] = (a[k] || 0) + 1; };
+const BIG_BLAST = 4.5; // shells and bombs, not grenades
+
+// Battle events reach the AI as they happen (the game clears them every frame): deaths shake
+// the dead soldier's squad, blasts make everyone near duck, and a run of heavy blasts in one
+// place is incoming fire that squads clear out of.
+function hear(w, e) {
+  if (e.type === 'death') {
+    const v = e.unit, sq = v?.squad;
+    if (!sq) return;
+    const lead = v === sq.lead || v === sq.members[0];
+    for (const m of sq.members) {
+      if (m === v || !m.alive || !m.brain) continue;
+      const d = Math.hypot(m.pos.x - v.pos.x, m.pos.z - v.pos.z);
+      if (d < 30) m.brain.moraleHit((lead ? 0.2 : 0.1) * (d < 12 ? 1 : 0.55));
+    }
+    if (e.from && e.from.alive && e.from.brain && e.from.team !== v.team) e.from.brain.moraleHit(-0.07);
+  } else if (e.type === 'boom') {
+    for (const u of w.nearUnits(e.pos.x, e.pos.z, e.r * 3.5 + 6)) {
+      if (!u.alive || u.isPlayer || !u.brain) continue;
+      u.brain.blastNear(e.pos, e.r, Math.hypot(u.pos.x - e.pos.x, u.pos.z - e.pos.z));
+    }
+    if (e.r < BIG_BLAST) return;
+    const rec = w.aiBlasts || (w.aiBlasts = []);
+    rec.push({ t: w.time, x: e.pos.x, z: e.pos.z });
+    while (rec.length && w.time - rec[0].t > 9) rec.shift();
+    let n = 0;
+    for (const b of rec) if (Math.hypot(b.x - e.pos.x, b.z - e.pos.z) < 30) n++;
+    if (n < 4) return;
+    for (const sq of w.squads) {
+      const l = sq.alive.length ? sq.leader : null;
+      if (l && Math.hypot(l.pos.x - e.pos.x, l.pos.z - e.pos.z) < 28) sq.scatter(e.pos);
+    }
+  }
+}
+function listen(w) {
+  const ev = w.events;
+  if (!ev || ev.aiHook) return;
+  ev.aiHook = true;
+  const push = ev.push.bind(ev);
+  ev.push = (...a) => { for (const e of a) hear(w, e); return push(...a); };
+}
+
 export class Commander {
   constructor(world, team) {
     this.world = world;
     this.team = team;
     this.t = Math.random() * 2;
+    listen(world);
   }
 
   update(dt) {
@@ -118,6 +170,11 @@ export class Squad {
     this.watch = null;
     this.cautious = false; // enemy close enough that nobody strolls across open ground
     this.foePos = null;
+    this.manv = null; // fireteam flank: { pos, t } while the manoeuvre half swings round
+    this.heard = null; // contact report from a neighbouring squad: { pos, at, t }
+    this.displace = null; // scattering from heavy blasts: { to, until }
+    this.assault = false;
+    listen(world);
   }
 
   get alive() { return this.members.filter((m) => m.alive); }
@@ -178,6 +235,73 @@ export class Squad {
     if (!unit || !pos) return;
     const now = this.world.time;
     if (!this.contact || now - this.contact.t > 1 || seen) this.contact = { pos: pos.clone(), t: now, unit, seen };
+    // call it out on the radio: squads close to the fight hear where, a moment later and not quite exactly
+    if (seen && now - (this.reportT || -9) > 2.5) {
+      this.reportT = now;
+      for (const q of this.world.squads) {
+        if (q === this || q.team !== this.team || q.manual || !q.members.length) continue;
+        const l = q.alive.length ? q.leader : null;
+        if (!l || flat(l.pos, pos) > 60 || flat(l.pos, pos) < 14) continue;
+        if (q.inContact()) continue;
+        q.heard = { pos: pos.clone().add(V().set(rand(-3, 3), 0, rand(-3, 3))), at: now + rand(0.5, 1.2), t: now };
+      }
+    }
+  }
+
+  // heavy blasts landing on us: clear out of the beaten zone
+  scatter(from) {
+    const w = this.world, l = this.leader;
+    if (!l || this.manual || this.retreating || w.time < (this.scatterCool || 0)) return;
+    this.scatterCool = w.time + 40;
+    const dx = l.pos.x - from.x, dz = l.pos.z - from.z, d = Math.hypot(dx, dz) || 1;
+    // away, with a sideways drift so a squad doesn't run along the shell line
+    const sd = Math.random() < 0.5 ? -1 : 1;
+    const to = V().set(l.pos.x + (dx / d) * 24 - (dz / d) * 10 * sd, 0, l.pos.z + (dz / d) * 24 + (dx / d) * 10 * sd);
+    to.x = clamp(to.x, -w.edge, w.edge); to.z = clamp(to.z, -w.edge, w.edge);
+    this.displace = { to, until: w.time + 7 };
+    this.manv = null;
+    stat(w, 'scatter');
+    for (const m of this.alive) m.brain?.moraleHit(0.08);
+  }
+
+  startRetreat(lead) {
+    const w = this.world;
+    this.retreating = true;
+    this.retreatT = 0;
+    this.manv = null;
+    const safe = w.points.filter((p) => p.owner === this.team && !p.contested);
+    const base = w.teams[this.team]?.base;
+    let best = base ? { pos: base } : null, bd = Infinity;
+    for (const p of safe) { const d = p.pos.distanceTo(lead.pos); if (d < bd && d > 12) { bd = d; best = p; } }
+    this.fallback = best ? best.pos.clone() : lead.pos.clone();
+    stat(w, 'squadRetreat');
+  }
+
+  // pinned: the odd-numbered half swings round through ground the enemy can't see while the
+  // rest keep their heads down
+  startManoeuvre(lead, cp) {
+    const w = this.world;
+    const to = V().subVectors(cp, lead.pos).setY(0), cd = to.length();
+    to.normalize();
+    const perp = V().set(-to.z, 0, to.x);
+    const eye = V().set(cp.x, height(cp.x, cp.z) + 1.5, cp.z);
+    w.nav.build(w.props, w.propVer);
+    let best = null, bs = Infinity;
+    for (const side of [-1, 1]) for (const lat of [16, 24]) for (const f of [0.55, 0.8]) {
+      const x = clamp(lead.pos.x + to.x * cd * f + perp.x * side * lat, -w.edge, w.edge);
+      const z = clamp(lead.pos.z + to.z * cd * f + perp.z * side * lat, -w.edge, w.edge);
+      if (w.nav.blocked[w.nav.cellOf(x, z)]) continue;
+      const hidden = !w.los(eye, V().set(x, height(x, z) + 0.9, z));
+      // dead ground first, then a short walk, and the other side to last time
+      const sc = (hidden ? 0 : 28) + lat * 0.5 + (side === this.flankSide ? 0 : 3) + Math.random() * 2;
+      if (sc < bs) { bs = sc; best = { x, z, side }; }
+    }
+    if (!best) return false;
+    this.flankSide = best.side;
+    this.manv = { pos: V().set(best.x, 0, best.z), t: w.time, hidden: bs < 20 };
+    stat(w, 'fireteamFlank');
+    if (this.manv.hidden) stat(w, 'deadGroundFlank');
+    return true;
   }
 
   inContact() { return this.contact && this.world.time - this.contact.t < 6; }
@@ -188,15 +312,16 @@ export class Squad {
     this.objT += dt;
     const lead = this.leader;
     const w = this.world;
-    // shot to pieces in a fight: fall back to friendly ground and wait for help
-    if (!this.retreating && this.started >= 4 && alive.length <= Math.max(1, Math.floor(this.started * 0.34)) && this.inContact()) {
-      this.retreating = true;
-      this.retreatT = 0;
-      const safe = w.points.filter((p) => p.owner === this.team && !p.contested);
-      const base = w.teams[this.team]?.base;
-      let best = base ? { pos: base } : null, bd = Infinity;
-      for (const p of safe) { const d = p.pos.distanceTo(lead.pos); if (d < bd && d > 12) { bd = d; best = p; } }
-      this.fallback = best ? best.pos.clone() : lead.pos.clone();
+    // shot to pieces in a fight, or most of what is left has lost its nerve: fall back to friendly ground
+    if (!this.retreating && this.inContact()) {
+      let broken = 0;
+      for (const m of alive) if (m.brain && m.brain.broken) broken++;
+      const shot = this.started >= 4 && alive.length <= Math.max(1, Math.floor(this.started * 0.34));
+      if (shot || (alive.length >= 3 && broken >= Math.max(3, Math.ceil(alive.length * 0.6)))) this.startRetreat(lead);
+    }
+    if (this.displace) {
+      if (w.time > this.displace.until || this.retreating) this.displace = null;
+      else { this.anchor = this.displace.to; this.facing = Math.atan2(this.displace.to.x - lead.pos.x, this.displace.to.z - lead.pos.z); return; }
     }
     if (this.retreating) {
       this.retreatT += dt;
@@ -204,6 +329,7 @@ export class Squad {
       if (flat(lead.pos, this.fallback) < 6 || this.retreatT > 30) {
         // regroup: merge into a nearby friendly squad or carry on with what's left
         this.retreating = false;
+        for (const m of alive) if (m.brain) m.brain.rally(0.3);
         const other = w.squads.find((q) => q !== this && q.team === this.team && !q.retreating && q.alive.length && q.alive.length + alive.length <= 8 && q.leader.pos.distanceTo(lead.pos) < 25);
         if (other) {
           for (const m of alive) { other.members.push(m); m.squad = other; if (m.brain) m.brain.squad = other; m.slot = other.members.length - 1; }
@@ -245,7 +371,15 @@ export class Squad {
     this.cautious = false; this.foePos = null;
     let fd = 62;
     for (const m of alive) { const b = m.brain; if (b && b.foe && b.foeD < fd) { fd = b.foeD; this.foePos = b.foe; this.cautious = true; } }
+    // a report from a neighbour counts as an enemy about, so squads going into a fight come in wary
+    if (!this.foePos && this.heard && w.time >= this.heard.at && w.time - this.heard.t < 9 && flat(lead.pos, this.heard.pos) < 60) { this.foePos = this.heard.pos; this.cautious = true; }
     if (this.cautious && this.objective && flat(lead.pos, this.objective.pos) < this.objective.r * 1.2) this.cautious = false;
+    // assault: close to enemy ground and not outnumbered, stop creeping and rush the point
+    const obj = this.objective;
+    this.assault = false;
+    if (obj && obj.owner !== this.team && !this.manual && flat(lead.pos, obj.pos) < obj.r * 2.8 && this.size >= 3 && this.localRatio(lead.pos) >= 1.1) {
+      this.assault = true; this.cautious = false;
+    }
     // a squad that has crept along for a while without really gaining ground stops being wary and runs
     this.creepT = this.cautious && !this.inContact() ? (this.creepT || 0) + dt : Math.max(0, (this.creepT || 0) - dt * 2);
     if (this.creepT > 18) { this.cautious = false; if (this.creepT > 30) this.creepT = 0; }
@@ -259,11 +393,27 @@ export class Squad {
       if (contact) {
         // pinned down head-on for too long: swing wide round the enemy's flank
         this.pinT = (this.pinT || 0) + dt;
-        if (fight && this.pinT > 14 && !this.waypoint && w.time > (this.flankCool || 0) && this.contact?.pos) {
+        if (this.manv) {
+          // the flank is on: done when the swinging half arrives (or it takes too long or the fight goes quiet)
+          const mv = this.manv, team = alive.filter((m, i) => i % 2 === 1);
+          let near = 0;
+          for (const m of team) if (flat(m.pos, mv.pos) < 9) near++;
+          const el = w.time - mv.t;
+          if (el > 28 || !team.length || near >= Math.ceil(team.length / 2) || (!fight && el > 8)) {
+            // the base of fire follows up to where the flank ended
+            this.anchor.set(mv.pos.x, 0, mv.pos.z);
+            this.manv = null;
+            this.pinT = 0; this.pinRef = null;
+            this.flankCool = w.time + 30;
+            stat(w, near ? 'flankArrived' : 'flankAborted');
+          }
+        } else if (fight && this.pinT > 14 && !this.waypoint && w.time > (this.flankCool || 0) && this.contact?.pos) {
           const cp = this.contact.pos, to = V().subVectors(cp, lead.pos).setY(0), cd = to.length();
           const progress = this.pinRef == null ? 99 : this.pinRef - cd;
           this.pinRef = cd;
-          if (progress < 5 && cd > 12 && this.size >= 3) {
+          if (progress < 5 && cd > 12 && this.size >= 4 && this.startManoeuvre(lead, cp)) {
+            this.flankCool = w.time + 45;
+          } else if (progress < 5 && cd > 12 && this.size >= 3) {
             to.normalize();
             const side = this.flankSide = -(this.flankSide || (Math.random() < 0.5 ? -1 : 1));
             const wp = lead.pos.clone().addScaledVector(to, Math.min(cd * 0.6, 20)).addScaledVector(V().set(-to.z, 0, to.x), side * 24);
@@ -276,6 +426,7 @@ export class Squad {
           this.pinT = 0;
         }
         this.boundT -= dt;
+        if (this.boundT <= 0 && this.manv) this.boundT = 2; // the base of fire stays put while the flank goes in
         if (this.boundT <= 0) {
           this.boundT = fight ? rand(4, 6.5) : rand(2.5, 4);
           this.bound ^= 1;
@@ -291,6 +442,7 @@ export class Squad {
         }
       } else {
         // free movement: anchor runs ahead of the leader
+        this.manv = null;
         this.bound = 0;
         this.pinT = 0;
         this.pinRef = null;
@@ -386,7 +538,112 @@ export class Brain {
     this.skill = rand(0.75, 1.2);
     this.blocked = false;
     unit.ctrl.turnRate = 2.8 * this.skill;
+    // morale: 1 is cool and steady, 0 is gone. Nerve is how well this soldier takes it.
+    this.nerve = rand(0.85, 1.2);
+    this.morale = rand(0.85, 1);
+    this.broken = false;
+    this.state = 'steady'; // steady | shaken | cower | retreat | rout | surrender
+    this.diveUntil = 0;
+    this.mv = false; // in the fireteam swinging round the flank
+    this.drag = null;
+    listen(world);
   }
+
+  // ---- morale ----
+  moraleHit(k) {
+    this.morale = clamp(this.morale - (k > 0 ? k / this.nerve : k), 0, 1);
+  }
+
+  rally(k) {
+    this.morale = clamp(this.morale + k, 0, 1);
+    if (this.morale * this.nerve > 0.42) this.broken = false;
+  }
+
+  // a blast nearby: duck, and a close one shakes the nerve
+  blastNear(pos, r, d) {
+    const u = this.u, w = this.w;
+    if (d < r * 3.5) {
+      if (!this.cover || d < r * 1.5) this.diveUntil = Math.max(this.diveUntil, w.time + rand(1.2, 2.6));
+      this.moraleHit(0.12 * (1 - d / (r * 3.5)) * (r >= BIG_BLAST ? 1.6 : 1));
+    }
+    // out of nowhere: the squad knows there is trouble in that direction
+    const sq = this.squad;
+    if (!sq.inContact() && !sq.foePos && d < r * 4 + 10) sq.heard = { pos: pos.clone(), at: w.time, t: w.time };
+    void u;
+  }
+
+  // where a beaten soldier runs: back toward friendly ground, away from whatever is shooting
+  fleeGoal() {
+    const u = this.u, w = this.w, sq = this.squad;
+    if (this.flee && w.time - this.flee.t < 4) return this.flee.pos;
+    const th = sq.contact?.pos || sq.foePos || sq.heard?.pos;
+    const base = w.teams[u.team]?.base;
+    let ax = 0, az = 0;
+    if (th) { ax = u.pos.x - th.x; az = u.pos.z - th.z; const l = Math.hypot(ax, az) || 1; ax /= l; az /= l; }
+    let bx = 0, bz = 0;
+    if (base) { bx = base.x - u.pos.x; bz = base.z - u.pos.z; const l = Math.hypot(bx, bz) || 1; bx /= l; bz /= l; }
+    let dx = ax + bx * 0.8, dz = az + bz * 0.8;
+    const l = Math.hypot(dx, dz);
+    if (l < 0.01) { dx = bx || 1; dz = bz; } else { dx /= l; dz /= l; }
+    const pos = V().set(clamp(u.pos.x + dx * 30, -w.edge, w.edge), 0, clamp(u.pos.z + dz * 30, -w.edge, w.edge));
+    w.nav.build(w.props, w.propVer);
+    const c = w.nav.cellOf(pos.x, pos.z);
+    if (w.nav.blocked[c]) { const oc = w.nav.open(c); if (oc >= 0) { const q = w.nav.center(oc, { x: 0, z: 0 }); pos.x = q.x; pos.z = q.z; } }
+    this.flee = { pos, t: w.time };
+    return pos;
+  }
+
+  updateMorale() {
+    const u = this.u, w = this.w, sq = this.squad;
+    const dt = Math.min(1, w.time - (this.mT ?? w.time));
+    this.mT = w.time;
+    if (dt <= 0) return;
+    const sup = u.suppression;
+    let m = this.morale;
+    // wear
+    m -= dt * (sup * 0.1 + (u.hp < 35 ? 0.025 : 0) + (u.shock > 0 ? 0.07 : 0) + (u.bleed > 0.5 ? 0.01 : 0)) / this.nerve;
+    let f = 0, e = 0, near = 0;
+    for (const o of w.nearUnits(u.pos.x, u.pos.z, 30)) {
+      if (!o.alive || o === u) continue;
+      if (o.team === u.team) { f++; if (Math.hypot(o.pos.x - u.pos.x, o.pos.z - u.pos.z) < 10) near++; }
+      else if (hostile(o.team, u.team)) e++;
+    }
+    const fighting = this.seen || sq.inContact();
+    if (fighting && e > f + 1) m -= dt * 0.035 * Math.min(1, (e - f) / 4) / this.nerve;
+    // recovery: quiet, company and a leader nearby
+    if (sup < 0.2) {
+      m += dt * 0.02 * this.nerve;
+      if (near >= 3) m += dt * 0.015;
+      const l = sq.leader;
+      if (l && l !== u && Math.hypot(l.pos.x - u.pos.x, l.pos.z - u.pos.z) < 15) m += dt * (this.broken ? 0.05 : 0.02);
+      if (this.cover) m += dt * 0.01;
+      if (!fighting) m += dt * 0.02;
+    }
+    this.morale = clamp(m, 0, 1);
+    const eff = this.morale * this.nerve;
+    const was = this.state;
+    if (!this.broken && eff < 0.22) { this.broken = true; stat(w, 'broke'); }
+    else if (this.broken && eff > 0.42 && sup < 0.2) { this.broken = false; stat(w, 'rallied'); }
+    let st = 'steady';
+    if (this.broken) st = eff < 0.12 ? 'rout' : 'retreat';
+    else if (eff < 0.38 && sup > 0.25) st = 'cower';
+    else if (eff < 0.5) st = 'shaken';
+    // a lone, beaten soldier with the enemy on top of them gives up
+    if (was === 'surrender') {
+      if (w.time < this.giveUpT || this.foeD < 9) st = 'surrender';
+      else { this.morale = 0.5; this.broken = false; st = 'steady'; stat(w, 'surrenderEnded'); }
+    } else if (st === 'rout' && this.foeD < 14 && near <= 1 && (u.hp < 55 || this.dry) && this.surrenderOk()) {
+      st = 'surrender'; this.giveUpT = w.time + rand(25, 40); stat(w, 'surrender');
+    }
+    if (st !== was) {
+      if (st === 'retreat') stat(w, 'retreatState');
+      if (st === 'rout') stat(w, 'routState');
+      if (st === 'cower') stat(w, 'cowerState');
+    }
+    this.state = st;
+  }
+
+  surrenderOk() { return !this.u.isPlayer && this.foe && this.w.time > (this.noSurrender || 0); }
 
   releaseCover() {
     if (this.cover && this.cover.owner === this.u) this.cover.owner = null;
@@ -410,6 +667,27 @@ export class Brain {
       this.think();
     }
     this.act(dt);
+    this.moraleFx();
+  }
+
+  // what the soldier's nerve does to the controls this frame, whatever the rest of the logic wanted
+  moraleFx() {
+    const u = this.u, c = u.ctrl, w = this.w, st = this.state;
+    if (st === 'surrender') {
+      c.fire = false; c.aimAt = null; c.kneel = true; c.prone = false; c.sprint = false; c.wx = c.wz = 0; c.reload = false;
+    } else if (st === 'rout') {
+      c.fire = false; c.aimAt = null; c.kneel = false; c.prone = false;
+    } else if (st === 'retreat') {
+      c.kneel = false; c.prone = false;
+      c.fire = c.fire && this.dry === false && Math.floor(w.time * 1.5 + u.id) % 4 === 0; // a snap shot over the shoulder
+    } else if (st === 'cower') {
+      // head down: a burst now and then, fired blind
+      c.fire = c.fire && Math.floor(w.time * 0.7 + u.id) % 4 === 0;
+      c.kneel = true; c.prone = !this.cover || c.prone;
+    } else if (st === 'shaken') {
+      c.fire = c.fire && Math.floor(w.time * 2 + u.id) % 3 !== 0;
+    }
+    if (w.time < this.diveUntil && st !== 'surrender') { c.prone = true; c.fire = false; c.sprint = false; }
   }
 
   // ---- slow decisions ----
@@ -444,7 +722,7 @@ export class Brain {
     const c = this.cands;
     c.length = 0;
     for (const e of near) {
-      if (!e.alive || !hostile(e.team, u.team)) continue;
+      if (!e.alive || !hostile(e.team, u.team) || e.brain?.state === 'surrender') continue;
       const d2 = (e.pos.x - u.pos.x) ** 2 + (e.pos.z - u.pos.z) ** 2;
       if (d2 > SIGHT * SIGHT) continue;
       c.push({ e, d2 });
@@ -479,7 +757,7 @@ export class Brain {
     if (best !== this.target) {
       if (best && bestSeen) {
         // new target: a beat to react, aim starts off loose
-        this.react = rand(0.25, 0.6) / this.skill;
+        this.react = rand(0.25, 0.6) / this.skill * (1 + (1 - this.morale) * 0.9);
         const d = best.pos.distanceTo(u.pos);
         this.err.set(rand(-1, 1), rand(-0.5, 0.8), rand(-1, 1)).normalize().multiplyScalar(0.6 + d * 0.035);
         this.seenT = 0;
@@ -503,8 +781,27 @@ export class Brain {
       this.blocked = w.friendlyInLine(u, m, this.target.center(V()));
     } else this.blocked = false;
 
+    // ---- nerve
+    const mw = u.weapons[0];
+    this.dry = !mw.inf && mw.mag <= 0 && mw.reserve <= 0;
+    this.updateMorale();
+    if (this.state === 'surrender') {
+      // hands up: no more fighting, and nobody shoots them
+      this.mission = null; this.drag = null; this.releaseCover(); this.target = null; this.seen = false;
+      this.goal = u.pos.clone(); this.goal.y = 0;
+      return;
+    }
+    if (this.state === 'retreat' || this.state === 'rout') {
+      this.mission = null; this.drag = null; this.releaseCover();
+      this.goal = this.fleeGoal().clone(); this.goal.y = 0;
+      return;
+    }
+    if (this.state === 'shaken' && this.goal && Math.random() < 0.25) return; // hesitates before the next move
+
     // ---- where to stand
-    const slot = sq.retreating ? sq.anchor.clone() : sq.slot(this.slotIndex());
+    const fireteam = !!sq.manv && !sq.retreating && sq.size >= 4;
+    this.mv = fireteam && this.slotIndex() % 2 === 1;
+    const slot = sq.retreating ? sq.anchor.clone() : this.mv ? sq.manv.pos.clone() : sq.slot(this.slotIndex());
     const contact = sq.inContact() || this.seen || (sq.cautious && !sq.holding && !!sq.foePos);
     const threat = this.seen ? this.target.pos : (sq.inContact() ? sq.contact.pos : sq.foePos);
     const suppressed = u.suppression > 0.4;
@@ -514,14 +811,22 @@ export class Brain {
       this.releaseCover();
       const t = this.mission.unit;
       this.goal = Math.hypot(t.pos.x - u.pos.x, t.pos.z - u.pos.z) < 1.5 ? u.pos.clone() : t.pos.clone();
+    } else if (this.mv && flat(u.pos, sq.manv.pos) > 8) {
+      // the flanking half runs for its jump-off point: no stopping to trade shots on the way
+      this.releaseCover();
+      this.goal = sq.manv.pos.clone();
+    } else if (sq.assault && this.state === 'steady' && !lowHp && !suppressed) {
+      // final rush onto the point
+      this.releaseCover();
+      this.goal = slot;
     } else if (contact && threat) {
       // in a fight: take the best cover near the slot that faces the threat
       // bounding overwatch: one half of the squad (by slot parity) keeps its cover and shoots
       // while the other half moves up to the next cover; they swap on the squad's bound
       const bounding = !sq.retreating && sq.size >= 4 && !lowHp;
-      this.overwatch = bounding && this.slotIndex() % 2 !== sq.bound && flat(u.pos, sq.anchor) < 16 && w.time > (this.hurry || 0);
+      this.overwatch = (fireteam && !this.mv) || (bounding && this.slotIndex() % 2 !== sq.bound && flat(u.pos, sq.anchor) < 16 && w.time > (this.hurry || 0));
       const held = this.cover && !this.coverBad(this.cover, threat) && this.cover.prop.alive !== false && (!this.cover.terrain || w.time - this.cover.t < 10);
-      if (!held || (!this.overwatch && this.cover.dist2(slot) > 100 && w.time - (this.coverAt || 0) > 4)) {
+      if (!held || (!this.overwatch && this.state === 'steady' && this.cover.dist2(slot) > 100 && w.time - (this.coverAt || 0) > 4)) {
         this.releaseCover();
         const range = sq.retreating || lowHp || suppressed ? 14 : 12;
         const from = sq.retreating || lowHp || suppressed ? u.pos : slot;
@@ -569,6 +874,7 @@ export class Brain {
       if (dry || low) {
         const cr = w.nearestCrate(u.team, u.pos);
         if (cr) { this.releaseCover(); this.goal = new THREE.Vector3(cr.x, 0, cr.z); this.ammoRun = true; }
+        else if (dry) { this.releaseCover(); this.goal = this.fleeGoal().clone(); this.goal.y = 0; } // nothing to fight with and no crate: fall back
       }
     }
 
@@ -582,6 +888,21 @@ export class Brain {
     }
     // grenades: at a cluster, or at someone dug in behind cover
     this.nadeT -= 0.35;
+    {
+      // an enemy that went to ground behind cover and out of sight: blow them out of it
+      const ct = sq.contact, gi = u.weapons.findIndex((x) => x.id === 'grenade');
+      if (gi >= 0 && !this.seen && this.nadeT <= 0 && ct && w.time - ct.t < 3 && ct.unit && ct.unit.alive && ct.unit.brain?.cover && !u.busy && u.weapons[gi].mag > 0 && !this.nade) {
+        const d = flat(ct.pos, u.pos);
+        if (d > 9 && d < 20) {
+          let friends = 0;
+          for (const f of w.nearUnits(ct.pos.x, ct.pos.z, 4.5)) if (f.alive && f.team === u.team) friends++;
+          const lob = u.eye(V()); lob.y += 1.2;
+          const landing = ct.pos.clone(); landing.y = height(ct.pos.x, ct.pos.z) + 0.4;
+          if (!friends && w.los(lob, landing) && Math.random() < 0.5) { this.nade = { slot: gi, back: u.wi, at: landing }; this.nadeT = rand(10, 18); stat(w, 'clearCoverNade'); }
+          else this.nadeT = rand(2, 4);
+        }
+      }
+    }
     const g = u.weapons.findIndex((x) => x.id === 'grenade');
     if (g >= 0 && this.seen && this.nadeT <= 0 && u.weapons[g].mag > 0 && !u.busy) {
       const d = this.target.pos.distanceTo(u.pos);
@@ -672,8 +993,22 @@ export class Brain {
     const t = m.unit;
     if (!t || (m.kind === 'revive') === t.alive) { this.mission = null; this.reviveT = 0; return false; }
     const d = Math.hypot(t.pos.x - u.pos.x, t.pos.z - u.pos.z);
+    if (this.drag && this.drag.unit === t) {
+      // haul the casualty by the harness to the cover, then patch them up there
+      const dg = this.drag, w = this.w, dd = Math.hypot(dg.to.x - u.pos.x, dg.to.z - u.pos.z);
+      if (dd < 1.3 || w.time > dg.until || d > 4 || !t.down) { this.drag = null; this.dragged = t; this.dragging = false; }
+      else {
+        const dx = dg.to.x - u.pos.x, dz = dg.to.z - u.pos.z;
+        c.wx = dx / dd; c.wz = dz / dd; c.speed = 0.5; c.sprint = false; c.aimAt = null; c.fire = false; c.kneel = false;
+        t.pos.x = u.pos.x - (dx / dd) * 1.1; t.pos.z = u.pos.z - (dz / dd) * 1.1; t.pos.y = Math.max(t.pos.y, height(t.pos.x, t.pos.z));
+        t.vel.set(0, 0, 0);
+        this.dragging = true;
+        return true;
+      }
+    }
     if (d > 2.4) { this.reviveT = 0; return false; }
     c.aimAt = null; c.fire = false; c.kneel = true;
+    if (m.kind === 'heal' && t.down && this.dragged !== t && this.exposed(t)) { this.startDrag(t); return true; }
     if (m.kind === 'heal') {
       // bandage: kneel beside them and wrap the wound, which stops the bleeding
       this.reviveT = (this.reviveT || 0) + dt;
@@ -683,6 +1018,27 @@ export class Brain {
       if (this.reviveT >= 2.5) { this.w.revive(t); this.reviveT = 0; this.mission = null; }
     }
     return true;
+  }
+
+  // is this casualty lying where the known enemy can see them?
+  exposed(t) {
+    const ct = this.squad.contact, w = this.w;
+    if (!ct || w.time - ct.t > 8) return false;
+    return w.los(V().set(ct.pos.x, height(ct.pos.x, ct.pos.z) + 1.4, ct.pos.z), V().set(t.pos.x, t.pos.y + 0.4, t.pos.z));
+  }
+
+  // pick where to drag them: nearby cover facing away from the enemy, or just back out of the line
+  startDrag(t) {
+    const w = this.w, ct = this.squad.contact;
+    const cv = this.findCover(t.pos, ct.pos, 11);
+    let to;
+    if (cv) to = V().set(cv.x, 0, cv.z);
+    else {
+      const dx = t.pos.x - ct.pos.x, dz = t.pos.z - ct.pos.z, l = Math.hypot(dx, dz) || 1;
+      to = V().set(clamp(t.pos.x + (dx / l) * 9, -w.edge, w.edge), 0, clamp(t.pos.z + (dz / l) * 9, -w.edge, w.edge));
+    }
+    this.drag = { unit: t, to, until: w.time + 9 };
+    stat(w, 'drag');
   }
 
   slotIndex() {
@@ -714,7 +1070,10 @@ export class Brain {
         if (facing < 0.5) continue;
         if (tl < 4) continue;
         const travel = Math.hypot(s.x - u.pos.x, s.z - u.pos.z);
-        const sc = d + travel * 0.5 - facing * 3 + (s.high ? -0.5 : 0);
+        const pt = s.prop?.type;
+        // hard cover and fighting positions first; never next to something that explodes
+        const kind = PROPS[pt]?.explodes ? 6 : pt === 'bunker' ? -2.5 : (pt === 'sandbags' || pt === 'slab' || pt === 'ruin' || pt === 'stonewall') ? -1.2 : 0;
+        const sc = d + travel * 0.5 - facing * 3 + (s.high ? -0.5 : 0) + kind;
         cands.push({ s, sc });
       }
     }
@@ -775,7 +1134,7 @@ export class Brain {
     this.turned = (this.turned || 0) + Math.abs(wrap(u.facing - (this.lastFace ?? u.facing))); this.lastFace = u.facing;
     if (this.progT >= 4) {
       const mv = this.progPos ? Math.hypot(u.pos.x - this.progPos.x, u.pos.z - this.progPos.z) : 9;
-      const wants = gd > 3 && !u.busy && !this.mission && !u.down;
+      const wants = gd > 3 && !u.busy && !this.mission && !u.down && !this.freezing();
       const spinning = this.turned > 5 && mv < 2.5;
       if (wants && (mv < 1.3 || spinning)) {
         this.hurry = w.time + 7;
@@ -792,7 +1151,7 @@ export class Brain {
     const moved = this.lastPos.distanceTo(u.pos);
     this.lastPos.copy(u.pos);
     this.stuckT = 0;
-    const wants = gd > 1.5 && wl > 0.5 && !u.busy;
+    const wants = gd > 1.5 && wl > 0.5 && !u.busy && !this.freezing();
     if (wants && moved < 0.4) this.stallT += 0.5; else { this.stallT = 0; return; }
     if (this.stallT >= 1) this.repath = true;
     if (this.stallT >= 2.5 && this.stallT < 3) {
@@ -804,12 +1163,17 @@ export class Brain {
     if (this.stallT >= 5) this.squad.stalled(u);
   }
 
+  // ducking, cowering or hands up: standing still is the point, not a stall
+  freezing() { return this.state === 'cower' || this.state === 'surrender' || this.w.time < this.diveUntil; }
+
   // ---- every frame: move, aim, shoot ----
   act(dt) {
     const u = this.u, c = u.ctrl, w = this.w, sq = this.squad;
     const def = u.weapon.def;
 
-    if (this.mission && this.doMission(dt)) { c.wx = c.wz = 0; c.sprint = false; return; }
+    this.dragging = false;
+    if (this.mission && this.doMission(dt)) { if (!this.dragging) c.wx = c.wz = 0; c.sprint = false; return; }
+    if (this.drag) this.drag = null;
     // movement toward the goal, around props
     let wx = 0, wz = 0;
     let goal = this.goal || u.pos;
@@ -860,6 +1224,12 @@ export class Brain {
     const dash = sq.cautious && !this.seen && !this.overwatch && gd > 3 && !sq.holding;
     c.sprint = evading || dash || open && ((gd > 7 && (!this.seen || sq.retreating || u.suppression > 0.25)) || gd > 16 || (sq.retreating && gd > 3));
     c.speed = 1;
+    // shaken soldiers don't leave cover: a dive on a near miss, a cowering head-down crouch
+    if (this.state === 'cower' || w.time < this.diveUntil) c.sprint = false;
+    if (this.state === 'retreat' || this.state === 'rout') c.sprint = true;
+    // the fireteam running for the flank dashes; so does the final rush
+    if (this.mv && gd > 6 && u.suppression < 0.6) c.sprint = true;
+    if (sq.assault && gd > 3 && u.suppression < 0.4 && this.state === 'steady') c.sprint = true;
 
     this.watchdog(dt, gd, wl);
 
@@ -884,7 +1254,7 @@ export class Brain {
       this.seenT += dt;
       // aim error tightens while tracking; suppression and movement loosen it
       const d = t.pos.distanceTo(u.pos);
-      const floor = (0.12 + d * 0.006) / this.skill;
+      const floor = (0.12 + d * 0.006) / this.skill * (1 + (1 - this.morale) * 0.7);
       const k = Math.exp(-dt * 1.4 * this.skill * (1 - sup * 0.6));
       this.err.multiplyScalar(k);
       if (this.err.length() < floor) this.err.setLength(floor);
@@ -932,11 +1302,16 @@ export class Brain {
       c.fire = false;
       // suppressive fire: gunners keep the enemy's heads down where they were last seen
       const ct = sq.contact;
-      if (def.id === 'mg' && ct && w.time - ct.t < 4 && u.weapon.mag > 8 && !u.busy) {
+      // the base of fire does the same while the flank goes in, and so does any rifle holding overwatch
+      const base = (sq.manv && !this.mv) || (this.overwatch && sq.inContact());
+      const gun = def.id === 'mg' || (base && def.kind === 'hitscan' && u.weapon.mag > def.mag * 0.4 && this.state === 'steady');
+      if (gun && ct && w.time - ct.t < (def.id === 'mg' ? 4 : 6) && u.weapon.mag > 8 && !u.busy && !this.dry) {
         const dd = Math.hypot(ct.pos.x - u.pos.x, ct.pos.z - u.pos.z);
         if (dd > 6 && dd < def.range * 0.9) {
           c.aimAt = ct.pos.clone().setY(Math.max(U.BODY_Y + ct.pos.y, height(ct.pos.x, ct.pos.z) + 0.15));
-          c.fire = Math.floor(w.time * 2.4 + u.id) % 3 !== 2 && w.los(u.muzzle(V()), c.aimAt) && !w.friendlyInLine(u, u.muzzle(V()), c.aimAt);
+          const cad = def.id === 'mg' ? Math.floor(w.time * 2.4 + u.id) % 3 !== 2 : Math.floor(w.time * 1.7 + u.id) % 3 === 0;
+          c.fire = cad && w.los(u.muzzle(V()), c.aimAt) && !w.friendlyInLine(u, u.muzzle(V()), c.aimAt);
+          if (c.fire && def.id !== 'mg') stat(w, 'suppressShots');
           c.kneel = !this.cover?.high;
           return;
         }
