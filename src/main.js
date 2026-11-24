@@ -17,7 +17,7 @@ import { Hud } from './hud.js';
 import { SLOTS, WEAPONS, weaponModel } from './weapons.js';
 import { Sandbox } from './sandbox.js';
 import { TEAMS, hostile } from './factions.js';
-import { ViewModel, VM_FOV } from './viewmodel.js';
+import { ViewModel, VM_FOV, VIEW } from './viewmodel.js';
 import { Cockpit } from './cockpit.js';
 import { MAX_SPEED } from './unit.js';
 import { Wheel, ORDERS, issue as issueOrder, tick as tickOrders } from './orders.js';
@@ -862,6 +862,7 @@ function frame(_t, fixedDt) {
       }
       if (!player.alive) recoilDebt = 0;
     }
+    cam.adsZoom = (VIEW[player.weapon.id] || VIEW.rifle).zoom;
     cam.update(dt, player, snap);
     snap = false;
     {

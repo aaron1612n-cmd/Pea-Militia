@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { U, pose, makePose } from './rig.js';
+import { U, pose, makePose, HOLD } from './rig.js';
 import { WEAPONS, makeWeapon } from './weapons.js';
 import { wrap } from './physics.js';
 import { Ragdoll } from './ragdoll.js';
@@ -17,6 +17,7 @@ export const MAX_SPEED = WALK * SPRINT * 1.75; // fastest class (assault) mid-da
 const CADENCE = 1.9; // steps per second per foot at walking pace
 
 let nextId = 1;
+const WALL_O = new THREE.Vector3(), WALL_D = new THREE.Vector3();
 
 // One soldier: movement, health, weapons and the animation state that ties them together.
 // Driven each frame through `ctrl` by the player's input or an AI brain.
@@ -76,6 +77,8 @@ export class Unit {
     this.twist = 0;
     this.kneelK = 0;
     this.ready = 0.6;
+    this.wallK = 0; // 0..1: how far a wall ahead crowds the gun (it comes up to a high ready)
+    this.wallT = 0;
     this.ads = 0;
     this.ctrl = { wx: 0, wz: 0, jump: false, fire: false, aimAt: null, kneel: false, speed: 1, sprint: false, turnRate: Infinity };
     this.poseOut = makePose();
@@ -344,10 +347,34 @@ export class Unit {
 
     const readyGoal = sprint ? 0.15 : aiming || c.fire ? 1 : 0.55;
     this.ready += (readyGoal - this.ready) * (1 - Math.exp(-10 * dt));
+    this.probeWall(dt, world);
     if (c.fire && !sprint && this.ready > 0.7 && !cantFight) this.fire(world);
     else if (!c.fire) this.wasFiring = false;
     if (c.reload) { this.startReload(); c.reload = false; }
     this.animate(dt);
+  }
+
+  // A wall or prop within the gun's length ahead: the gun comes back and up so it never pokes through.
+  // The player checks every frame, everyone else a few times a second.
+  probeWall(dt, world) {
+    this.wallT -= dt;
+    let goal = this.wallK > 0.01 ? this.wallGoal : 0;
+    if (this.wallT <= 0 && world?.raycast && this.alive) {
+      this.wallT = this.isPlayer ? 0 : 0.14 + (this.id % 5) * 0.02;
+      const len = 0.36 + (this.weapon.def.kind === 'throw' ? 0 : (HOLD[this.weapon.id]?.muzzle.z ?? 0.45));
+      const pitch = THREE.MathUtils.clamp(this.aimPitch, -0.15, 0.35);
+      const cp = Math.cos(pitch);
+      // along the aim, and straight out of the chest (a wall square to the body counts too)
+      goal = 0;
+      for (const yaw of [this.aimYaw, this.facing]) {
+        WALL_D.set(Math.sin(yaw) * cp, Math.sin(pitch), Math.cos(yaw) * cp);
+        const h = world.raycast(this.eye(WALL_O), WALL_D, len, { units: false });
+        if (h.prop) goal = Math.max(goal, THREE.MathUtils.smoothstep(len - h.t, 0, len - 0.35));
+      }
+      this.wallGoal = goal;
+    }
+    this.wallK += (goal - this.wallK) * (1 - Math.exp(-12 * dt));
+    if (this.wallK < 0.005) this.wallK = 0;
   }
 
   move(dt, wx, wz, jump, speedMax, world, faceAim) {
@@ -503,7 +530,7 @@ export class Unit {
     s.t = this.t; s.walk = this.walk; s.cycle = this.cycle; s.stride = this.stride ?? 0.3;
     s.mx = this.mx; s.mz = this.mz; s.air = this.air; s.rise = THREE.MathUtils.clamp(this.vel.y / JUMP_V, -1, 1);
     s.land = land; s.kneel = this.kneelK; s.aimPitch = THREE.MathUtils.clamp(this.aimPitch, -0.9, 0.9);
-    s.twist = this.twist; s.ready = this.ready; s.recoil = this.recoil;
+    s.twist = this.twist; s.ready = Math.min(this.ready, 1 - this.wallK * 0.85); s.recoil = this.recoil;
     s.reload = this.reloadT > 0 ? 1 - this.reloadT / this.reloadDur : -1;
     s.throw = this.throwT > 0 ? 1 - this.throwT / 0.6 : -1;
     s.flinch = this.flinch; s.ads = this.ads; s.fp = this.fp || 0; s.sprint = this.sprinting;
