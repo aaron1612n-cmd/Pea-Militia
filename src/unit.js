@@ -56,6 +56,9 @@ export class Unit {
     this.kills = 0;
     this.god = false;
     this.shots = 0;
+    // battlefield injuries: bleeding (hp/s), crippled legs, down and crawling, stagger, shell shock
+    this.bleed = 0; this.leg = 0; this.arm = 0; this.down = false; this.stagger = 0; this.shock = 0;
+    this.bandageT = 0; this.jamT = 0; this.cry = 0; this.corpseHp = 70;
 
     this.weapons = loadout.map((id) => ({ id, def: WEAPONS[id], mag: WEAPONS[id].mag, reserve: WEAPONS[id].reserve ?? Infinity, heat: 0, locked: 0 }));
     this.wi = 0;
@@ -138,13 +141,39 @@ export class Unit {
     return true;
   }
 
-  hurt(dmg, from, world, kind = 'bullet') {
+  // zone: 'head' | 'torso' | 'arm' | 'leg'. Damage is already scaled by the zone.
+  hurt(dmg, from, world, kind = 'bullet', zone = 'torso') {
     if (!this.alive || this.god) return;
-    this.hp -= dmg * this.mod.dmgIn;
+    this.hp -= dmg * this.mod.dmgIn * (this.isPlayer ? 0.8 : 1);
     this.lastHurt = this.t;
     this.flinch = Math.min(1, this.flinch + dmg / 40);
+    if (this.hp > 0 && kind !== 'fire') {
+      // wounds keep bleeding until somebody bandages them; hits to the limbs cripple
+      this.bleed = Math.min(4, this.bleed + dmg * (kind === 'blast' ? 0.05 : 0.035));
+      if (zone === 'leg' && dmg > 14) this.leg = Math.min(1, this.leg + 0.55 + dmg / 120);
+      if (zone === 'arm' && dmg > 14) this.arm = Math.min(1, this.arm + 0.6);
+      if (dmg > 18) this.stagger = Math.min(1.1, Math.max(this.stagger, dmg / 70));
+      if (!this.isPlayer && !this.down && (this.hp < this.maxHp * 0.3 && (zone === 'leg' || zone === 'torso' || kind === 'blast') || this.leg >= 1)) this.goDown(world);
+      if (world?.audio && this.cry <= 0) { this.cry = 1.2 + Math.random(); world.audio.play(this.hp < this.maxHp * 0.35 ? 'scream' : 'grunt', this.center(), 1); }
+    }
     if (this.onHurt) this.onHurt(dmg, from, kind);
     if (this.hp <= 0) this.die(from, world);
+  }
+
+  // too hurt to stand: drop and crawl for cover or a medic
+  goDown(world) {
+    if (this.down || this.isPlayer) return;
+    this.down = true; this.stagger = 0;
+    this.cry = 0;
+    world?.events.push({ type: 'down', unit: this });
+  }
+
+  // a bandage stops the bleeding and gets a downed soldier back up
+  bandage(amount = 20) {
+    this.bleed = 0;
+    this.hp = Math.min(this.maxHp, this.hp + amount);
+    this.leg *= 0.5; this.arm *= 0.5;
+    if (this.down && this.hp > this.maxHp * 0.3) { this.down = false; }
   }
 
   die(from, world) {
@@ -196,7 +225,19 @@ export class Unit {
     this.flinch = Math.max(0, this.flinch - dt * 3);
     this.suppression = Math.max(0, this.suppression - dt * 0.35);
     this.recoil = Math.max(0, this.recoil - dt * 9);
-    if (this.t - this.lastHurt > 6 && this.hp < this.maxHp) this.hp = Math.min(this.maxHp, this.hp + 6 * dt);
+    // no regeneration: wounds bleed until bandaged, minor ones clot slowly
+    this.stagger = Math.max(0, this.stagger - dt); this.shock = Math.max(0, this.shock - dt); this.cry -= dt;
+    if (this.jamT > 0) this.jamT -= dt;
+    if (this.bleed > 0) {
+      this.hp -= this.bleed * dt;
+      this.bleed = this.bleed > 0.25 ? this.bleed * Math.exp(-dt * 0.012) : Math.max(0, this.bleed - dt * 0.004);
+      if (this.hp <= 0) { this.lastHit = null; this.die(null, world); return; }
+      if (this.down && Math.random() < dt * 0.35 && world?.audio) world.audio.play('moan', this.center(), 1);
+    }
+    if (this.bandageT > 0) {
+      this.bandageT -= dt;
+      if (this.bandageT <= 0) { this.bandage(this.isPlayer ? 18 : 25); world?.audio?.play('reload', null, 0.4); }
+    }
     if (this.burn > 0) {
       this.burn -= dt;
       if (Math.random() < dt * 25) world.fx.burn(this.center());
@@ -248,25 +289,26 @@ export class Unit {
     const def = this.weapon.def;
     // stamina: sprinting drains it; once spent you jog until it's a third back
     if (this.stamina === undefined) { this.stamina = 1; this.winded = false; }
-    let sprint = c.sprint && !c.fire && !this.busy && Math.hypot(c.wx, c.wz) > 0.3 && !this.winded;
+    let sprint = c.sprint && !c.fire && !this.busy && Math.hypot(c.wx, c.wz) > 0.3 && !this.winded && this.leg < 0.5 && !this.down && this.bandageT <= 0;
     if (sprint) { if (!this.mod.noTire) this.stamina -= dt / 7; this.restT = 0.9; if (this.stamina <= 0) { this.stamina = 0; this.winded = true; sprint = false; } }
     else { this.restT = Math.max(0, (this.restT || 0) - dt); if (this.restT <= 0) this.stamina = Math.min(1, this.stamina + dt / 5); }
     if (this.winded && this.stamina > 0.35) this.winded = false;
-    const prone = c.prone && this.grounded ? 1 : 0;
+    const cantFight = this.down || this.stagger > 0.35 || this.bandageT > 0 || this.jamT > 0 || (this.shock > 0 && !this.isPlayer);
+    const prone = (c.prone || this.down || (this.shock > 0 && !this.isPlayer)) && this.grounded ? 1 : 0;
     if (prone) sprint = false;
     this.proneK = (this.proneK || 0) + (prone - (this.proneK || 0)) * (1 - Math.exp(-5 * dt));
     const lean = !sprint && this.proneK < 0.3 ? THREE.MathUtils.clamp(c.lean || 0, -1, 1) : 0;
     this.leanK = (this.leanK || 0) + (lean - (this.leanK || 0)) * (1 - Math.exp(-10 * dt));
     const kneel = c.kneel && !sprint && !prone ? 1 : 0;
     this.kneelK += (kneel - this.kneelK) * (1 - Math.exp(-9 * dt));
-    const speed = WALK * this.speedK * this.mod.speed * (c.speed ?? 1) * (def.move || 1) * (sprint ? SPRINT : 1) * (1 - 0.6 * this.kneelK) * (1 - 0.72 * this.proneK) * (1 - 0.5 * Math.abs(this.leanK)) * (1 - 0.25 * this.suppression);
+    const speed = WALK * this.speedK * this.mod.speed * (c.speed ?? 1) * (def.move || 1) * (sprint ? SPRINT : 1) * (1 - 0.6 * this.kneelK) * (1 - 0.72 * this.proneK) * (1 - 0.5 * Math.abs(this.leanK)) * (1 - 0.25 * this.suppression) * (1 - 0.55 * this.leg) * (this.down ? 0.28 : 1) * (this.stagger > 0 ? 0.45 : 1) * (this.shock > 0 && !this.isPlayer ? 0.2 : 1) * (this.bandageT > 0 ? 0.2 : 1);
     this.sprinting = sprint;
-    this.move(dt, c.wx, c.wz, c.jump && this.proneK < 0.3, speed, world, aiming || c.faceYaw !== undefined);
+    this.move(dt, c.wx, c.wz, c.jump && this.proneK < 0.3 && this.leg < 0.5 && !this.down, speed, world, aiming || c.faceYaw !== undefined);
     c.jump = false;
 
     const readyGoal = sprint ? 0.15 : aiming || c.fire ? 1 : 0.55;
     this.ready += (readyGoal - this.ready) * (1 - Math.exp(-10 * dt));
-    if (c.fire && !sprint && this.ready > 0.7) this.fire(world);
+    if (c.fire && !sprint && this.ready > 0.7 && !cantFight) this.fire(world);
     else if (!c.fire) this.wasFiring = false;
     if (c.reload) { this.startReload(); c.reload = false; }
     this.animate(dt);
@@ -337,6 +379,8 @@ export class Unit {
     if (def.heat) { if (w.locked > 0) return false; }
     else if (w.mag <= 0) { this.startReload(); return false; }
     this.wasFiring = true;
+    // dirty, hot weapons jam now and then: a second or two to clear it
+    if (def.kind === 'hitscan' && Math.random() < 0.0028 * (1 + (this.suppression > 0.5 ? 1 : 0))) { this.jamT = 1.4 + Math.random(); this.onJam?.(); world?.audio?.play('jam', this.center(), 0.8); return false; }
     this.shots++;
     this.cool = def.interval;
     this.lastShot = this.t;

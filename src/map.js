@@ -43,8 +43,8 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
   P('crate', C.x + 1.6, C.z + 1.1, 0.3); P('crate', C.x - 1.9, C.z - 0.9, 1.1); P('drum', C.x + 2.2, C.z - 2.1);
   P('ruinLow', C.x - 3.3, C.z + 3.6, 0.6);
   let houses = 0;
-  for (let k = 0; k < 50 && houses < 9; k++) {
-    const a = fixed() * Math.PI * 2, r = 13 + fixed() * 16;
+  for (let k = 0; k < 120 && houses < 15; k++) {
+    const a = fixed() * Math.PI * 2, r = 12 + fixed() * 22;
     const x = C.x + Math.cos(a) * r, z = C.z + Math.sin(a) * r;
     if (nearRoad(x, z) < 4.5 || !clear(x, z, 4.5) || !level(x, z, 3.5, 0.9)) continue;
     house(x, z, Math.round((a + Math.PI / 2) / (Math.PI / 2)) * (Math.PI / 2) + (fixed() - 0.5) * 0.2);
@@ -107,7 +107,7 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
     && POINTS.every((p) => Math.hypot(x - p.x, z - p.z) > POINT_R + 3) && layout.bases.every((b) => Math.hypot(x - b.x, z - b.z) > 16);
   const tree = (x, z, kind, s) => { trees.push({ x, z, kind, s, yaw: fixed() * Math.PI * 2 }); };
   let woods = 0;
-  for (let k = 0; k < 240 && woods < 18; k++) {
+  for (let k = 0; k < 400 && woods < 30; k++) {
     const x = (fixed() * 2 - 1) * (EDGE - 6), z = (fixed() * 2 - 1) * (EDGE - 6);
     if (nearRoad(x, z) < 7 || POINTS.some((p) => Math.hypot(x - p.x, z - p.z) < 20) || layout.bases.some((b) => Math.hypot(x - b.x, z - b.z) < 26)) continue;
     if (trees.some((t) => Math.hypot(t.x - x, t.z - z) < 18)) continue;
@@ -140,7 +140,7 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
       if (treeOK(x, z, 2.5)) tree(x + (fixed() - 0.5) * 0.4, z + (fixed() - 0.5) * 0.4, 'leaf', 0.55 + fixed() * 0.15);
     }
   }
-  for (let i = 0, tries = 0; i < 60 && tries < 600; tries++) {
+  for (let i = 0, tries = 0; i < 120 && tries < 1200; tries++) {
     const x = (fixed() * 2 - 1) * EDGE, z = (fixed() * 2 - 1) * EDGE;
     if (treeOK(x, z, 6)) { tree(x, z, fixed() < 0.5 ? 'fir' : 'leaf', 0.7 + fixed() * 0.4); i++; }
   }
@@ -187,10 +187,10 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
 
   // ---- loose cover, shuffled each battle
   let placed = 0, tries = 0;
-  while (placed < 80 && tries++ < 1600) {
+  while (placed < 190 && tries++ < 4000) {
     const x = (loose() * 2 - 1) * (EDGE - 4), z = (loose() * 2 - 1) * (EDGE - 4);
-    if (!clear(x, z, 4) || !level(x, z, 2, 0.4) || nearRoad(x, z) < 0.5) continue;
-    keep.push([x, z, 4]);
+    if (!clear(x, z, 2.6) || !level(x, z, 2, 0.4) || nearRoad(x, z) < 0.5) continue;
+    keep.push([x, z, 2.6]);
     placed++;
     const kind = loose();
     const yaw = loose() * Math.PI;
@@ -201,6 +201,38 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
     else if (kind < 0.8) { P('trap', x, z, yaw); P('trap', x + 2.6, z + 1.2, yaw + 1); }
     else if (kind < 0.9) { P('wall', x, z, yaw); P('sandbags', x + Math.sin(yaw) * 1.5, z + Math.cos(yaw) * 1.5, yaw); }
     else P('bunker', x, z, yaw);
+  }
+
+  // ---- ruined hamlets scattered over the open ground, so no stretch of the field is bare
+  for (let k = 0, hamlets = 0; k < 200 && hamlets < 7; k++) {
+    const hx = (fixed() * 2 - 1) * (EDGE - 14), hz = (fixed() * 2 - 1) * (EDGE - 14);
+    if (nearRoad(hx, hz) < 6 || !clear(hx, hz, 12) || !level(hx, hz, 8, 1.4)) continue;
+    hamlets++;
+    keep.push([hx, hz, 10]);
+    const n = 2 + Math.floor(fixed() * 3);
+    for (let i = 0, t = 0; i < n && t < 30; t++) {
+      const a = fixed() * Math.PI * 2, r = 4 + fixed() * 8, x = hx + Math.cos(a) * r, z = hz + Math.sin(a) * r;
+      if (!clear(x, z, 4.5) || !level(x, z, 3.5, 0.9) || nearRoad(x, z) < 4 || !inside(x, z, 4)) continue;
+      house(x, z, Math.round(a / (Math.PI / 2)) * (Math.PI / 2) + (fixed() - 0.5) * 0.3);
+      i++;
+    }
+  }
+
+  // ---- trench lines: broken runs of sandbags and wrecked walls to fight from and move between
+  for (let k = 0, lines = 0; k < 300 && lines < 14; k++) {
+    let x = (fixed() * 2 - 1) * (EDGE - 10), z = (fixed() * 2 - 1) * (EDGE - 10);
+    if (nearRoad(x, z) < 3 || !clear(x, z, 2.5) || POINTS.some((p) => Math.hypot(x - p.x, z - p.z) < POINT_R)) continue;
+    lines++;
+    const yaw = fixed() * Math.PI, dx = Math.cos(yaw) * 2.5, dz = -Math.sin(yaw) * 2.5;
+    const n = 5 + Math.floor(fixed() * 6);
+    for (let i = 0; i < n; i++) {
+      if (fixed() > 0.2 && inside(x, z, 2) && nearRoad(x, z) > 1.5 && clear(x, z, 1.2) && level(x, z, 1.2, 0.4)) {
+        P(fixed() < 0.75 ? 'sandbags' : 'ruinLow', x, z, yaw);
+        keep.push([x, z, 1.2]);
+        if (fixed() < 0.25) P('crate', x - Math.sin(yaw) * 1.6, z - Math.cos(yaw) * 1.6, yaw + 0.3); // supplies behind the line
+      }
+      x += dx; z += dz;
+    }
   }
 
   // A ruined house, open on two sides so soldiers can walk through: a tall back wall, a side

@@ -12,13 +12,14 @@ const PX = 2.2; // compass pixels per degree
 
 // Heads-up display: points and tickets, radar, health, weapon, crosshair, hit markers,
 // a short feed of the player's kills and point captures.
+const EYE = new THREE.Vector3(), TGT = new THREE.Vector3();
 export class Hud {
   constructor() {
     this.el = $('hud');
     this.hp = $('hpbar'); this.hpNum = $('hpnum'); this.stam = $('stambar');
     this.wname = $('wname'); this.ammo = $('ammo');
     this.heat = $('heat'); this.heatBar = this.heat.parentElement;
-    this.cross = $('cross'); this.hitEl = $('hitmark'); this.hurtEl = $('hurt');
+    this.cross = $('cross'); this.hitEl = $('hitmark'); this.hurtEl = $('hurt'); this.bleedEl = $('bleed'); this.bandBtn = $('bandBtn');
     this.pointsEl = $('points'); this.ticketsEl = $('tickets');
     this.feed = $('feed'); this.banner = $('banner');
     this.cap = $('capture'); this.capText = $('capText'); this.capFill = $('capFill');
@@ -80,6 +81,8 @@ export class Hud {
       const d = Math.hypot(e.pos.x - player.pos.x, e.pos.z - player.pos.z);
       V.set(e.pos.x, e.pos.y + (e.crew ? 4 : 2.1), e.pos.z).project(camera);
       if (V.z > 1 || Math.abs(V.x) > 1 || Math.abs(V.y) > 1) continue;
+      // fog of war: a tag only shows while you can actually see the target, never through cover
+      if (!battle.los(player.eye(EYE), e.center(TGT))) continue;
       const x = (V.x * 0.5 + 0.5) * W, y = (-V.y * 0.5 + 0.5) * H, s = 7 * dpr;
       g.globalAlpha = Math.min(1, (e.markedUntil - battle.time) / 2);
       g.fillStyle = '#ff7a1a'; g.strokeStyle = '#101316'; g.lineWidth = 1.5 * dpr;
@@ -140,6 +143,12 @@ export class Hud {
     // suppression: the edges close in under fire
     const sp = Math.round((player.alive ? player.suppression : 0) * 20) / 20;
     if (sp !== this.last.sp) { this.last.sp = sp; this.supp.style.opacity = Math.min(1, sp * 1.3); }
+    // bleeding: nothing heals on its own, so say so and offer the bandage
+    {
+      const b = player.alive && player.bleed > 0.05, txt = !b ? '' : player.bandageT > 0 ? 'Bandaging…' : player.bleed > 1.2 ? 'BLEEDING BADLY · J to bandage' : 'Bleeding · J to bandage';
+      if (txt !== this.last.bl) { this.last.bl = txt; this.bleedEl.hidden = !txt; this.bleedEl.textContent = txt; this.bleedEl.classList.toggle('bad', player.bleed > 1.2); }
+      if (this.bandBtn && this.bandBtn.hidden === !!b) this.bandBtn.hidden = !b;
+    }
     // health
     const st = Math.round((player.stamina ?? 1) * 50) / 50;
     if (st !== this.last.st || !!player.winded !== this.last.wd) {

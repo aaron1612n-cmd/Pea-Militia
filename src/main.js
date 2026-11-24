@@ -76,7 +76,7 @@ const crowd = new Crowd(scene, 700);
 const hud = new Hud();
 const input = new Input(canvas, {
   stick: $('stick'), knob: $('knob'), jumpBtn: $('jump'), fireBtn: $('fire'),
-  buttons: { spot: $('spotBtn'), next: $('swap'), view: $('viewBtn'), use: $('useBtn'), wheelDown: $('cmdBtn'), skill: $('skillBtn') },
+  buttons: { spot: $('spotBtn'), next: $('swap'), view: $('viewBtn'), use: $('useBtn'), wheelDown: $('cmdBtn'), skill: $('skillBtn'), bandage: $('bandBtn') },
 });
 
 const wheel = new Wheel($('wheel'), (id) => giveOrder(id));
@@ -268,6 +268,7 @@ function startBattle(s) {
   }
   battle.onHitMarker = (kill) => { hud.hit(kill); if (kill) audio.play('ping', null, 0.4); };
   battle.onPlayerHurt = (dmg) => { hud.hurt(dmg); bloodScreen(Math.ceil(dmg / 15), 0.5); cam.shake = Math.min(1, cam.shake + dmg / 60); };
+  battle.onShock = (sec) => { audio.deafen(sec + 1.5); if (!calm) cam.shake = 1; bloodScreen(2, 0.6); hud.say('Shell shock', 1.6); };
   battle.onKill = (u, from) => {
     if (from === player && u !== player && player.pos.distanceTo(u.pos) < 4) bloodScreen(3, 1.2);
     if (from === player && u !== player) hud.log(`${KINDS[u.kind]?.name || 'Soldier'} · ${TEAMS[u.team].short}`, true);
@@ -488,6 +489,10 @@ function handle(actions) {
     if (a.type === 'slot') player.setWeapon(a.n);
     else if (a.type === 'next') player.cycleWeapon(1);
     else if (a.type === 'prev') player.cycleWeapon(-1);
+    else if (a.type === 'bandage') {
+      if (player.bleed > 0.05 && player.bandageT <= 0 && !player.vehicle) { player.bandageT = 3; hud.say('Bandaging…', 2.6); audio.play('reload', null, 0.5); }
+      else if (player.bleed <= 0.05) hud.say('Not bleeding', 1);
+    }
     else if (a.type === 'skill') { if (useSkill(player, battle)) audio.play('reload', null, 0.5); }
     else if (a.type === 'reload') { if (player.startReload()) audio.play('reload', null, 0.6); }
     else if (a.type === 'grenade') {
@@ -638,8 +643,28 @@ function aimAssist(dt, inp) {
   cam.yaw += dy * k; cam.pitch += dp * k;
 }
 
+const calm = matchMedia('(prefers-reduced-motion: reduce)').matches;
+let swayT = 0, swayPrev = 0, lastBlur = 0;
+// the world after a bad moment: blur, shake and breathing sway while you are shot at or shocked
+function battleFeel(dt) {
+  const p = player, sup = p.alive ? p.suppression : 0, sh = p.alive ? Math.min(1, p.shock / 3) : 0;
+  audio.tick(dt, sup);
+  const blur = Math.round(Math.max(0, sup - 0.45) * 4.5 + sh * 3) / 2;
+  if (blur !== lastBlur) { lastBlur = blur; canvas.style.filter = blur > 0 && !calm ? `blur(${blur}px)` : ''; }
+  if (calm || !p.alive || state === 'menu') return;
+  if (sup > 0.5) cam.shake = Math.max(cam.shake, (sup - 0.4) * 0.35);
+  // the rifle is never dead still: breathing, worse when winded, hurt or shocked, steadier kneeling or aimed
+  swayT += dt;
+  const wob = (0.00045 + (p.winded ? 0.0009 : 0) + p.arm * 0.0007 + (p.bleed > 0.3 ? 0.0004 : 0) + sh * 0.0016 + sup * 0.0004) * (1 - 0.5 * cam.ads) * (1 - 0.4 * p.kneelK) * (1 - 0.5 * (p.proneK || 0));
+  const now = Math.sin(swayT * 1.7) + Math.sin(swayT * 2.9) * 0.5;
+  cam.pitch += (now - swayPrev) * wob * 3;
+  cam.yaw += (Math.cos(swayT * 1.3) - Math.cos((swayT - dt) * 1.3)) * wob * 3;
+  swayPrev = now;
+}
+
 function updatePlayer(dt, inp) {
   const c = player.ctrl;
+  player.onJam = player.onJam || (() => hud.say('Weapon jammed', 1.6));
   if (!player.alive) {
     player.respawnT += dt;
     player.update(dt, battle);
@@ -807,6 +832,7 @@ function frame(_t, fixedDt) {
     callinVisuals();
   }
   if (state === 'menu') for (const u of battle.units) u.animate(dt);
+  if (state !== 'menu' && player) battleFeel(dt);
   audio.listener.x = camera.position.x; audio.listener.z = camera.position.z; audio.listener.yaw = state === 'menu' ? 0 : cam.yaw;
   // shadows follow what the camera is looking at
   const look = state === 'menu' ? new THREE.Vector3() : cam.mode === 'over' ? new THREE.Vector3(cam.over.x, 0, cam.over.z) : cam.mode === 'free' ? cam.fr.clone().add(cam.forward().setY(0).normalize().multiplyScalar(22)).setY(0) : player.pos.clone().add(cam.forward().setY(0).multiplyScalar(12));

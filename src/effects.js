@@ -150,6 +150,17 @@ function scorchTexture() {
     }
   });
 }
+function craterTexture() {
+  return canvasTex(256, (g, S) => {
+    const h = S / 2;
+    // scorched bowl: dark middle, churned lighter rim of thrown earth, then a soft fade
+    let gr = g.createRadialGradient(h, h, 0, h, h, h);
+    gr.addColorStop(0, 'rgba(14,12,10,0.95)'); gr.addColorStop(0.42, 'rgba(26,22,18,0.9)'); gr.addColorStop(0.58, 'rgba(92,78,58,0.85)');
+    gr.addColorStop(0.72, 'rgba(70,58,42,0.45)'); gr.addColorStop(1, 'rgba(60,50,38,0)');
+    g.fillStyle = gr; g.fillRect(0, 0, S, S);
+    for (let i = 0; i < 60; i++) { const a = Math.random() * 6.283, r = h * (0.5 + Math.random() * 0.45); g.fillStyle = `rgba(${40 + Math.random() * 40},${32 + Math.random() * 30},22,0.55)`; g.beginPath(); g.arc(h + Math.cos(a) * r, h + Math.sin(a) * r, 2 + Math.random() * 6, 0, 6.283); g.fill(); }
+  });
+}
 function mergeTwo(a, b) {
   const g = new THREE.BufferGeometry();
   const pa = a.attributes.position.array, pb = b.attributes.position.array;
@@ -248,6 +259,7 @@ export class Effects {
     // marks left on the field: bullet scuffs and blast scorches (ring buffers of instances)
     this.holes = decalMesh(scene, 1800, holeTexture(), 0.9);
     this.scorch = decalMesh(scene, 60, scorchTexture(), 0.92);
+    this.craters = decalMesh(scene, 48, craterTexture(), 0.97);
     this.gore = new Gore(scene, this);
     // things that keep smoking for a while (blast sites, burning bodies)
     this.emitters = [];
@@ -418,6 +430,8 @@ export class Effects {
     ring.m.position.set(pos.x, Math.max(gy, pos.y - 0.4) + 0.05, pos.z);
     ring.t = 0; ring.r = r; ring.m.visible = true;
     if (pos.y < gy + 1.2) stamp(this.scorch, new THREE.Vector3(pos.x, Math.max(gy, pos.y - 0.4), pos.z), normalAt(pos.x, pos.z), r * (1.1 + Math.random() * 0.3));
+    // shells and grenades dig a crater that stays, with a fire that smoulders in it
+    if (r >= 2.4 && pos.y < gy + 1.6) { stamp(this.craters, new THREE.Vector3(pos.x, gy, pos.z), normalAt(pos.x, pos.z), r * (1.5 + Math.random() * 0.4)); this.smoulder(() => new THREE.Vector3(pos.x, gy + 0.2, pos.z), 9 + r * 2); }
     // a smoke column that keeps rising for a few seconds
     const at = pos.clone();
     this.emitters.push({ t: 0, life: 4 + k * 2, rate: 7, acc: 0, fn: (e, fx) => {

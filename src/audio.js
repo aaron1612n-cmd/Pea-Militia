@@ -21,7 +21,13 @@ export class Audio {
     this.master.gain.value = 0.55;
     const comp = c.createDynamicsCompressor();
     comp.threshold.value = -16;
-    this.master.connect(comp).connect(c.destination);
+    // hearing: a low-pass over everything, closed down by blasts and near misses, with a ring on top
+    this.muff = c.createBiquadFilter(); this.muff.type = 'lowpass'; this.muff.frequency.value = 20000; this.muff.Q.value = 0.5;
+    this.master.connect(this.muff).connect(comp).connect(c.destination);
+    this.ring = c.createOscillator(); this.ring.type = 'sine'; this.ring.frequency.value = 3900;
+    this.ringG = c.createGain(); this.ringG.gain.value = 0;
+    this.ring.connect(this.ringG).connect(c.destination); this.ring.start();
+    this.deaf = 0;
     const len = c.sampleRate * 1.5;
     this.noise = c.createBuffer(1, len, c.sampleRate);
     const d = this.noise.getChannelData(0);
@@ -79,6 +85,17 @@ export class Audio {
     setTimeout(rumble, 4000);
   }
 
+  // call every frame: deafness from a close blast fades slowly; near misses muffle a little
+  tick(dt, suppression = 0) {
+    if (!this.ctx) return;
+    this.deaf = Math.max(0, this.deaf - dt);
+    const k = Math.min(1, this.deaf / 3) * 0.9 + Math.min(0.35, suppression * 0.4);
+    const f = 20000 * Math.pow(0.03, Math.min(1, k)); // 20 kHz down to ~600 Hz
+    this.muff.frequency.setTargetAtTime(Math.max(500, f), this.ctx.currentTime, 0.12);
+    this.ringG.gain.setTargetAtTime(this.muted ? 0 : Math.min(1, this.deaf / 2.5) * 0.035, this.ctx.currentTime, 0.2);
+  }
+  deafen(sec) { this.deaf = Math.max(this.deaf, sec); }
+
   setMuted(m) { this.muted = m; if (this.master) this.master.gain.value = m ? 0 : 0.55; }
 
   // returns an output node for a sound at world position p, or null if too far / throttled
@@ -95,6 +112,7 @@ export class Audio {
       this.recent.set(key, now);
     }
     let g = vol, pan = 0;
+    this.lag = 0;
     if (p) {
       const dx = p.x - this.listener.x, dz = p.z - this.listener.z;
       const d = Math.hypot(dx, dz);
@@ -123,6 +141,8 @@ export class Audio {
       head.connect(send).connect(this.verb);
     }
     this.near = dist < 10;
+    // sound takes its time: about 1 s per 340 m
+    this.lag = dist > 16 ? Math.min(1.4, dist / 340) : 0;
     return gain;
   }
 
@@ -133,7 +153,7 @@ export class Audio {
     s.playbackRate.value = 0.8 + Math.random() * 0.4;
     const flt = c.createBiquadFilter();
     flt.type = type; flt.frequency.value = f; flt.Q.value = q;
-    const now = c.currentTime + t;
+    const now = c.currentTime + t + (this.lag || 0);
     if (f2) flt.frequency.exponentialRampToValueAtTime(f2, now + dur);
     const e = c.createGain();
     e.gain.setValueAtTime(0.0001, now);
@@ -147,7 +167,7 @@ export class Audio {
     const c = this.ctx;
     const o = c.createOscillator();
     o.type = type;
-    const now = c.currentTime + t;
+    const now = c.currentTime + t + (this.lag || 0);
     o.frequency.setValueAtTime(f, now);
     if (f2) o.frequency.exponentialRampToValueAtTime(f2, now + dur);
     const e = c.createGain();
@@ -220,6 +240,24 @@ export class Audio {
       case 'reload':
         this.tone(d, { dur: 0.05, type: 'square', f: 900, peak: 0.08 });
         this.tone(d, { t: 0.12, dur: 0.05, type: 'square', f: 600, peak: 0.08 });
+        break;
+      case 'scream':
+        // a wounded man: a ragged falling cry with a wobble
+        this.tone(d, { dur: 0.9, type: 'sawtooth', f: 520 + Math.random() * 160, f2: 240, peak: 0.22, attack: 0.04 });
+        this.tone(d, { t: 0.02, dur: 0.8, type: 'square', f: 1040, f2: 480, peak: 0.05, attack: 0.05 });
+        this.noiseBurst(d, { dur: 0.9, type: 'bandpass', f: 1200, f2: 700, q: 2, peak: 0.12, attack: 0.05 });
+        break;
+      case 'moan':
+        this.tone(d, { dur: 1.4, type: 'sawtooth', f: 190 + Math.random() * 40, f2: 120, peak: 0.13, attack: 0.25 });
+        this.noiseBurst(d, { dur: 1.2, type: 'bandpass', f: 600, q: 2, peak: 0.06, attack: 0.3 });
+        break;
+      case 'grunt':
+        this.tone(d, { dur: 0.22, type: 'sawtooth', f: 210, f2: 110, peak: 0.2 });
+        this.noiseBurst(d, { dur: 0.2, type: 'bandpass', f: 700, q: 1.5, peak: 0.15 });
+        break;
+      case 'jam':
+        this.tone(d, { dur: 0.04, type: 'square', f: 1400, peak: 0.1 });
+        this.tone(d, { t: 0.18, dur: 0.05, type: 'square', f: 700, peak: 0.07 });
         break;
       case 'hit':
         this.noiseBurst(d, { dur: 0.08, type: 'bandpass', f: 500, q: 2, peak: 0.35 });
