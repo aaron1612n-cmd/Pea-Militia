@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 
 // The battlefield is 300 m square; the ground itself lives in terrain.js.
 export const MAP = { size: 300 };
@@ -56,6 +57,24 @@ void main(){ float h=vP.y; vec3 c = h>0.0 ? mix(mid, top, smoothstep(0.0,0.6,h))
   return sky;
 }
 
+
+// Merge static meshes that share a material into one (each is baked at its place in the group), so a marker
+// or a crate is a couple of draw calls rather than one per bolt and strap.
+function mergeShared(group, meshes, shadow = true) {
+  const by = new Map();
+  for (const m of meshes) {
+    m.updateMatrix();
+    const g = m.geometry.clone().applyMatrix4(m.matrix);
+    if (!by.has(m.material)) by.set(m.material, []);
+    by.get(m.material).push(g);
+  }
+  for (const [material, list] of by) {
+    const out = new THREE.Mesh(list.length > 1 ? mergeGeometries(list, false) : list[0], material);
+    out.castShadow = shadow; out.receiveShadow = true;
+    group.add(out);
+  }
+}
+
 // Control point marker: a flat ring on the ground and a slim mast that takes the holder's colour.
 export function pointMarker(r) {
   const g = new THREE.Group();
@@ -77,10 +96,6 @@ export function pointMarker(r) {
   finial.position.y = 5.28;
   // a short post every few metres around the ring so the boundary reads from far off
   const stakeGeo = new THREE.CylinderGeometry(0.05, 0.07, 0.8, 5);
-  const stakes = new THREE.InstancedMesh(stakeGeo, steel, 16);
-  const mm = new THREE.Matrix4();
-  for (let i = 0; i < 16; i++) { const a = (i / 16) * Math.PI * 2; mm.makeTranslation(Math.cos(a) * (r + 0.1), 0.35, Math.sin(a) * (r + 0.1)); stakes.setMatrixAt(i, mm); }
-  stakes.frustumCulled = false;
   // a cloth banner on the mast; its free edge ripples in the wind
   const flagGeo = new THREE.PlaneGeometry(1.3, 0.8, 10, 3);
   flagGeo.translate(0.65, 0, 0);
@@ -98,7 +113,12 @@ export function pointMarker(r) {
     }
     p.needsUpdate = true;
   };
-  g.add(ring, mast, plinth, step, finial, stakes, flag);
+  // the mast and its ring of stakes are one steel mesh, the plinth and step one concrete mesh
+  const stakeMeshes = [];
+  for (let i = 0; i < 16; i++) { const st = new THREE.Mesh(stakeGeo, steel); const a = (i / 16) * Math.PI * 2; st.position.set(Math.cos(a) * (r + 0.1), 0.35, Math.sin(a) * (r + 0.1)); stakeMeshes.push(st); }
+  mergeShared(g, [mast, ...stakeMeshes]);
+  mergeShared(g, [plinth, step]);
+  g.add(ring, finial, flag);
   g.userData = { ring, flag, wave };
   return g;
 }
@@ -117,9 +137,10 @@ export function ammoCrate() {
     };
   }
   const g = new THREE.Group();
-  const b = new THREE.Mesh(crateGeo.body, crateGeo.wood); b.position.y = 0.25; b.castShadow = b.receiveShadow = true; g.add(b);
-  for (const x of [-0.3, 0.3]) { const st = new THREE.Mesh(crateGeo.strap, crateGeo.iron); st.position.set(x, 0.25, 0); g.add(st); }
-  const l = new THREE.Mesh(crateGeo.lid, crateGeo.mark); l.position.y = 0.506; g.add(l);
-  const top = new THREE.Mesh(crateGeo.body, crateGeo.wood); top.scale.set(0.7, 0.55, 0.7); top.position.set(0.05, 0.64, 0.02); top.rotation.y = 0.3; top.castShadow = true; g.add(top);
+  const b = new THREE.Mesh(crateGeo.body, crateGeo.wood); b.position.y = 0.25;
+  const sts = [-0.3, 0.3].map((x) => { const st = new THREE.Mesh(crateGeo.strap, crateGeo.iron); st.position.set(x, 0.25, 0); return st; });
+  const l = new THREE.Mesh(crateGeo.lid, crateGeo.mark); l.position.y = 0.506;
+  const top = new THREE.Mesh(crateGeo.body, crateGeo.wood); top.scale.set(0.7, 0.55, 0.7); top.position.set(0.05, 0.64, 0.02); top.rotation.y = 0.3;
+  mergeShared(g, [b, top]); mergeShared(g, sts, false); mergeShared(g, [l], false); // wood, iron and the stencilled lid: three draws
   return g;
 }
