@@ -35,7 +35,7 @@ export function paintMat(color, roughness = 0.7, metalness = 0.25) {
 // Strip to position+normal and drop indices so any geometries can be merged.
 function clean(g) {
   let out = g.index ? g.toNonIndexed() : g.clone();
-  for (const k of Object.keys(out.attributes)) if (k !== 'position' && k !== 'normal') out.deleteAttribute(k);
+  for (const k of Object.keys(out.attributes)) if (k !== 'position' && k !== 'normal' && k !== 'color') out.deleteAttribute(k);
   if (!out.attributes.normal) out.computeVertexNormals();
   return out;
 }
@@ -64,7 +64,9 @@ export class Kit {
     g.applyMatrix4(m);
     if (mat.vertexColors) {
       const n = g.attributes.position.count, c = new THREE.Color(color ?? '#ffffff'), a = new Float32Array(n * 3);
-      for (let i = 0; i < n; i++) { a[i * 3] = c.r; a[i * 3 + 1] = c.g; a[i * 3 + 2] = c.b; }
+      // a piece that brings its own per-vertex colour (a leaf clump shaded dark underneath) keeps it, tinted by `color`
+      const own = g.attributes.color;
+      for (let i = 0; i < n; i++) { if (own) { a[i * 3] = own.getX(i) * c.r; a[i * 3 + 1] = own.getY(i) * c.g; a[i * 3 + 2] = own.getZ(i) * c.b; } else { a[i * 3] = c.r; a[i * 3 + 1] = c.g; a[i * 3 + 2] = c.b; } }
       g.setAttribute('color', new THREE.BufferAttribute(a, 3));
       if (p) { const b = new Float32Array(n * 3); for (let i = 0; i < n; i++) b.set(p, i * 3); g.setAttribute('aP', new THREE.BufferAttribute(b, 3)); }
     }

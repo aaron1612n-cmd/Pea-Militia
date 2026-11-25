@@ -528,4 +528,6 @@ export function buildProp(type, v = 0, lite = false) {
   try { const k = new Kit(); BUILD[type](k, v); return k; } finally { far = was; }
 }
 export const PROP_TYPES = Object.keys(BUILD);
-export { turnedY, roundBlock };
+export { turnedY, roundBlock, rngOf, tone, put, plain, grounded, rebar, fallen, boulder, U as UBER };
+export const setFar = (v) => { far = v; };
+export const isFar = () => far;

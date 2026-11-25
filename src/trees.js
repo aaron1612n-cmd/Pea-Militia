@@ -1,100 +1,63 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { height, noise } from './terrain.js';
+import { height } from './terrain.js';
 import { InstCull } from './instcull.js';
+import { buildScene, SCENE_VARIANTS } from './scenebuild.js';
 
-// Trees, drawn in bulk: tall firs in the woods, rounder broadleaf trees along roads and in the
-// orchards. Each kind is one instanced trunk mesh and one instanced crown mesh.
+// Trees, drawn in bulk: tall firs in the woods, broadleaf trees along roads and in the orchards, birches at the
+// edges and a few dead snags where the shelling has been. Each model (see scenebuild.js) is one mesh with its
+// own bark and leaf colours, so a kind of tree is a single instanced draw; two shapes of fir and of broadleaf
+// keep a wood from being a row of clones.
 
-function wobble(g, amp, f, seed) {
-  const p = g.attributes.position;
-  for (let i = 0; i < p.count; i++) {
-    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
-    const n = noise(x * f + seed, z * f + y * 0.7 + seed * 2) - 0.5;
-    const m = noise(z * f + seed * 3, x * f - y * 0.7) - 0.5;
-    p.setXYZ(i, x + n * amp, y + (n + m) * amp * 0.4, z + m * amp);
-  }
-  return g;
-}
-const strip = (g) => {
-  const out = g.index ? g.toNonIndexed() : g;
-  for (const k of Object.keys(out.attributes)) if (k !== 'position') out.deleteAttribute(k);
-  out.computeVertexNormals();
-  return out;
+const GEO = new Map();
+const geoFor = (kind, v) => {
+  const key = `${kind}.${v}`;
+  if (!GEO.has(key)) GEO.set(key, buildScene(kind, v).bake()[0]);
+  return GEO.get(key);
+};
+// each model's reach, for the per-instance culling: [height centre, radius]
+const REACH = { fir: [2.8, 3.3], leaf: [3, 3.6], birch: [2.6, 2.8], dead: [2, 2.4] };
+// a slight lean of colour per tree, multiplied onto the model's own
+const TINT = {
+  fir: ['#ffffff', '#f2f6ec', '#e6ecde', '#fbf6ee'],
+  leaf: ['#ffffff', '#f6f0d4', '#e9efd9', '#f2e8c8', '#e2e9d0'],
+  birch: ['#ffffff', '#f4f2dc', '#eef2dd'],
+  dead: ['#ffffff', '#e8e2da'],
 };
 
-function firCrown() {
-  // drooping tiers: each a cone with a ragged hem, narrowing toward the top
-  const tiers = [[1.35, 1.9, 1.5], [1.08, 1.7, 2.45], [0.8, 1.5, 3.3], [0.5, 1.3, 4.1]];
-  return mergeGeometries(tiers.map(([r, h, y], i) => {
-    const g = new THREE.ConeGeometry(r, h, 9, 2, true);
-    const p = g.attributes.position;
-    for (let k = 0; k < p.count; k++) if (p.getY(k) < -h / 2 + 0.01) p.setY(k, p.getY(k) - 0.18 * (Math.sin(k * 2.3 + i) + 1));
-    g.translate(0, y + h / 2, 0);
-    return strip(wobble(g, 0.22, 1.3, i * 5));
-  }));
-}
-function firTrunk() {
-  const g = new THREE.CylinderGeometry(0.09, 0.19, 2.2, 7);
-  g.translate(0, 1.0, 0);
-  return strip(g);
-}
-function leafCrown() {
-  // a few lumpy clumps around a central mass
-  const clumps = [[0, 3.1, 0, 1.45], [0.85, 2.7, 0.3, 1.0], [-0.7, 2.8, -0.5, 1.05], [0.2, 3.8, -0.35, 0.95], [-0.3, 2.5, 0.8, 0.9]];
-  return mergeGeometries(clumps.map(([x, y, z, r], i) => {
-    const g = new THREE.IcosahedronGeometry(r, 1);
-    g.scale(1, 0.82, 1);
-    g.translate(x, y, z);
-    return strip(wobble(g, 0.35, 1.1, 11 + i * 3));
-  }));
-}
-function leafTrunk() {
-  const main = new THREE.CylinderGeometry(0.11, 0.2, 2.6, 7);
-  main.translate(0, 1.3, 0);
-  const b1 = new THREE.CylinderGeometry(0.05, 0.08, 1.2, 5);
-  b1.translate(0, 0.6, 0); b1.rotateZ(-0.7); b1.translate(0.05, 1.9, 0);
-  const b2 = new THREE.CylinderGeometry(0.05, 0.08, 1.1, 5);
-  b2.translate(0, 0.55, 0); b2.rotateX(0.75); b2.translate(0, 1.7, 0.05);
-  return mergeGeometries([main, b1, b2].map(strip));
-}
-
-let GEO = null;
-const BARK = new THREE.MeshStandardMaterial({ color: '#4c3e31', roughness: 0.95 });
-const FIR = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.9, flatShading: true });
-const LEAF = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.88, flatShading: true });
-
-// spots: [{ x, z, kind: 'fir' | 'leaf', s, yaw }]. Returns a group to add to the scene.
+// spots: [{ x, z, kind: 'fir' | 'leaf' | 'birch' | 'dead', s, yaw }]. Returns a group to add to the scene.
 export function buildTrees(spots) {
-  if (!GEO) GEO = { fir: [firTrunk(), firCrown()], leaf: [leafTrunk(), leafCrown()] };
   const g = new THREE.Group();
   g.name = 'trees';
   g.userData.culls = [];
+  g.userData.spots = { tree: spots.filter((t) => t.kind === 'leaf' || t.kind === 'fir').slice(0, 40).map((t) => ({ x: t.x, y: height(t.x, t.z), z: t.z, kind: t.kind })) };
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), v = new THREE.Vector3(), c = new THREE.Color();
-  const tint = { fir: ['#3c4a33', '#46553a', '#344230'], leaf: ['#57633d', '#66703f', '#4d5a37', '#6f6b40'] };
-  for (const kind of ['fir', 'leaf']) {
-    const list = spots.filter((s) => s.kind === kind);
-    if (!list.length) continue;
-    const [tg, cg] = GEO[kind];
-    const trunk = new THREE.InstancedMesh(tg, BARK, list.length);
-    const crown = new THREE.InstancedMesh(cg, kind === 'fir' ? FIR : LEAF, list.length);
-    list.forEach((t, i) => {
-      q.setFromAxisAngle(v.set(0, 1, 0), t.yaw);
-      sc.set(t.s, t.s * (0.9 + 0.2 * ((i * 0.618) % 1)), t.s);
-      m.compose(v.set(t.x, height(t.x, t.z) - 0.15, t.z), q, sc);
-      trunk.setMatrixAt(i, m);
-      crown.setMatrixAt(i, m);
-      const pal = tint[kind];
-      crown.setColorAt(i, c.set(pal[i % pal.length]).multiplyScalar(0.92 + 0.16 * ((i * 0.37) % 1)));
-    });
-    for (const im of [trunk, crown]) { im.castShadow = true; im.receiveShadow = true; g.add(im); }
-    // one sphere per tree (a fir is about 5.5 m tall, a broadleaf crown about 4.6 m across), so only the trees in view are drawn
+  const groups = new Map();
+  spots.forEach((t, i) => {
+    const kind = TINT[t.kind] ? t.kind : 'leaf';
+    const variant = Math.floor(((Math.sin(t.x * 12.9 + t.z * 78.2) * 43758.5) % 1 + 1) % 1 * (SCENE_VARIANTS[kind] || 1));
+    const key = `${kind}.${variant}`;
+    if (!groups.has(key)) groups.set(key, { kind, variant, list: [] });
+    groups.get(key).list.push({ ...t, i });
+  });
+  for (const { kind, variant, list } of groups.values()) {
+    const { geometry, material } = geoFor(kind, variant);
+    const mesh = new THREE.InstancedMesh(geometry, material, list.length);
+    const pal = TINT[kind], [cy, cr] = REACH[kind];
     const sp = new Float32Array(list.length * 4);
     list.forEach((t, i) => {
-      const sy = t.s * (0.9 + 0.2 * ((i * 0.618) % 1)), y = height(t.x, t.z) - 0.15;
-      sp[i * 4] = t.x; sp[i * 4 + 1] = y + 2.5 * sy; sp[i * 4 + 2] = t.z; sp[i * 4 + 3] = Math.max(3.2 * sy, 3.2 * t.s);
+      q.setFromAxisAngle(v.set(0, 1, 0), t.yaw);
+      const sy = t.s * (0.9 + 0.2 * ((i * 0.618) % 1));
+      sc.set(t.s, sy, t.s);
+      const y = height(t.x, t.z) - 0.15;
+      m.compose(v.set(t.x, y, t.z), q, sc);
+      mesh.setMatrixAt(i, m);
+      mesh.setColorAt(i, c.set(pal[i % pal.length]).multiplyScalar(0.92 + 0.16 * ((i * 0.37) % 1)));
+      sp[i * 4] = t.x; sp[i * 4 + 1] = y + cy * sy; sp[i * 4 + 2] = t.z; sp[i * 4 + 3] = Math.max(cr * sy, cr * t.s);
     });
-    g.userData.culls.push(new InstCull([trunk, crown], sp, { shared: true }));
+    mesh.castShadow = true; mesh.receiveShadow = true;
+    mesh.name = `tree-${kind}${variant}`;
+    g.add(mesh);
+    g.userData.culls.push(new InstCull([mesh], sp, {}));
   }
   return g;
 }

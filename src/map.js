@@ -117,7 +117,7 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
       const a = fixed() * Math.PI * 2, r = Math.sqrt(fixed()) * R;
       const tx = x + Math.cos(a) * r, tz = z + Math.sin(a) * r;
       if (!treeOK(tx, tz, 2.4)) continue;
-      tree(tx, tz, fixed() < 0.8 ? 'fir' : 'leaf', 0.75 + fixed() * 0.45);
+      { const r = fixed(); tree(tx, tz, r < 0.62 ? 'fir' : r < 0.8 ? 'leaf' : r < 0.93 ? 'birch' : 'dead', 0.75 + fixed() * 0.45); }
       i++;
     }
   }
@@ -128,7 +128,7 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
       const [ax, az] = r.pts[i - 1], [bx, bz] = r.pts[i + 1];
       const l = Math.hypot(bx - ax, bz - az) || 1, side = fixed() < 0.5 ? -1 : 1;
       const x = r.pts[i][0] + (-(bz - az) / l) * side * (r.w + 2.6), z = r.pts[i][1] + ((bx - ax) / l) * side * (r.w + 2.6);
-      if (treeOK(x, z, 5)) tree(x, z, 'leaf', 0.7 + fixed() * 0.25);
+      if (treeOK(x, z, 5)) tree(x, z, fixed() < 0.3 ? 'birch' : 'leaf', 0.7 + fixed() * 0.25);
     }
   }
   for (const p of POINTS.filter((q) => q.theme === 'farm')) {
@@ -142,7 +142,7 @@ export function buildMap(battle, { seed = 7, teams = 2, points = true } = {}) {
   }
   for (let i = 0, tries = 0; i < 140 && tries < 1400; tries++) {
     const x = (fixed() * 2 - 1) * EDGE, z = (fixed() * 2 - 1) * EDGE;
-    if (treeOK(x, z, 6)) { tree(x, z, fixed() < 0.5 ? 'fir' : 'leaf', 0.7 + fixed() * 0.4); i++; }
+    if (treeOK(x, z, 6)) { const r = fixed(); tree(x, z, r < 0.4 ? 'fir' : r < 0.75 ? 'leaf' : r < 0.9 ? 'birch' : 'dead', 0.7 + fixed() * 0.4); i++; }
   }
   // hills beyond the fence get trees too (no colliders)
   const far = [];

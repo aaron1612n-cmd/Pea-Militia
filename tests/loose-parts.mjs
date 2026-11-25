@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { Kit } from '../src/models.js';
 import { PROPS } from '../src/props.js';
 import { buildProp, VARIANTS } from '../src/propbuild.js';
+import { buildScene, SCENE_TYPES, SCENE_VARIANTS } from '../src/scenebuild.js';
 
 const TOUCH = 0.012;
 const pieces = [];
@@ -48,16 +49,26 @@ function joined(A, B) {
   // solids that overlap without their skins passing near each other (a brick sunk into its mortar core)
   const ca = A.box.getCenter(new THREE.Vector3()), cb = B.box.getCenter(new THREE.Vector3());
   if (B.box.containsPoint(ca) && inside(ca, B)) return true;
+  // two crossing bars: some point of the shared box is inside both
+  const X = A.box.clone().intersect(B.box);
+  if (!X.isEmpty()) {
+    const p = new THREE.Vector3();
+    for (let i = 0; i < 4; i++) for (let j = 0; j < 4; j++) for (let k = 0; k < 4; k++) { p.set(X.min.x + (X.max.x - X.min.x) * (i + 0.5) / 4, X.min.y + (X.max.y - X.min.y) * (j + 0.5) / 4, X.min.z + (X.max.z - X.min.z) * (k + 0.5) / 4); if (inside(p, A) && inside(p, B)) return true; }
+  }
   if (A.box.containsPoint(cb) && inside(cb, A)) return true;
   return false;
 }
-const types = process.argv.length > 2 ? process.argv.slice(2) : Object.keys(PROPS).filter((k) => !PROPS[k].noModel);
-const jobs = types.flatMap((t) => Array.from({ length: VARIANTS[t] || 1 }, (_, v) => [t, v]).flatMap(([a, b]) => [[a, b, false], [a, b, true]]));
+const types = process.argv.length > 2 ? process.argv.slice(2).filter((a) => PROPS[a]) : Object.keys(PROPS).filter((k) => !PROPS[k].noModel);
+const SCENE_ONLY = process.argv.slice(2).every((a) => SCENE_TYPES.includes(a)) && process.argv.length > 2;
+const sceneJobs = (process.argv.length > 2 ? process.argv.slice(2).filter((a) => SCENE_TYPES.includes(a)) : SCENE_TYPES).flatMap((t) => Array.from({ length: SCENE_VARIANTS[t] || 1 }, (_, v) => [`scene:${t}`, v, false]));
+const propTypes = types.filter((t) => PROPS[t]);
+const jobs = [...propTypes.flatMap((t) => Array.from({ length: VARIANTS[t] || 1 }, (_, v) => [t, v]).flatMap(([a, b]) => [[a, b, false], [a, b, true]])), ...sceneJobs];
+void SCENE_ONLY;
 let bad = 0;
 for (const [type0, v, lite] of jobs) {
   const type = `${type0}.${v}${lite ? '.far' : ''}`;
   pieces.length = 0;
-  buildProp(type0, v, lite);
+  if (type0.startsWith('scene:')) buildScene(type0.slice(6), v); else buildProp(type0, v, lite);
   const P = pieces.map((g) => { g.computeBoundingBox?.(); return mesh(g); });
   const parent = P.map((_, i) => i);
   const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));
