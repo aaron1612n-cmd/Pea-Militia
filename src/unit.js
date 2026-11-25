@@ -451,7 +451,7 @@ export class Unit {
     else if (w.mag <= 0) { this.startReload(); return false; }
     this.wasFiring = true;
     // dirty, hot weapons jam now and then: a second or two to clear it
-    if (def.kind === 'hitscan' && Math.random() < 0.0028 * (1 + (this.suppression > 0.5 ? 1 : 0))) { this.jamT = 1.4 + Math.random(); this.onJam?.(); world?.audio?.play('jam', this.center(), 0.8); return false; }
+    if (def.kind === 'hitscan' && Math.random() < 0.0028 * (1 + (this.suppression > 0.5 ? 1 : 0)) * (1 + (world?.barrelHeat?.(w) || 0) * 3)) { this.jamT = 1.4 + Math.random(); this.onJam?.(); world?.audio?.play('jam', this.center(), 0.8); return false; }
     this.shots++;
     this.cool = def.interval;
     this.lastShot = this.t;

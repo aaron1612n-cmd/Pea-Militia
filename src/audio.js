@@ -204,18 +204,24 @@ export class Audio {
     if (!d) return;
     switch (kind) {
       case 'rifle':
+        // big cartridge: a hard crack, a heavy body, and the report rolling back off the field
         if (this.near) this.noiseBurst(d, { dur: 0.03, type: 'highpass', f: 3500, peak: 0.7, attack: 0.001 });
         this.noiseBurst(d, { dur: 0.36, f: 2600, f2: 260, peak: 0.9 });
         this.tone(d, { dur: 0.18, f: 140, f2: 45, peak: 0.6 });
+        this.noiseBurst(d, { t: 0.11, dur: 0.5, f: 900, f2: 120, peak: 0.22, attack: 0.03 });
+        if (this.near) { this.tone(d, { t: 0.32, dur: 0.03, type: 'square', f: 520, peak: 0.05 }); this.tone(d, { t: 0.36, dur: 0.03, type: 'square', f: 380, peak: 0.05 }); } // bolt work
         break;
       case 'smg':
-        this.noiseBurst(d, { dur: 0.11, f: 3000, f2: 500, peak: 0.5 });
-        this.tone(d, { dur: 0.07, f: 170, f2: 70, peak: 0.3 });
+        // small round: a light, snappy pop with little body
+        this.noiseBurst(d, { dur: 0.09, f: 3600, f2: 700, peak: 0.5 });
+        this.tone(d, { dur: 0.05, f: 260, f2: 110, peak: 0.26 });
+        this.noiseBurst(d, { t: 0.03, dur: 0.05, type: 'bandpass', f: 1800, q: 2, peak: 0.12 });
         break;
       case 'mg':
         if (this.near) this.noiseBurst(d, { dur: 0.025, type: 'highpass', f: 3200, peak: 0.5, attack: 0.001 });
         this.noiseBurst(d, { dur: 0.18, f: 2200, f2: 280, peak: 0.75 });
         this.tone(d, { dur: 0.1, f: 120, f2: 50, peak: 0.45 });
+        this.tone(d, { dur: 0.16, type: 'triangle', f: 78, f2: 40, peak: 0.3 }); // heavy receiver thump
         break;
       case 'plasma':
         this.tone(d, { dur: 0.22, type: 'sawtooth', f: 1400, f2: 180, peak: 0.16 });
@@ -232,6 +238,9 @@ export class Audio {
         if (this.near) this.noiseBurst(d, { dur: 0.08, type: 'highpass', f: 1800, peak: 0.9, attack: 0.001 });
         this.noiseBurst(d, { dur: 1.8, f: 1100, f2: 50, peak: 1 });
         this.tone(d, { dur: 0.9, f: 72, f2: 24, peak: 1 });
+        this.tone(d, { t: 0.04, dur: 0.5, type: 'triangle', f: 46, f2: 20, peak: 0.9 }); // pressure wave in the chest
+        this.noiseBurst(d, { t: 0.5, dur: 1.4, f: 500, f2: 70, peak: 0.28, attack: 0.1 }); // rolling echo
+        for (let i = 0; i < 4; i++) this.noiseBurst(d, { t: 0.08 + Math.random() * 0.35, dur: 0.06, type: 'bandpass', f: 4500 + Math.random() * 2500, f2: 1500, q: 5, peak: 0.1 }); // fragments whirring past
         // debris pattering down afterwards
         for (let i = 0; i < 5; i++) this.noiseBurst(d, { t: 0.35 + Math.random() * 0.9, dur: 0.05, type: 'bandpass', f: 1500 + Math.random() * 1500, q: 4, peak: 0.12 });
         break;
@@ -257,6 +266,30 @@ export class Audio {
         this.tone(d, { dur: 0.04, type: 'square', f: 1400, peak: 0.1 });
         this.tone(d, { t: 0.18, dur: 0.05, type: 'square', f: 700, peak: 0.07 });
         break;
+      case 'ricochet': // a round skipping off hard cover: a rising-then-falling whine
+        this.tone(d, { dur: 0.45, type: 'sine', f: 2600 + Math.random() * 1200, f2: 700, peak: 0.12, attack: 0.01 });
+        this.noiseBurst(d, { dur: 0.35, type: 'bandpass', f: 3800, f2: 1100, q: 4, peak: 0.28, attack: 0.01 });
+        break;
+      case 'tink': // brass bouncing on the ground
+        this.tone(d, { dur: 0.07, type: 'triangle', f: 3600 + Math.random() * 900, f2: 3000, peak: 0.07, attack: 0.001 });
+        this.tone(d, { t: 0.06, dur: 0.05, type: 'triangle', f: 4200 + Math.random() * 600, f2: 3600, peak: 0.035, attack: 0.001 });
+        break;
+      case 'thwack': // round into wood or sandbags
+        this.noiseBurst(d, { dur: 0.09, type: 'bandpass', f: 420, q: 1.2, peak: 0.4 });
+        this.tone(d, { dur: 0.06, f: 130, f2: 70, peak: 0.25 });
+        break;
+      case 'crunch': // round into stone and concrete
+        this.noiseBurst(d, { dur: 0.1, type: 'bandpass', f: 1500, f2: 800, q: 1.5, peak: 0.35 });
+        this.tone(d, { dur: 0.05, type: 'square', f: 900, f2: 500, peak: 0.07 });
+        break;
+      case 'ping': // steel
+        if (p) {
+          this.tone(d, { dur: 0.16, type: 'triangle', f: 1900 + Math.random() * 600, f2: 1500, peak: 0.2, attack: 0.001 });
+          this.noiseBurst(d, { dur: 0.05, type: 'highpass', f: 3000, peak: 0.3, attack: 0.001 });
+          break;
+        }
+        this.tone(d, { dur: 0.09, type: 'triangle', f: 2400, f2: 1700, peak: 0.25 });
+        break;
       case 'whiz':
         this.noiseBurst(d, { dur: 0.16, type: 'bandpass', f: 4200, f2: 1600, q: 3, peak: 0.6, attack: 0.03 });
         break;
@@ -277,9 +310,6 @@ export class Audio {
         break;
       case 'hit':
         this.noiseBurst(d, { dur: 0.08, type: 'bandpass', f: 500, q: 2, peak: 0.35 });
-        break;
-      case 'ping':
-        this.tone(d, { dur: 0.09, type: 'triangle', f: 2400, f2: 1700, peak: 0.25 });
         break;
       case 'whistle':
         this.tone(d, { dur: 1.5, type: 'sine', f: 2400, f2: 700, peak: 0.1, attack: 0.3 });

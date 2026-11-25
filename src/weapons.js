@@ -42,6 +42,16 @@ const HANDLING = {
   launcher: { rc: { up: 0.034, side: 0.008, build: 0.5, rec: 0.7 }, sway: 1.5, chamber: false, tac: 1, empty: 1, rack: 0, pattern: [0.5] },
   grenade: { rc: { up: 0, side: 0, build: 0, rec: 1 }, sway: 1, chamber: false, tac: 1, empty: 1, rack: 0, pattern: [0] },
 };
+// Ballistics per weapon. mv: muzzle velocity in field units/s, drag: speed lost per second,
+// pow: penetration power, fall: [range where damage starts to fade, fraction left at max range],
+// tracerEvery: every Nth round glows, hb: barrel heat per shot, zero: sight zeroing range,
+// casing/eject/cdelay: spent brass kind, how far back the port sits, bolt-cycle delay.
+const BALLISTICS = {
+  rifle: { mv: 230, drag: 0.25, pow: 1.0, fall: [30, 0.55], tracerEvery: 3, hb: 0.05, zero: 35, casing: 'rifle', eject: 0.34, cdelay: 0.28, flash: 1.1 },
+  smg: { mv: 140, drag: 0.7, pow: 0.35, fall: [8, 0.35], tracerEvery: 4, hb: 0.022, zero: 15, casing: 'pistol', eject: 0.24, cdelay: 0, flash: 0.75 },
+  mg: { mv: 215, drag: 0.3, pow: 0.9, fall: [25, 0.5], tracerEvery: 2, hb: 0.013, zero: 30, casing: 'rifle', eject: 0.4, cdelay: 0, flash: 1.3 },
+};
+for (const [id, b] of Object.entries(BALLISTICS)) Object.assign(WEAPONS[id], b);
 for (const [id, h] of Object.entries(HANDLING)) Object.assign(WEAPONS[id], h);
 
 export const SLOTS = ['rifle', 'smg', 'mg', 'plasma', 'launcher', 'grenade'];

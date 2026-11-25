@@ -14,6 +14,7 @@ import { hostile, TEAMS } from './factions.js';
 import { HALF, pointMarker, ammoCrate } from './world.js';
 import { rayBox, pushCircle, segmentHitsBox, corners, segDist, toLocal } from './physics.js';
 import { height, rayTerrain, terrainClear, normalAt } from './terrain.js';
+import { GRAVITY, MAX_BULLETS, MATERIALS, materialOf, ballistics, leadPoint, zeroAngle, bulletDamage, chord } from './ballistics.js';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const V = () => new THREE.Vector3();
@@ -99,6 +100,8 @@ export class Battle {
     this.squads = [];
     this.props = [];
     this.projectiles = [];
+    this.bullets = [];
+    this.fx.onTink = (p) => this.audio.play('tink', p, 0.5);
     this.points = [];
     this.player = null;
     this.time = 0;
@@ -300,6 +303,8 @@ export class Battle {
     this.rebuildPropGrid();
     for (const p of this.projectiles) this.scene.remove(p.model);
     this.projectiles = [];
+    for (const b of this.bullets) this.fx.freeTracer(b.tr);
+    this.bullets = [];
   }
 
   dispose() {
@@ -342,7 +347,7 @@ export class Battle {
   boxCorners(b, r) { return corners(b, r); }
 
   // Nearest hit along a ray: soldiers, props, the ground.
-  raycast(o, d, maxT, { ignore = null, units = true } = {}) {
+  raycast(o, d, maxT, { ignore = null, units = true, skip = null } = {}) {
     let best = { t: maxT, point: null };
     if (units) {
       for (const v of this.vehicles) {
@@ -354,7 +359,7 @@ export class Battle {
         if (h && h.t < best.t) best = { t: h.t, vehicle: v, normal: h.n };
       }
       for (const u of this.units) {
-        if (!u.alive || u === ignore || u.vehicle) continue;
+        if (!u.alive || u === ignore || u.vehicle || (skip && skip.includes(u))) continue;
         // cheap reject: distance from the body centre to the ray
         const cx = u.pos.x - o.x, cy = u.pos.y + 0.55 - o.y, cz = u.pos.z - o.z;
         const along = cx * d.x + cy * d.y + cz * d.z;
@@ -454,6 +459,9 @@ export class Battle {
       const err = (0.05 * Math.exp(-(shooter.onT || 0) / 1.1) + 0.004) * (1 + mv * 1.5 + shooter.suppression * 2 + (shooter.arm || 0) * 1.5 + (shooter.shock > 0 ? 2 : 0)) * (1 - 0.35 * shooter.kneelK) / (shooter.brain?.skill || 1);
       const g = new THREE.Vector3(Math.sin(shooter.aimYaw) * Math.cos(shooter.aimPitch), Math.sin(shooter.aimPitch), Math.cos(shooter.aimYaw) * Math.cos(shooter.aimPitch));
       // gun direction, corrected so a settled aim still lands on the target (parallax between eye and muzzle)
+      // rounds take time to arrive: lead a moving target and aim high for drop
+      const tgt = shooter.brain?.target;
+      if (def.mv && tgt?.alive && shooter.ctrl.aimAt) dir = V().subVectors(leadPoint(V(), m, shooter.ctrl.aimAt, tgt.vel, def, shooter.brain.skill || 1), m).normalize();
       dir = g.lerp(dir, Math.min(1, (shooter.onT || 0) / 0.6)).normalize();
       dir = this.spread(dir, err);
     }
@@ -461,12 +469,18 @@ export class Battle {
     const sm = shooter.mod?.spread ?? 1;
     if (shooter.mod?.dmgOut > 1 && def.damage) def = { ...def, damage: def.damage * shooter.mod.dmgOut, dps: def.dps && def.dps * shooter.mod.dmgOut };
     const steady = sm * (shooter.isPlayer ? (shooter.ads > 0.5 ? 0.45 : 1) : 1);
-    const s = (def.spread || 0) * steady * (1 + moving * 1.2 + shooter.suppression * 1.5 + (shooter.recoilBuild || 0) * 1.4) * (1 - 0.35 * shooter.kneelK) * (1 + (shooter.arm || 0) * 1.5 + (shooter.shock > 0 ? 2 : 0) + (shooter.leg || 0) * 0.4);
+    // a hot barrel walks the shots: sustained fire opens the group up
+    const wp = shooter.weapon, bh = wp && def.hb ? this.barrelHeat(wp) : 0;
+    const s = (def.spread || 0) * (1 + bh * 1.1) * steady * (1 + moving * 1.2 + shooter.suppression * 1.5 + (shooter.recoilBuild || 0) * 1.4) * (1 - 0.35 * shooter.kneelK) * (1 + (shooter.arm || 0) * 1.5 + (shooter.shock > 0 ? 2 : 0) + (shooter.leg || 0) * 0.4);
     dir = this.spread(dir, s);
+    // the player's sights are zeroed at a set range: rounds start a hair high and fall onto the aim point
+    if (def.mv && !shooter.brain && def.zero) dir.addScaledVector(UP, zeroAngle(def)).normalize();
+    if (wp && def.hb) wp.barrel = Math.min(1, bh + def.hb);
     this.stats.shots++;
     if (def.kind === 'hitscan') this.hitscan(shooter, m, dir, def);
     else if (def.kind === 'projectile') this.launch(def.proj, m, dir.multiplyScalar(def.speed), shooter, def);
-    this.fx.muzzle(m, dir, def.id === 'mg' ? 1.3 : 1);
+    this.fx.muzzle(m, dir, def.flash || 1, def.id, bh);
+    if (def.casing) this.fx.casing(m, dir, def.casing, def.eject || 0.3, def.cdelay || 0);
     if (def.proj === 'shell') this.fx.steam(m, dir.clone().normalize().multiplyScalar(1.5), 4, 0.5);
     this.audio.play(def.sound, m, shooter.isPlayer ? 0.8 : 1);
     this.heard(shooter, m);
@@ -481,26 +495,136 @@ export class Battle {
     }
   }
 
-  hitscan(shooter, from, dir, def) {
-    const hit = this.raycast(from, dir, def.range, { ignore: shooter });
-    const end = hit.point;
-    this.fx.tracer(from.clone().addScaledVector(dir, 0.15), end, def.id === 'mg' ? 0.02 : 0.014);
-    this.suppress(shooter, from, end);
-    this.corpseShots(from, dir, hit.t, def.damage);
-    if (hit.vehicle) { hit.vehicle.hit(def.damage, 'bullet', shooter, this); this.fx.impact(end, hit.normal, 'metal'); markVehicle(hit.vehicle, from, dir, 0.12 + def.damage * 0.004); }
-    else if (hit.unit) this.damageUnit(hit.unit, def.damage, shooter, 'bullet', dir, hit.point);
-    else if (hit.prop) { this.damageProp(hit.prop, def.damage * 0.15, shooter); this.fx.impact(end, hit.normal, hit.prop.type === 'wall' || hit.prop.type === 'drum' || hit.prop.type === 'trap' ? 'metalhole' : 'dust'); }
-    else if (hit.ground) this.fx.impact(end, hit.normal, 'dust');
+  // barrel heat 0..1: cools lazily, so only guns that fire need updating
+  barrelHeat(w) {
+    const d = this.time - (w.bt ?? this.time);
+    w.barrel = Math.max(0, (w.barrel || 0) - d * 0.09);
+    w.bt = this.time;
+    return w.barrel;
   }
 
-  suppress(shooter, a, b) {
+  // A shot leaves the muzzle as a real round: it flies, drops, slows, and is judged against
+  // whatever it meets each step (see stepBullet).
+  hitscan(shooter, from, dir, def) {
+    const bal = ballistics(def);
+    const n = (shooter.tcount = (shooter.tcount || 0) + 1);
+    const lit = bal.tracerEvery <= 1 || n % bal.tracerEvery === 0;
+    const b = {
+      def, owner: shooter, pos: from.clone(), vel: dir.clone().multiplyScalar(bal.mv * (1 + (Math.random() - 0.5) * 0.03)),
+      mv: bal.mv, drag: bal.drag, fall: bal.fall, power: bal.pow, dmgK: 1, dist: 0, age: 0, ric: 0, skip: [], seen: new Set(),
+      tr: lit ? this.fx.takeTracer(def.id === 'mg' ? 0.02 : 0.014) : null,
+    };
+    if (this.bullets.length >= MAX_BULLETS) this.endBullet(this.bullets.shift());
+    this.bullets.push(b);
+    if (this.stepBullet(b, 0.006)) this.bullets.pop(), this.endBullet(b);
+  }
+
+  endBullet(b) { this.fx.freeTracer(b.tr); b.tr = null; }
+
+  updateBullets(dt) {
+    if (!this.bullets.length) return;
+    const n = Math.max(1, Math.ceil(dt / 0.034)), h = dt / n;
+    let w = 0;
+    for (const b of this.bullets) {
+      let dead = false;
+      for (let i = 0; i < n && !dead; i++) dead = this.stepBullet(b, h);
+      if (dead) { this.endBullet(b); continue; }
+      if (b.tr) this.fx.placeTracer(b.tr, b.pos, b.vel);
+      this.bullets[w++] = b;
+    }
+    this.bullets.length = w;
+  }
+
+  // Moves a round one step and resolves what it meets. Returns true once it is spent.
+  stepBullet(b, dt) {
+    const v = b.vel, def = b.def;
+    b.age += dt;
+    v.multiplyScalar(Math.exp(-b.drag * dt));
+    v.y -= GRAVITY * dt;
+    let sp = v.length();
+    if (b.age > 4 || sp < 25 || b.dist > def.range * 1.6) return true;
+    const o = b.pos, d = V().copy(v).divideScalar(sp);
+    let left = sp * dt;
+    for (let it = 0; it < 4 && left > 1e-4; it++) {
+      const hit = this.raycast(o, d, left, { ignore: b.age < 0.2 ? b.owner : null, skip: b.skip });
+      if (!hit.hit) { o.addScaledVector(d, left); b.dist += left; break; }
+      const dmg = bulletDamage(b), n = hit.normal || UP, at = hit.point;
+      this.suppress(b.owner, o, at, b.seen);
+      this.corpseShots(o, d, hit.t, dmg);
+      b.dist += hit.t; left = Math.max(0, left - hit.t);
+      o.copy(at);
+      const graze = Math.abs(d.dot(n));
+      if (hit.vehicle) {
+        if (this.canRicochet(b, graze, MATERIALS.steel)) { this.ricochet(b, d, n, at, 'metal'); break; }
+        hit.vehicle.hit(dmg * (0.5 + 0.5 * graze), 'bullet', b.owner, this);
+        this.fx.impact(at, n, 'metal');
+        markVehicle(hit.vehicle, at.clone().addScaledVector(d, -0.3), d, 0.12 + dmg * 0.004);
+        return true;
+      }
+      if (hit.unit) {
+        this.damageUnit(hit.unit, dmg, b.owner, 'bullet', d.clone(), at);
+        // a strong round goes on through, weaker and slower
+        b.power *= 0.45; b.dmgK *= 0.5; v.multiplyScalar(0.8); b.skip.push(hit.unit);
+        if (b.power < 0.3) return true;
+        sp = v.length(); continue;
+      }
+      if (hit.prop) {
+        const mat = materialOf(hit.prop);
+        this.damageProp(hit.prop, dmg * 0.15, b.owner);
+        const col = hit.prop.def?.debris;
+        if (this.canRicochet(b, graze, mat)) { this.ricochet(b, d, n, at, mat.fx, col); break; }
+        const reach = mat.depth * b.power * Math.min(1, sp / b.mv) * (0.75 + Math.random() * 0.5);
+        const thick = chord(hit.prop.box, at, d);
+        this.fx.impactMat(at, n, mat.fx, col);
+        this.audio.play(mat.snd, at, 0.6);
+        if (reach < thick) return true; // stopped inside the cover
+        const used = thick / reach, exit = at.clone().addScaledVector(d, thick + 0.03);
+        const keep = 1 - used * 0.8;
+        b.power *= keep; b.dmgK *= keep; v.multiplyScalar(1 - used * 0.4);
+        // the round comes out the far side knocked off line
+        const k = 0.02 + used * 0.12;
+        v.x += (Math.random() - 0.5) * k * sp; v.y += (Math.random() - 0.5) * k * sp; v.z += (Math.random() - 0.5) * k * sp;
+        this.fx.impactMat(exit, d.clone().negate(), mat.fx, col, 0.5);
+        o.copy(exit); b.dist += thick; left = Math.max(0, left - thick);
+        sp = v.length(); d.copy(v).divideScalar(sp);
+        if (b.power < 0.15) return true;
+        continue;
+      }
+      // ground: grazing rounds skip off, others dig in
+      if (this.canRicochet(b, graze, MATERIALS.earth)) { this.ricochet(b, d, n, at, 'dust'); break; }
+      this.fx.impact(at, n, 'dust');
+      return true;
+    }
+    return false;
+  }
+
+  canRicochet(b, graze, mat) { return b.ric < 2 && b.power > 0.2 && graze < mat.ric * (0.7 + Math.random() * 0.6); }
+
+  // bounce off a surface: reflected, slowed, scattered, with sparks and a whine
+  ricochet(b, d, n, at, style, col) {
+    const v = b.vel, sp = v.length();
+    d.reflect(n);
+    const k = 0.04 + Math.random() * 0.06;
+    d.x += (Math.random() - 0.5) * k; d.y += Math.random() * k * 0.5; d.z += (Math.random() - 0.5) * k;
+    if (n.y > 0.5 && d.y < 0.02) d.y = 0.02;
+    d.normalize();
+    v.copy(d).multiplyScalar(sp * (0.4 + Math.random() * 0.25));
+    b.pos.copy(at).addScaledVector(n, 0.06);
+    b.ric++; b.power *= 0.5; b.dmgK *= 0.55;
+    this.fx.ricochet(at, d, style, col);
+    this.audio.play('ricochet', at, 0.7);
+    return sp;
+  }
+
+  suppress(shooter, a, b, seen) {
     const c = V();
     const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2, half = Math.hypot(b.x - a.x, b.z - a.z) / 2 + 2;
     for (const u of this.unitGrid.near(mx, mz, Math.min(half, 40), this.tmpA)) {
-      if (!u.alive || u === shooter || !hostile(u.team, shooter.team)) continue;
+      if (!u.alive || u === shooter || !hostile(u.team, shooter.team) || seen?.has(u)) continue;
       u.center(c);
       const d = segDist(a, b, c);
       if (d < 1.8) {
+        seen?.add(u);
         u.suppression = Math.min(1, u.suppression + (1.8 - d) * 0.1);
         if (u.isPlayer && d < 1.4) { this.audio.crack(1.4 - d); this.onNearMiss?.(1.4 - d); }
         if (u.squad) u.squad.know(shooter, shooter.pos, false);
@@ -582,7 +706,7 @@ export class Battle {
       const { x, z, yaw } = p.box, rubble = p.box.h > 0.6 && !p.def.explodes;
       this.removeProp(p);
       if (rubble) this.spawnProp('rubble', x, z, yaw);
-      if (p.def.explodes) this.explode(c.setY(p.box.y0 + 0.5), 3.4, 110, from, 1);
+      if (p.def.explodes) { this.explode(c.setY(p.box.y0 + 0.5), 3.4, 110, from, 1); this.fuelFire(c.setY(height(c.x, c.z)), from); }
       return;
     }
     // chips fly on every hit; each lost third cracks the prop: darker, lower, and softer cover
@@ -642,31 +766,50 @@ export class Battle {
     p.fuse = def.fuse;
   }
 
+  // How much of a blast gets through whatever stands between the centre and a point:
+  // each prop on the line soaks pressure by its material and thickness.
+  blastShield(from, to) {
+    const d = V().subVectors(to, from), len = d.length();
+    if (len < 0.2) return 1;
+    d.divideScalar(len);
+    let k = 1;
+    const e = V();
+    for (const p of this.propGrid.along(from.x, from.z, to.x, to.z, stampN++, this.tmpB)) {
+      const h = rayBox(from, d, len, p.box);
+      if (!h) continue;
+      k *= Math.exp(-chord(p.box, e.copy(from).addScaledVector(d, h.t), d) * materialOf(p).absorb * 0.5);
+    }
+    return Math.max(0.06, k);
+  }
+
   explode(pos, r, dmg, owner, pierce = 1) {
     void pierce;
     this.fx.explosion(pos, r);
-    this.audio.play('boom', pos);
+    this.audio.play('boom', pos, Math.min(1.4, 0.75 + r * 0.18));
     this.onBlast?.(pos, r);
     this.events.push({ type: 'boom', pos: pos.clone(), r });
     const c = V();
     const from = pos.clone().setY(Math.max(pos.y, height(pos.x, pos.z) + 0.3));
     const team = owner?.team ?? -1;
+    const R = r * 1.2; // overpressure reaches a little past the nominal radius, thinning fast
     for (const u of [...this.unitGrid.near(pos.x, pos.z, r * 2.2, this.tmpA)]) {
       if (team >= 0 && u.team === team && u !== owner) continue; // no friendly blast damage
       u.center(c);
       const d = c.distanceTo(pos);
-      if (d < r * 2.2 && u.alive) { u.suppression = Math.min(1, u.suppression + 0.6 * (1 - d / (r * 2.2))); u.squad?.know(owner, pos, true); }
+      if (d > r * 2.2) continue;
+      const shield = d < 0.6 ? 1 : this.blastShield(from, c);
+      const soft = 0.35 + 0.65 * shield;
+      if (u.alive) { u.suppression = Math.min(1, u.suppression + 0.6 * (1 - d / (r * 2.2)) * soft); u.squad?.know(owner, pos, true); }
       // shell shock: a close blast leaves a soldier deaf, dazed and cowering
       if (u.alive && d < r * 1.6) {
-        const sh = 2.5 + 5 * (1 - d / (r * 1.6));
+        const sh = (2.5 + 5 * (1 - d / (r * 1.6))) * soft;
         if (u.shock < sh) { u.shock = sh; if (u.isPlayer) { this.onShock?.(sh); } else if (!u.isPlayer) this.audio.play('moan', c, 0.6); }
       }
-      if (d > r) continue;
-      const shield = this.los(from, c) ? 1 : 0.3;
-      const k = Math.pow(1 - d / r, 0.7) * shield;
+      if (d > R) continue;
+      const k = Math.min(1, 1.1 * Math.pow(1 - d / R, 1.15)) * shield;
       const push = V().subVectors(c, pos).setY(0);
       if (push.lengthSq() < 1e-4) push.set(Math.random() - 0.5, 0, Math.random() - 0.5);
-      push.normalize().multiplyScalar(6 * k).add(new THREE.Vector3(0, 3.5 * k, 0));
+      push.normalize().multiplyScalar(6.5 * k).add(new THREE.Vector3(0, 3.8 * k, 0));
       if (u.alive) this.damageUnit(u, dmg * k, owner, 'blast', push.clone().normalize());
       else if (u.rag) this.hitCorpse(u, push.clone().normalize(), dmg * k, 'blast', c.clone());
       if (!(u.isPlayer && this.god)) u.impulse(push);
@@ -678,7 +821,7 @@ export class Battle {
       const d = Math.hypot(Math.max(0, dx - v.def.hx), Math.max(0, dz - v.def.hz));
       if (d < r && pos.y < v.pos.y + v.def.h + 1.5) {
         if (team >= 0 && v.team === team && owner?.vehicle !== v) continue; // no friendly blast damage
-        v.hit(dmg * Math.pow(1 - d / r, 0.7), 'blast', owner, this);
+        v.hit(dmg * Math.pow(1 - d / r, 0.9), 'blast', owner, this);
       }
     }
     for (const p of [...this.propGrid.near(pos.x, pos.z, r + 2, this.tmpB)]) {
@@ -687,17 +830,38 @@ export class Battle {
     }
   }
 
-  // fragments fly out in all directions; cover stops them, soldiers in the open don't
+  // burning fuel from a ruptured drum: a flame pool that lights anyone standing in it
+  fuelFire(pos, owner) {
+    this.fx.fuelFire(pos);
+    const c = V();
+    for (const u of this.unitGrid.near(pos.x, pos.z, 3.2, this.tmpA)) {
+      if (!u.alive || u.center(c).distanceTo(pos) > 2.6) continue;
+      u.burn = Math.max(u.burn || 0, 3.5); u.burnBy = owner;
+    }
+  }
+
+  // Fragments fly out in all directions. Each is a fast sliver that fades with range; cover
+  // stops it, soldiers in the open don't.
   shrapnel(from, r, team, owner, dmg) {
-    const n = Math.min(14, 6 + Math.round(r * 2)), d = V();
+    const n = Math.max(14, Math.min(34, Math.round(r * 9))), d = V(), seen = new Set();
+    const base = Math.min(55, 10 + dmg * 0.14);
     for (let i = 0; i < n; i++) {
-      const a = Math.random() * Math.PI * 2, e = (Math.random() * 0.5 - 0.05) * Math.PI / 2;
+      const a = Math.random() * Math.PI * 2, e = (Math.random() * 0.55 - 0.06) * Math.PI / 2;
       d.set(Math.cos(a) * Math.cos(e), Math.sin(e), Math.sin(a) * Math.cos(e));
-      const range = r * 3.2;
+      const range = r * 4.5;
       const hit = this.raycast(from, d, range, {});
-      if (hit.unit && !(team >= 0 && hit.unit.team === team && hit.unit !== owner)) this.damageUnit(hit.unit, Math.min(60, 14 + dmg * 0.12), owner, 'bullet', d.clone(), hit.point);
-      else if (hit.unit && hit.unit.team === team) continue;
-      if (i % 3 === 0 && (hit.ground || hit.prop)) this.fx.impact(hit.point, hit.normal, 'dust');
+      if (i % 2 === 0) this.fx.fragTrail(from, d, hit.t);
+      if (i % 3 === 0) this.suppress(owner || { team }, from, hit.point, seen);
+      const fd = base / (1 + hit.t / (r * 1.4));
+      if (hit.unit) {
+        if (team >= 0 && hit.unit.team === team && hit.unit !== owner) continue;
+        this.damageUnit(hit.unit, fd, owner, 'bullet', d.clone(), hit.point);
+      } else if (hit.vehicle) {
+        this.fx.impact(hit.point, hit.normal, 'metal');
+      } else if (hit.prop) {
+        this.damageProp(hit.prop, fd * 0.2, owner);
+        if (i % 2 === 0) this.fx.impactMat(hit.point, hit.normal, materialOf(hit.prop).fx, hit.prop.def?.debris, 0.6);
+      } else if (hit.ground && i % 3 === 0) this.fx.impact(hit.point, hit.normal, 'dust');
     }
     for (const u of this.unitGrid.near(from.x, from.z, r * 2, this.tmpA)) if (!u.alive && u.rag && !u.removed && Math.random() < 0.25) {
       const c = u.rag.body.pos, dx = c.x - from.x, dz = c.z - from.z, dd = Math.hypot(dx, dz);
@@ -1015,6 +1179,7 @@ export class Battle {
     }
     this.updateSight();
     this.updateProjectiles(dt);
+    this.updateBullets(dt);
     this.callins.update(dt);
     this.updatePoints(dt);
     this.updateTeams(dt);
