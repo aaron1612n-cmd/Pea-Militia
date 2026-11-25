@@ -16,9 +16,11 @@ export function createSky() {
       low: { value: new THREE.Color('#b3b5b1') },
       sunDir: { value: new THREE.Vector3(42, 40, 26).normalize() },
       time: { value: 0 },
+      night: { value: 0 },
+      dim: { value: 1 },
     },
     vertexShader: 'varying vec3 vP; void main(){ vP = normalize(position); gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }',
-    fragmentShader: `uniform vec3 top; uniform vec3 mid; uniform vec3 low; uniform vec3 sunDir; uniform float time; varying vec3 vP;
+    fragmentShader: `uniform vec3 top; uniform vec3 mid; uniform vec3 low; uniform vec3 sunDir; uniform float time; uniform float night; uniform float dim; varying vec3 vP;
 float hash(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
 float vn(vec2 p){ vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f); return mix(mix(hash(i),hash(i+vec2(1,0)),f.x), mix(hash(i+vec2(0,1)),hash(i+vec2(1,1)),f.x), f.y); }
 float fbm(vec2 p){ float a=0.5, s=0.0; for(int i=0;i<5;i++){ s+=a*vn(p); p=p*2.03+7.1; a*=0.5; } return s; }
@@ -27,11 +29,22 @@ void main(){ float h=vP.y; vec3 c = h>0.0 ? mix(mid, top, smoothstep(0.0,0.6,h))
     vec2 uv = vP.xz / (h + 0.25) * 1.6 + vec2(time * 0.004, time * 0.0015);
     float cl = smoothstep(0.42, 0.78, fbm(uv));
     float shade = fbm(uv + vec2(0.07, 0.05));
+    float sdl = max(dot(normalize(vP), sunDir), 0.0);
     vec3 cc = mix(vec3(0.82,0.80,0.76), vec3(0.50,0.50,0.52), smoothstep(0.35, 0.8, cl * (0.6 + 0.8 * shade)));
-    c = mix(c, cc, cl * smoothstep(0.02, 0.2, h) * 0.85);
+    cc *= mix(vec3(1.0), mid * 1.3 / max(max(mid.r, max(mid.g, mid.b)), 0.2), 0.7); // lit by the colour of the hour
+    cc += vec3(1.0, 0.78, 0.5) * pow(sdl, 5.0) * 0.3 * (1.0 - night) * (1.0 - shade * 0.6); // bright rim toward the sun
+    c = mix(c, cc * mix(1.0, 0.45, night), cl * smoothstep(0.02, 0.2, h) * 0.85);
+    // stars on a clear night, thinned by cloud and haze near the horizon
+    vec2 sp = vec2(atan(vP.z, vP.x) * 70.0, h * 140.0);
+    vec2 sc = floor(sp), sf = fract(sp) - 0.5;
+    float sr = hash(sc);
+    float star = step(0.975, sr) * smoothstep(0.35, 0.0, length(sf)) * (0.4 + 0.6 * hash(sc + 7.0));
+    c += vec3(0.85, 0.9, 1.0) * star * night * (1.0 - cl) * smoothstep(0.05, 0.35, h) * dim;
   }
   float sd = max(dot(normalize(vP), sunDir), 0.0);
-  c += vec3(1.0,0.82,0.55) * (pow(sd, 6.0) * 0.22 + pow(sd, 90.0) * 0.5);
+  vec3 glow = mix(vec3(1.0,0.82,0.55), vec3(0.6,0.7,1.0), night);
+  c += glow * (pow(sd, 6.0) * mix(0.22, 0.05, night) + pow(sd, 90.0) * mix(0.5, 0.0, night)) * dim;
+  c += vec3(0.92, 0.95, 1.0) * smoothstep(0.9993, 0.9998, sd) * night * dim; // the moon
   c = mix(c, mid, smoothstep(0.12, 0.0, abs(h)) * 0.6); // haze at the horizon
   gl_FragColor=vec4(c,1.0);
 #include <colorspace_fragment>
