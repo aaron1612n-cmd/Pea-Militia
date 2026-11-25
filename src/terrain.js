@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { HALF } from './world.js';
+import { registerEnv, envIrradiance } from './env.js';
 
 // The battlefield's ground: a shallow valley with a dry creek running corner to corner, a hill
 // on each flank, rolling fields, roads, craters, and higher ground beyond the boundary fence.
@@ -297,6 +298,23 @@ function paintField() {
     stroke(r.pts, r.w * 2, rgb(COL.road), r.kind === 'road' ? 0.95 : 0.8);
     for (const s of [-1, 1]) stroke(r.pts, 0.35, rgb(COL.rut), 0.5, s * r.w * 0.45);
   }
+  // trampled earth: bare, churned dirt where soldiers gather, with boot-scuffed rings and dark scars
+  const trample = (x, z, r) => {
+    const gr = g.createRadialGradient(P(x), P(z), 0, P(x), P(z), r / px);
+    gr.addColorStop(0, 'rgba(98,84,64,0.7)');
+    gr.addColorStop(0.6, 'rgba(112,98,74,0.45)');
+    gr.addColorStop(1, 'rgba(112,98,74,0)');
+    g.fillStyle = gr;
+    g.beginPath(); g.arc(P(x), P(z), r / px, 0, Math.PI * 2); g.fill();
+    for (let i = 0; i < 26; i++) {
+      const a = hash(i, Math.round(x * 3)) * 6.283, d = Math.sqrt(hash(Math.round(z * 3), i + 9)) * r * 0.9;
+      const rr = (0.6 + hash(i + 4, Math.round(z)) * 1.6) / px;
+      g.fillStyle = hash(i, 3) > 0.5 ? 'rgba(70,60,46,0.35)' : 'rgba(132,116,88,0.3)';
+      g.beginPath(); g.ellipse(P(x + Math.cos(a) * d), P(z + Math.sin(a) * d), rr * 1.5, rr, a, 0, Math.PI * 2); g.fill();
+    }
+  };
+  for (const pt of POINTS) trample(pt.x, pt.z, POINT_R * 1.35);
+  for (const b of layout.bases) trample(b.x, b.z, 11);
   for (const cr of layout.craters) {
     const gr = g.createRadialGradient(P(cr.x), P(cr.z), 0, P(cr.x), P(cr.z), (cr.r * 1.7) / px);
     gr.addColorStop(0, 'rgba(58,54,48,0.85)');
@@ -311,6 +329,63 @@ function paintField() {
   g.strokeRect(P(-HALF + 1.2), P(-HALF + 1.2), (HALF * 2 - 2.4) / px, (HALF * 2 - 2.4) / px);
   return c;
 }
+
+// Wetness map: R is how damp the ground is (creek bed, hollows, ruts, crater floors), G is where
+// water can stand. The ground shader decides how much of it shows from the weather.
+const WTEX = 1024;
+function paintWet() {
+  const c = document.createElement('canvas');
+  c.width = c.height = WTEX;
+  const g = c.getContext('2d');
+  const img = g.createImageData(WTEX, WTEX);
+  const px = (HALF * 2) / WTEX;
+  for (let y = 0; y < WTEX; y++) {
+    const z = -HALF + (y + 0.5) * px;
+    for (let x = 0; x < WTEX; x++) {
+      const wx = -HALF + (x + 0.5) * px;
+      const creek = 1 - smooth(0.7, 3.0, creekDist(wx, z));
+      const flat = 1 - smooth(0.05, 0.16, slopeAt(wx, z));
+      const nb = noise(wx / 8 + 90, z / 8 + 40) * 0.62 + noise(wx / 2.6 + 7, z / 2.6 + 3) * 0.38;
+      const hollow = flat * smooth(0.5, 0.72, nb);
+      const k = (y * WTEX + x) * 4;
+      img.data[k] = Math.min(255, (creek * 0.85 + hollow * 0.75) * 255);
+      img.data[k + 1] = Math.min(255, (creek * smooth(0.42, 0.62, nb) * 0.9 + hollow * 0.9) * 255);
+      img.data[k + 2] = 0; img.data[k + 3] = 255;
+    }
+  }
+  g.putImageData(img, 0, 0);
+  const P = (v) => (v + HALF) / px;
+  g.globalCompositeOperation = 'lighter';
+  // water gathers in the wheel ruts
+  g.lineCap = 'round';
+  for (const r of layout.roads) {
+    for (const side of [-1, 1]) {
+      g.beginPath();
+      r.pts.forEach(([x, z], i) => {
+        const a = r.pts[Math.max(0, i - 1)], b = r.pts[Math.min(r.pts.length - 1, i + 1)];
+        const dx = b[0] - a[0], dz = b[1] - a[1], l = Math.hypot(dx, dz) || 1;
+        const ox = (-dz / l) * side * r.w * 0.45, oz = (dx / l) * side * r.w * 0.45;
+        if (i) g.lineTo(P(x + ox), P(z + oz)); else g.moveTo(P(x + ox), P(z + oz));
+      });
+      g.setLineDash([(2 + side * 0.4 + 3) / px, (6 + side) / px]);
+      g.lineWidth = 0.5 / px;
+      g.strokeStyle = 'rgb(90,150,0)';
+      g.stroke();
+    }
+  }
+  g.setLineDash([]);
+  for (const cr of layout.craters) {
+    const gr = g.createRadialGradient(P(cr.x), P(cr.z), 0, P(cr.x), P(cr.z), (cr.r * 0.95) / px);
+    gr.addColorStop(0, 'rgb(255,255,0)');
+    gr.addColorStop(0.55, 'rgb(200,130,0)');
+    gr.addColorStop(1, 'rgb(0,0,0)');
+    g.fillStyle = gr;
+    g.beginPath(); g.arc(P(cr.x), P(cr.z), (cr.r * 0.95) / px, 0, Math.PI * 2); g.fill();
+  }
+  return c;
+}
+export const WET = { value: 0 }; // 0 dry .. 1 rain: set from the weather each frame
+export const setWetness = (v) => { WET.value += (v - WET.value) * 0.05; };
 
 // Tileable detail noise, one channel per scale: R grit, G lumps, B broad mottling, A blade streaks.
 function detailTexture() {
@@ -345,16 +420,24 @@ function detailTexture() {
 // of them turned against each other so the pattern never visibly repeats), cliff faces turn to
 // banded rock by slope, and lumps become real normal variation that fades out with distance.
 // Decals (blood, scorch) can simply sit above this as meshes with polygonOffset.
-function groundMaterial(opts, detail) {
+const NOWET = new THREE.DataTexture(new Uint8Array([0, 0, 0, 255]), 1, 1);
+NOWET.needsUpdate = true;
+function groundMaterial(opts, detail, wetTex = NOWET) {
   const m = new THREE.MeshStandardMaterial({ roughness: 0.97, metalness: 0, ...opts });
+  registerEnv(m, 0.3);
+  m.customProgramCacheKey = () => (wetTex === NOWET ? 'ground-dry' : 'ground-wet');
   m.onBeforeCompile = (sh) => {
     sh.uniforms.detailMap = { value: detail };
+    sh.uniforms.wetMap = { value: wetTex };
+    sh.uniforms.uRain = WET;
+    sh.uniforms.uIrr = envIrradiance;
+    sh.uniforms.uHalf = { value: HALF };
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec3 vWP;\nvarying vec3 vWN;')
       .replace('#include <beginnormal_vertex>', '#include <beginnormal_vertex>\nvWN = objectNormal;')
       .replace('#include <begin_vertex>', '#include <begin_vertex>\nvWP = (modelMatrix * vec4(transformed, 1.0)).xyz;');
     sh.fragmentShader = sh.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec3 vWP;\nvarying vec3 vWN;\nuniform sampler2D detailMap;')
+      .replace('#include <common>', '#include <common>\nvarying vec3 vWP;\nvarying vec3 vWN;\nuniform sampler2D detailMap;\nuniform sampler2D wetMap;\nuniform float uRain;\nuniform float uIrr;\nuniform float uHalf;\nfloat gWater; float gDamp;')
       .replace('#include <map_fragment>', `#include <map_fragment>
       float gDist = length(vViewPosition);
       float gNear = 1.0 - smoothstep(18.0, 70.0, gDist);
@@ -370,7 +453,22 @@ function groundMaterial(opts, detail) {
       float gRock = 1.0 - smoothstep(0.7, 0.88, normalize(vWN).y);
       float gStrata = sin(vWP.y * 7.0 + gB.b * 6.0) * 0.5 + 0.5;
       vec3 gRockCol = vec3(0.46, 0.44, 0.4) * (0.7 + gA.r * 0.5 + gStrata * 0.18);
-      diffuseColor.rgb = mix(diffuseColor.rgb, gRockCol, gRock * 0.85);`)
+      diffuseColor.rgb = mix(diffuseColor.rgb, gRockCol, gRock * 0.85);
+      // wet ground: damp earth goes dark, hollows and ruts hold standing water in rain
+      vec4 gW = texture2D(wetMap, (vWP.xz + uHalf) / (uHalf * 2.0));
+      gDamp = clamp(gW.r * (0.55 + 0.45 * uRain) + uRain * 0.25, 0.0, 1.0);
+      float gThr = mix(0.8, 0.42, uRain);
+      gWater = smoothstep(gThr, gThr + 0.14, gW.g + (gB.g - 0.5) * 0.3 + (gA.g - 0.5) * 0.1) * (1.0 - gRock);
+      diffuseColor.rgb *= 1.0 - 0.38 * gDamp;
+      diffuseColor.rgb = mix(diffuseColor.rgb, diffuseColor.rgb * vec3(0.45, 0.46, 0.46), gWater);`)
+      .replace('#include <roughnessmap_fragment>', `#include <roughnessmap_fragment>
+      roughnessFactor = mix(roughnessFactor, 0.5, gDamp * 0.7);
+      roughnessFactor = mix(roughnessFactor, 0.14, gWater);`)
+      .replace('#include <lights_fragment_maps>', `#include <lights_fragment_maps>
+      #if defined( USE_ENVMAP ) && defined( STANDARD )
+        iblIrradiance *= uIrr;
+        radiance *= mix(0.25, 1.0, max(gWater, gDamp * 0.5));
+      #endif`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
       {
         float gK = (0.55 * gNear + 0.12) * (1.0 + gRock * 1.5);
@@ -380,6 +478,8 @@ function groundMaterial(opts, detail) {
         float gx = texture2D(detailMap, q + vec2(e, 0.0)).g + texture2D(detailMap, gw * 0.21 + vec2(e * 0.12, 0.0)).g * 0.6 - gh;
         float gz = texture2D(detailMap, q + vec2(0.0, e)).g + texture2D(detailMap, gw * 0.21 + vec2(0.0, e * 0.12)).g * 0.6 - gh;
         normal = normalize(normal + mat3(viewMatrix) * vec3(-gx, 0.0, -gz) * (gK / e) * 0.08);
+        // standing water lies flat
+        normal = normalize(mix(normal, normalize(mat3(viewMatrix) * vec3(0.0, 1.0, 0.0)), gWater * 0.92));
       }`);
   };
   return m;
@@ -484,6 +584,7 @@ export const groundMeshes = () => (group ? group.children.filter((o) => o.name =
 
 let group = null;
 let fieldTex = null;
+let wetTex = null;
 let minimap = null;
 
 function fieldMesh(detail) {
@@ -492,10 +593,13 @@ function fieldMesh(detail) {
   const p = g.attributes.position;
   for (let i = 0; i < p.count; i++) p.setY(i, grid[Math.round(p.getZ(i) + HALF) * (N + 1) + Math.round(p.getX(i) + HALF)]);
   g.computeVertexNormals();
+  wetTex?.dispose();
+  wetTex = new THREE.CanvasTexture(paintWet());
+  wetTex.minFilter = THREE.LinearMipmapLinearFilter; wetTex.anisotropy = 4;
   fieldTex = new THREE.CanvasTexture(paintField());
   fieldTex.colorSpace = THREE.SRGBColorSpace;
   fieldTex.anisotropy = 8;
-  const m = new THREE.Mesh(g, groundMaterial({ map: fieldTex }, detail));
+  const m = new THREE.Mesh(g, groundMaterial({ map: fieldTex }, detail, wetTex));
   m.receiveShadow = true;
   m.name = 'terrain';
   return m;

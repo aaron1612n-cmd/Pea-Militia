@@ -37,16 +37,49 @@ export const ANIM = {
   launcher: { kick: 0.07, climb: 0.13, hand: [0.1, 0.2], tilt: 0.7, roll: 0.0, drop: 0.08 },
   grenade: { kick: 0, climb: 0, hand: [0, 0], tilt: 0, roll: 0, drop: 0 },
 };
+// Hand anchors per gun, in the gun's own (unscaled hold) units: grip at the origin, barrel along +z.
+//  rh: trigger hand on the pistol grip [y, z]; its index finger lies along the receiver by the trigger.
+//  lh: support hand on the real hold of that gun: [y, z, rx, ry, rz]. The hand model wraps a bar along
+//      z with its palm under it ('cup'); a vertical foregrip turns it a quarter about x so it wraps along y.
+//  mag: where the support hand goes to work the magazine (or shell) mid-reload.
+// Walk / run carry: [lift, pull back, pitch (+ muzzle up), yaw] added to the ready pose, and how hard the
+// gun bobs with each stride. Each gun is carried the way it is meant to be: rifle low-ready, SMG high at
+// the chest, MG slung on the hip, coil gun across the body, mortar on the shoulder.
+const QV = Math.PI / 2;
+export const GRIPS = {
+  rifle: { x: 0.06, pz: 0.18, rh: [-0.036, -0.012], lh: [0.0, 0.3, 0, 0, 0], mag: [-0.03, 0.085, 0, 0, 0],
+    walk: [0, 0, -0.04, 0], run: [-0.02, 0.02, -0.16, 0.1], bob: 0.5 },
+  smg: { x: 0.06, pz: 0.18, rh: [-0.036, -0.004], lh: [-0.044, 0.282, 0, 0, 0], lk: 'grip', mag: [-0.095, 0.1, 0, 0, 0],
+    walk: [0.01, 0, 0.06, 0], run: [0.03, 0.0, 0.2, 0.12], bob: 0.4 },
+  mg: { x: 0.04, pz: 0.17, rh: [-0.036, -0.012], lh: [-0.075, 0.35, 0, 0, 0], mag: [-0.1, 0.12, 0, 0, 0],
+    walk: [-0.01, 0, -0.1, 0], run: [-0.03, 0.01, -0.22, 0.14], bob: 1.1 },
+  plasma: { x: 0.07, pz: 0.2, rh: [-0.036, -0.012], lh: [-0.034, 0.12, 0, 0, 0], mag: [-0.1, 0.12, 0, 0, 0],
+    walk: [0, 0, 0.0, -0.05], run: [0.01, 0, 0.12, -0.1], bob: 0.5 },
+  launcher: { x: 0.08, pz: 0.2, rh: [-0.03, 0.0], lh: [-0.04, 0.12, 0, 0, 0], mag: [0.15, 0.1, 0, 0, 0],
+    walk: [0.02, 0, 0.2, 0], run: [0.05, 0.02, 0.45, 0.1], bob: 0.9 },
+  grenade: null,
+};
+const anchor = (g, s) => {
+  const m = new THREE.Matrix4().compose(new THREE.Vector3(0, g[0] * s, g[1] * s),
+    new THREE.Quaternion().setFromEuler(new THREE.Euler(g[2] || 0, g[3] || 0, g[4] || 0, 'YXZ')), new THREE.Vector3(1, 1, 1));
+  return { m, p: new THREE.Vector3().setFromMatrixPosition(m), q: new THREE.Quaternion().setFromRotationMatrix(m) };
+};
 export function setWeaponBounds(id, box, muzzle, sight = box.max.y) {
   const s = U.WEAPON_SCALE;
+  const G = GRIPS[id];
   const half = Math.max(Math.abs(box.min.x), Math.abs(box.max.x)) * s;
   HOLD[id] = {
-    x: 0.12,
+    x: G ? G.x : 0.12,
+    pz: G ? G.pz : 0.27,
     fore: Math.min(box.max.z * s * 0.3, 0.14), // the support hand rides the rear half of the fore-end, within an arm's reach
     foreY: Math.min(-0.03, box.min.y * s * 0.3 - 0.012),
     muzzle: new THREE.Vector3(...muzzle).multiplyScalar(s),
     oneHand: id === 'grenade',
     anim: ANIM[id],
+    grips: G,
+    rh: G ? anchor([G.rh[0], G.rh[1]], s) : null,
+    lhA: G ? anchor(G.lh, s) : null,
+    magA: G ? anchor(G.mag, s) : null,
     low: Math.max(0, -box.min.y) * s,
     back: Math.max(0, -box.min.z) * s, // how far the stock reaches behind the grip
     top: box.max.y * s,
@@ -69,6 +102,14 @@ const smooth = (a, b, x) => THREE.MathUtils.smoothstep(x, a, b);
 const lerp = THREE.MathUtils.lerp;
 const FO = { along: 0, lift: 0, pitch: 0, stance: 0 };
 const HIP_UP = 0.035, ANKLE = 0.092; // hip joint above the body's bottom; ankle above the sole
+
+const BP = new THREE.Vector3(), BQ = new THREE.Quaternion();
+// out = parent * (anchor a blended toward anchor b by k)
+function blendAnchor(out, parent, a, b, k) {
+  BP.lerpVectors(a.p, b.p, k); BQ.copy(a.q).slerp(b.q, k);
+  M2.compose(BP, BQ, S1);
+  return out.multiplyMatrices(parent, M2);
+}
 
 function compose(out, x, y, z, rx = 0, ry = 0, rz = 0) {
   E.set(rx, ry, rz, 'YXZ');
@@ -236,26 +277,34 @@ function poseCore(s, out) {
   const fp = (s.fp || 0) * (1 - ads);
   // aimed (shouldered): the gun tucks in beside the cheek and rises to eye level
   const aimK = smooth(0.55, 1, ready) * (1 - rk);
+  // carry: each gun has its own walk and run position (both hands stay on it), plus a bob in time with the stride
+  const gr = h.grips;
+  const mv = w * ground * (1 - ads) * (1 - rk * 0.6) * (s.prone ? 0 : 1);
+  const cr = g.run;
+  const car = (i) => mv * lerp(gr.walk[i], gr.run[i], cr);
+  const cc = cyc * Math.PI * 2;
+  const bobA = gr.bob * mv * (0.4 + cr);
+  const gbY = -Math.abs(Math.cos(cc)) * 0.012 * bobA, bobR = Math.sin(cc) * 0.05 * bobA, gbZ = Math.cos(cc * 2) * 0.006 * bobA;
   // (the grip sits in front of the right shoulder; the butt rests in its pocket)
   const px = lerp(-h.x, 0, ads);
-  const py = lerp(0.77 + aimK * 0.04, U.EYE - (h.sight || 0.06), ads) - bodyDrop - lowered * 0.09 - rk * h.anim.drop;
-  const pz = lerp(0.27, 0.22, ads);
-  const pitch = (s.aimPitch || 0) - lowered * 0.55 - rk * h.anim.tilt + recoil * h.anim.climb;
+  const py = lerp(0.77 + aimK * 0.04, U.EYE - (h.sight || 0.06), ads) - bodyDrop - lowered * 0.09 - rk * h.anim.drop + car(0) + gbY;
+  const pz = lerp(h.pz ?? 0.27, 0.22, ads) - car(1) + gbZ;
+  const pitch = (s.aimPitch || 0) - lowered * 0.55 - rk * h.anim.tilt + recoil * h.anim.climb + car(2);
   // twist turns the whole arms-and-gun assembly about the body's axis
   E.set(0, twist, 0, 'YXZ');
   Q2.setFromEuler(E);
   // the rifle crosses in front of the right shoulder: butt at the shoulder, muzzle toward the middle
-  E.set(-pitch, twist + 0.2 * (1 - ads), -rk * h.anim.roll, 'YXZ');
+  E.set(-pitch, twist + 0.2 * (1 - ads) + car(3), -rk * h.anim.roll + bobR, 'YXZ');
   Q.setFromEuler(E);
   T.set(px, py, pz).applyAxisAngle(THREE.Object3D.DEFAULT_UP, twist);
   // the grip sits a little forward and below the shoulder line; recoil kicks it back
   P.set(0, 0, -recoil * h.anim.kick).applyQuaternion(Q).add(T);
   out.weapon.compose(P, Q, S1);
   out.muzzle.copy(h.muzzle).applyMatrix4(out.weapon);
-  // trigger hand just under the grip; support hand on the fore-end, or on the mag mid-reload
-  out.hands[1].multiplyMatrices(out.weapon, compose(M, 0, -0.032, -0.006));
-  const fz = lerp(h.fore, h.anim.hand[1], rk), fy = lerp(h.foreY, h.anim.hand[0], rk);
-  out.hands[0].multiplyMatrices(out.weapon, compose(M, 0, fy, fz));
+  // both hands ride anchors on the gun: the trigger hand on the grip, the support hand on this gun's
+  // fore-end, foregrip or handle, sliding to the magazine mid-reload
+  out.hands[1].multiplyMatrices(out.weapon, h.rh.m);
+  blendAnchor(out.hands[0], out.weapon, h.lhA, h.magA, rk);
   return out;
 }
 
@@ -273,6 +322,7 @@ export function pose(s, out = makePose()) {
   freeArm(s, out);
   postures(s, out);
   crawl(s, out);
+  clutch(s, out);
   return out;
 }
 
@@ -290,7 +340,7 @@ function followLean(s, out) {
 // the fore-end, pumps against the legs with the elbow bent. k: 0 on the gun .. 1 swinging free.
 const FH = new THREE.Vector3(), FP = new THREE.Vector3(), FQ = new THREE.Quaternion(), FQ2 = new THREE.Quaternion(), FS = new THREE.Vector3();
 function freeArm(s, out) {
-  const k = s.free || 0;
+  const k = 0; // both hands stay on the gun; the stride is carried by the gun's own run pose
   if (k < 0.001 || (s.dead ?? -1) >= 0 || (s.prone || 0) > 0.01 || !out.gait) return;
   const g = out.gait;
   const sw = Math.cos((s.cycle || 0) * Math.PI * 2); // left arm forward as the right foot lands
@@ -319,6 +369,25 @@ function crawl(s, out) {
     h.elements[14] += Math.sin(a) * 0.05 * w;
     h.elements[13] += Math.max(0, Math.cos(a)) * 0.04 * w - 0.03 * w;
   }
+}
+
+// A man hit in the body doubles over: the chest folds forward over the hips and the free hand
+// goes to the wound. k: 0 upright .. 1 doubled over.
+const CP = new THREE.Vector3();
+function clutch(s, out) {
+  const k = s.dying || 0;
+  if (k < 0.01 || (s.dead ?? -1) >= 0 || (s.prone || 0) > 0.3) return;
+  const a = 0.55 * k + 0.05 * k * Math.sin((s.t || 0) * 8);
+  const py = U.LIFT + 0.15;
+  R.makeTranslation(0, py, 0).multiply(R2.makeRotationX(a)).multiply(M.makeTranslation(0, -py, 0));
+  for (const m of [out.body, out.head, out.pack, out.weapon, out.hands[0], out.hands[1]]) m.premultiply(R);
+  out.muzzle.applyMatrix4(R);
+  // the off hand presses the belly
+  const h = out.hands[0];
+  h.decompose(FP, FQ, FS);
+  CP.set(0.07, -0.08, U.D / 2 + 0.04).applyMatrix4(out.body);
+  FP.lerp(CP, Math.min(1, k * 1.4));
+  h.compose(FP, FQ, S1);
 }
 
 function postures(s, out) {

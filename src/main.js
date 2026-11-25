@@ -1,9 +1,13 @@
 import * as THREE from 'three';
 import './style.css';
 import { createSky, HALF } from './world.js';
+import './haze.js';
 import { Atmosphere } from './atmosphere.js';
+import { Post } from './post.js';
+import { Ambience } from './ambience.js';
 import { setSight } from './ai.js';
-import { height, updateGround } from './terrain.js';
+import { height, updateGround, setWetness } from './terrain.js';
+import { initEnv, updateEnv } from './env.js';
 import { Input } from './input.js';
 import { PlayerCam } from './camera.js';
 import { Unit } from './unit.js';
@@ -30,8 +34,14 @@ const params = new URLSearchParams(location.search);
 const testing = params.has('test');
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 
+// Quality tiers: 'high' draws through the post pass (AO, grade, grain, blur); 'low' (phones, weak
+// machines) draws straight to the screen with a cheap CSS vignette, smaller shadows and 1.5x pixels.
+const coarse = matchMedia('(pointer: coarse)').matches;
+const tier = params.get('q') || (coarse || (navigator.hardwareConcurrency || 8) <= 4 ? 'low' : 'high');
+const usePost = tier === 'high' && (!testing || params.has('post'));
+document.documentElement.dataset.quality = usePost ? 'high' : 'low';
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: testing, powerPreference: 'high-performance' });
-renderer.setPixelRatio(testing ? 1 : Math.min(devicePixelRatio, 2)); // the check suite renders in software
+renderer.setPixelRatio(testing ? 1 : Math.min(devicePixelRatio, tier === 'low' ? 1.5 : 2)); // the check suite renders in software
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -52,7 +62,8 @@ scene.add(hemi);
 const SUN = new THREE.Vector3(42, 40, 26); // overwritten each frame by the day cycle // lower sun: longer shadows, more shape on the blocks
 const sun = new THREE.DirectionalLight('#ffe2bd', 2.7);
 sun.castShadow = true;
-sun.shadow.mapSize.set(testing ? 1024 : 2048, testing ? 1024 : 2048);
+const SM = testing || tier === 'low' ? 1024 : 2048;
+sun.shadow.mapSize.set(SM, SM);
 const SH = 26;
 Object.assign(sun.shadow.camera, { left: -SH, right: SH, top: SH, bottom: -SH, near: 1, far: 160 });
 sun.shadow.bias = -0.0004;
@@ -62,6 +73,7 @@ const rim = new THREE.DirectionalLight('#aebfd0', 0.6);
 rim.position.set(-5, 3, -6);
 scene.add(rim);
 const atmo = new Atmosphere({ scene, sky, hemi, sun, rim, renderer, reduced });
+initEnv(renderer, sky);
 let sightSet = 0;
 atmo.onThunder = () => audio.play('boom', null, 0.35);
 
@@ -72,6 +84,7 @@ const cockpit = new Cockpit(camera);
 let cockpitVeh = null;
 const fx = new Effects(scene);
 const audio = new Audio();
+const ambience = new Ambience(fx, { low: !usePost, reduced });
 const crowd = new Crowd(scene, 700);
 // First-person gun and arms get their own scene, camera and depth: the gun never pokes into walls,
 // and its field of view stays put when the world camera zooms to aim.
@@ -82,8 +95,13 @@ vmScene.add(vmHemi, vmSun, vmSun.target);
 const vmCamera = new THREE.PerspectiveCamera(VM_FOV, 1, 0.02, 6);
 const vmCrowd = new Crowd(vmScene, 2);
 let vmOn = false;
+const post = usePost ? new Post(renderer, { samples: 4, reduced }) : null;
+let frameDt = 1 / 60;
 function renderWorld() {
-  renderer.render(scene, camera);
+  if (post) {
+    post.render(scene, camera, frameDt, { night: atmo.night, wet: Math.min(1, atmo.w.rain), flash: atmo.flash * atmo.flash * 0.18, noBlur: testing || state === 'menu' || cam.frozen });
+    // the post pass leaves its own depth behind, so the gun gets a clean depth range on the screen
+  } else renderer.render(scene, camera);
   if (!vmOn) return;
   vmCamera.position.copy(camera.position);
   vmCamera.quaternion.copy(camera.quaternion);
@@ -148,6 +166,7 @@ function resize() {
   cam.fov = w / h < 0.8 ? 78 : 70;
   camera.updateProjectionMatrix();
   fx.setCamera(camera, renderer.domElement.height);
+  post?.setSize(renderer.domElement.width, renderer.domElement.height);
   smokeScale = renderer.domElement.height * 0.75;
 }
 addEventListener('resize', resize);
@@ -787,6 +806,7 @@ let menuT = 0;
 let skipDraw = false;
 function frame(_t, fixedDt) {
   const dt = fixedDt ?? Math.min(clock.getDelta(), 0.05);
+  frameDt = dt;
   { const now = performance.now() / 1000; if (!reduced) sky.material.uniforms.time.value = now; if (!reduced) for (const p of battle.points) p.model.userData.wave?.(now); }
   for (const d of battle.decor) if (d.userData.tick) { d.userData.tick(performance.now() / 1000); d.userData.smoke.material.uniforms.scale.value = smokeScale; }
   const inp = input.read();
@@ -905,6 +925,9 @@ function frame(_t, fixedDt) {
   // shadows follow what the camera is looking at
   const look = state === 'menu' ? new THREE.Vector3() : cam.mode === 'over' ? new THREE.Vector3(cam.over.x, 0, cam.over.z) : cam.mode === 'free' ? cam.fr.clone().add(cam.forward().setY(0).normalize().multiplyScalar(22)).setY(0) : player.pos.clone().add(cam.forward().setY(0).multiplyScalar(12));
   atmo.update(dt, camera);
+  setWetness(Math.min(1, atmo.w.rain));
+  if (state !== 'menu') ambience.update(dt, camera, battle);
+  updateEnv(performance.now() / 1000, atmo.hour, atmo.weather);
   SUN.copy(atmo.sunDir);
   if (Math.abs(atmo.sight - sightSet) > 0.02) { sightSet = atmo.sight; setSight(sightSet); }
   sun.position.copy(look).add(SUN);
@@ -937,7 +960,7 @@ if (params.has('play')) startBattle({ mode: params.get('play') || 'battle' });
 window.__game = { maxSpeed: MAX_SPEED,
   THREE, scene, camera, renderer, cam, input, crowd, fx, SLOTS, U, pose, makePose, solveLegs, solveArms, HOLD, HALF, weaponModel,
   height, get battle() { return battle; }, get player() { return player; }, get state() { return state; },
-  sandbox, atmo, start: startBattle, openMenu, pause,
+  sandbox, atmo, ambience, envNow: () => updateEnv(1e9, atmo.hour, atmo.weather, true), start: startBattle, openMenu, pause,
   freeze(on = true) { frozen = on; },
   // render one frame now (for screenshots while frozen)
   render() { drawUnits(); updateGround(camera); sky.position.copy(camera.position); renderWorld(); },

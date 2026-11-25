@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { MAT, Kit, instance, profile, roundRect, turnedY, ring, bolt, block, pipe } from './models.js';
 import { toWorld } from './physics.js';
 import { ellipsoid } from './geo.js';
+import { weather } from './grime.js';
 
 // Cover and obstacles. World units (metres). Each prop is an oriented box for physics and
 // line of sight, plus cover spots around it for the AI.
@@ -37,11 +38,14 @@ function bag() {
   return bagGeo;
 }
 
-const stone = (c) => new THREE.MeshStandardMaterial({ color: c, roughness: 0.92, flatShading: true });
+const stone = (c) => weather(new THREE.MeshStandardMaterial({ color: c, roughness: 0.92, flatShading: true }), 'stone');
 const STONE = [stone('#8d877a'), stone('#7c766a'), stone('#9a9384')];
-const PLASTER = new THREE.MeshStandardMaterial({ color: '#b3aa95', roughness: 0.95 });
+const PLASTER = weather(new THREE.MeshStandardMaterial({ color: '#b3aa95', roughness: 0.95 }), 'concrete');
 const CHAR = new THREE.MeshStandardMaterial({ color: '#2e2a26', roughness: 0.9 });
-const ROCK = new THREE.MeshStandardMaterial({ color: '#7a786f', roughness: 0.95, flatShading: true });
+const ROCK = weather(new THREE.MeshStandardMaterial({ color: '#7a786f', roughness: 0.95, flatShading: true }), 'stone');
+// weathered copies of the shared materials, so the soldiers' gear keeps its own clean look
+const KIND = { concrete: 'concrete', iron: 'metal', steel: 'metal', darkSteel: 'metal', wood: 'wood', darkWood: 'wood' };
+const PM = new Proxy({}, { get: (c, k) => (c[k] ??= KIND[k] ? weather(MAT[k], KIND[k]) : MAT[k]) });
 
 // A lumpy stone: a low-poly sphere pushed about by a seeded wobble.
 function lump(rx, ry, rz, seed) {
@@ -85,6 +89,22 @@ function masonry(k, x0, x1, thick, top, seed) {
   }
 }
 
+// Bent reinforcing bar sticking out of broken concrete: a thin rod with a kink near the tip.
+function rebar(k, x, y, z, len, lean, yaw = 0) {
+  const rod = new THREE.CylinderGeometry(0.011, 0.011, len, 5);
+  rod.translate(0, len / 2, 0);
+  k.add(rod, PM.iron, { pos: [x, y, z], rot: [lean, yaw, lean * 0.6] });
+  const tip = new THREE.CylinderGeometry(0.011, 0.011, len * 0.35, 5);
+  tip.translate(0, len * 0.17, 0);
+  const ex = x + Math.sin(lean * 0.6) * len * -0.9, ez = z + Math.sin(lean) * len * 0.9;
+  k.add(tip, PM.iron, { pos: [ex, y + len * 0.93, ez], rot: [lean + 0.7, yaw, lean * 0.6 + 0.4] });
+}
+// broken concrete chunk: a flat shard
+function chunk(k, x, y, z, s, seed) {
+  k.add(lump(0.2 * s, 0.07 * s, 0.15 * s, seed), PM.concrete, { pos: [x, y, z], rot: [0, seed, 0] });
+}
+
+const CHARWOOD = weather(new THREE.MeshStandardMaterial({ color: '#2b2118', roughness: 0.85 }), 'wood');
 const BUILD = {
   ruin(k) {
     // a house wall: stepped break along the top, a patch of old plaster and a scorched lintel
@@ -94,12 +114,23 @@ const BUILD = {
     k.add(block(1.1, 0.5, 0.02, 0.01, 0.004), PLASTER, { pos: [0.6, 0.55, -0.235] });
     k.add(block(1.5, 0.12, 0.5, 0.02, 0.01), CHAR, { pos: [-1.0, 1.92, 0] });
     k.add(block(4.1, 0.14, 0.52, 0.03, 0.012), STONE[1], { pos: [0, 0.03, 0] }); // footing
+    // the roof is gone: charred rafters stick out of the wall, one has fallen across the rubble
+    for (const [x, len, tilt] of [[-1.55, 0.9, -0.5], [-0.8, 1.1, -0.4], [0.25, 0.7, 0.35]]) {
+      k.add(block(0.09, len, 0.12, 0.01, 0.005), CHARWOOD, { pos: [x, top(x) + 0.05 + len * 0.35, 0.1], rot: [0, 0, tilt * 0.5] });
+    }
+    k.add(block(0.1, 1.9, 0.14, 0.01, 0.005), CHARWOOD, { pos: [0.9, 0.3, 0.75], rot: [1.25, 0.2, 0] });
+    // floor slab and tile where the room used to be, a window hole's worth of broken lintel stones
+    k.add(block(2.6, 0.05, 1.3, 0.01, 0.004), PM.concrete, { pos: [-0.4, 0.03, 0.9] });
+    for (let i = 0; i < 7; i++) k.add(lump(0.3 - (i % 3) * 0.05, 0.14, 0.24, 700 + i), STONE[i % 3], { pos: [-1.9 + i * 0.62, 0.08, -0.4 - (i % 2) * 0.2], rot: [0, i, 0] });
+    for (let i = 0; i < 5; i++) k.add(lump(0.22, 0.1, 0.18, 760 + i), STONE[(i + 1) % 3], { pos: [-1.4 + i * 0.7, 0.07, 0.55 + (i % 2) * 0.25], rot: [0, i * 2, 0] });
+    rebar(k, -1.9, 1.95, 0.05, 0.5, 0.35, 0.3); rebar(k, -1.75, 1.95, -0.08, 0.38, -0.3, 1.2);
   },
   ruinLow(k) {
     const top = (x) => 0.74 - Math.max(0, x - 0.6) * 0.25;
     masonry(k, -1.5, 1.5, 0.44, top, 202);
     k.add(block(3.1, 0.14, 0.52, 0.03, 0.012), STONE[1], { pos: [0, 0.03, 0] });
     for (let i = 0; i < 4; i++) k.add(lump(0.16, 0.1, 0.13, 300 + i), STONE[i % 3], { pos: [-1.2 + i * 0.85, 0.06, 0.36 * (i % 2 ? 1 : -1)] });
+    for (let i = 0; i < 9; i++) k.add(block(0.2, 0.08, 0.1, 0.01, 0.006), STONE[i % 3], { pos: [-1.5 + i * 0.37, 0.05 + (i % 3) * 0.02, 0.5 * (i % 2 ? 1 : -1) + (i % 4) * 0.05], rot: [0.1 * i, i * 1.7, 0] });
   },
   rubble(k) {
     for (let i = 0; i < 9; i++) {
@@ -131,7 +162,7 @@ const BUILD = {
         const x = -1.0 + off + i * 0.5 + (row === 2 ? 0.25 : 0);
         for (const z of [-0.14, 0.14]) {
           if (row === 2 && z < 0 && i % 2) continue;
-          k.add(bag(), MAT.sand, { pos: [x + r() * 0.03, 0.068 + row * 0.136, z + r() * 0.02], rot: [r() * 0.06, r() * 0.2, r() * 0.05] });
+          k.add(bag(), PM.sand, { pos: [x + r() * 0.03, 0.068 + row * 0.136, z + r() * 0.02], rot: [r() * 0.06, r() * 0.2, r() * 0.05] });
         }
       }
     });
@@ -141,15 +172,15 @@ const BUILD = {
     // boarded faces with a heavier frame and corner irons
     for (let i = 0; i < 3; i++) {
       const y = (h / 3) * (i + 0.5);
-      k.add(block(w - 0.04, ph, 0.03, 0.01, 0.005), MAT.wood, { pos: [0, y, d / 2 - 0.02] });
-      k.add(block(w - 0.04, ph, 0.03, 0.01, 0.005), MAT.wood, { pos: [0, y, -d / 2 + 0.02] });
-      k.add(block(0.03, ph, d - 0.04, 0.01, 0.005), MAT.wood, { pos: [w / 2 - 0.02, y, 0] });
-      k.add(block(0.03, ph, d - 0.04, 0.01, 0.005), MAT.wood, { pos: [-w / 2 + 0.02, y, 0] });
+      k.add(block(w - 0.04, ph, 0.03, 0.01, 0.005), PM.wood, { pos: [0, y, d / 2 - 0.02] });
+      k.add(block(w - 0.04, ph, 0.03, 0.01, 0.005), PM.wood, { pos: [0, y, -d / 2 + 0.02] });
+      k.add(block(0.03, ph, d - 0.04, 0.01, 0.005), PM.wood, { pos: [w / 2 - 0.02, y, 0] });
+      k.add(block(0.03, ph, d - 0.04, 0.01, 0.005), PM.wood, { pos: [-w / 2 + 0.02, y, 0] });
     }
-    k.add(block(w - 0.02, 0.03, d - 0.02, 0.01, 0.005), MAT.wood, { pos: [0, h - 0.015, 0] });
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) k.add(block(0.06, h, 0.06, 0.012, 0.006), MAT.darkWood, { pos: [sx * (w / 2 - 0.025), h / 2, sz * (d / 2 - 0.025)] });
-    for (const sz of [-1, 1]) k.add(block(w - 0.1, 0.06, 0.035, 0.01, 0.005), MAT.darkWood, { pos: [0, h / 2, sz * (d / 2 + 0.005)] });
-    for (const sx of [-1, 1]) for (const sz of [-1, 1]) for (const y of [0.05, h - 0.05]) k.add(block(0.075, 0.075, 0.075, 0.01, 0.004), MAT.iron, { pos: [sx * (w / 2 - 0.02), y, sz * (d / 2 - 0.02)] });
+    k.add(block(w - 0.02, 0.03, d - 0.02, 0.01, 0.005), PM.wood, { pos: [0, h - 0.015, 0] });
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) k.add(block(0.06, h, 0.06, 0.012, 0.006), PM.darkWood, { pos: [sx * (w / 2 - 0.025), h / 2, sz * (d / 2 - 0.025)] });
+    for (const sz of [-1, 1]) k.add(block(w - 0.1, 0.06, 0.035, 0.01, 0.005), PM.darkWood, { pos: [0, h / 2, sz * (d / 2 + 0.005)] });
+    for (const sx of [-1, 1]) for (const sz of [-1, 1]) for (const y of [0.05, h - 0.05]) k.add(block(0.075, 0.075, 0.075, 0.01, 0.004), PM.iron, { pos: [sx * (w / 2 - 0.02), y, sz * (d / 2 - 0.02)] });
   },
   barrier(k) {
     // jersey barrier profile: wide foot, slanted lower face, narrow top
@@ -160,50 +191,56 @@ const BUILD = {
     const g = new THREE.ExtrudeGeometry(s, { depth: 1.96, bevelEnabled: true, bevelThickness: 0.02, bevelSize: 0.015, bevelSegments: 2 });
     g.translate(0, 0, -0.98);
     g.rotateY(Math.PI / 2);
-    k.add(g, MAT.concrete);
-    for (const x of [-0.6, 0.6]) k.add(block(0.18, 0.06, 0.66, 0.02, 0.005), MAT.darkSteel, { pos: [x, 0.005, 0], scale: [1, 0.3, 1] });
+    k.add(g, PM.concrete);
+    for (const x of [-0.6, 0.6]) k.add(block(0.18, 0.06, 0.66, 0.02, 0.005), PM.darkSteel, { pos: [x, 0.005, 0], scale: [1, 0.3, 1] });
   },
   drum(k) {
-    k.add(turnedY([[0, 0], [0.245, 0], [0.26, 0.02], [0.26, 0.56], [0.245, 0.58], [0, 0.58]], 24), MAT.iron);
-    for (const y of [0.03, 0.2, 0.38, 0.55]) k.add(ring(0.263, 0.012, 24), MAT.darkSteel, { pos: [0, y, 0], rot: [Math.PI / 2, 0, 0] });
-    k.add(turnedY([[0, 0.58], [0.045, 0.58], [0.045, 0.62], [0, 0.62]], 12), MAT.brass, { pos: [0.11, 0, 0] });
-    k.add(ring(0.035, 0.007, 12), MAT.brass, { pos: [0.11, 0.635, 0], rot: [Math.PI / 2, 0, 0] });
-    k.add(pipe([[-0.1, 0.58, 0], [-0.1, 0.66, 0], [-0.18, 0.68, 0]], 0.014, 10, 6), MAT.brass);
+    k.add(turnedY([[0, 0], [0.245, 0], [0.26, 0.02], [0.26, 0.56], [0.245, 0.58], [0, 0.58]], 24), PM.iron);
+    for (const y of [0.03, 0.2, 0.38, 0.55]) k.add(ring(0.263, 0.012, 24), PM.darkSteel, { pos: [0, y, 0], rot: [Math.PI / 2, 0, 0] });
+    k.add(turnedY([[0, 0.58], [0.045, 0.58], [0.045, 0.62], [0, 0.62]], 12), PM.brass, { pos: [0.11, 0, 0] });
+    k.add(ring(0.035, 0.007, 12), PM.brass, { pos: [0.11, 0.635, 0], rot: [Math.PI / 2, 0, 0] });
+    k.add(pipe([[-0.1, 0.58, 0], [-0.1, 0.66, 0], [-0.18, 0.68, 0]], 0.014, 10, 6), PM.brass);
   },
   wall(k) {
     // riveted steel plate on two buttress feet
-    k.add(block(2.5, 1.45, 0.12, 0.03, 0.015), MAT.iron, { pos: [0, 0.725, 0] });
-    for (const x of [-0.85, 0, 0.85]) k.add(block(0.08, 1.45, 0.2, 0.02, 0.01), MAT.darkSteel, { pos: [x, 0.725, 0] });
+    k.add(block(2.5, 1.45, 0.12, 0.03, 0.015), PM.iron, { pos: [0, 0.725, 0] });
+    for (const x of [-0.85, 0, 0.85]) k.add(block(0.08, 1.45, 0.2, 0.02, 0.01), PM.darkSteel, { pos: [x, 0.725, 0] });
     for (const x of [-1.15, 1.15]) {
-      k.add(profile([[-0.42, 0], [0.42, 0], [0.06, 0.9], [-0.06, 0.9]], 0.07, 0.008), MAT.darkSteel, { pos: [x, 0, 0] });
+      k.add(profile([[-0.42, 0], [0.42, 0], [0.06, 0.9], [-0.06, 0.9]], 0.07, 0.008), PM.darkSteel, { pos: [x, 0, 0] });
     }
-    for (let x = -1.15; x <= 1.16; x += 0.23) for (const y of [0.08, 1.37]) for (const z of [-0.06, 0.06]) k.add(bolt(0.016), MAT.darkSteel, { pos: [x, y, z], rot: [z > 0 ? Math.PI / 2 : -Math.PI / 2, 0, 0] });
-    k.add(block(0.5, 0.12, 0.13, 0.02, 0.01), MAT.brass, { pos: [0.42, 1.1, 0] }); // brass vision slot frame
+    for (let x = -1.15; x <= 1.16; x += 0.23) for (const y of [0.08, 1.37]) for (const z of [-0.06, 0.06]) k.add(bolt(0.016), PM.darkSteel, { pos: [x, y, z], rot: [z > 0 ? Math.PI / 2 : -Math.PI / 2, 0, 0] });
+    k.add(block(0.5, 0.12, 0.13, 0.02, 0.01), PM.brass, { pos: [0.42, 1.1, 0] }); // brass vision slot frame
   },
   slab(k) {
     // cast concrete wall panel on a footing, with a chipped top course
-    k.add(block(4.4, 2.1, 0.4, 0.05, 0.025), MAT.concrete, { pos: [0, 1.05, 0] });
-    k.add(block(4.5, 0.16, 0.5, 0.04, 0.02), MAT.iron, { pos: [0, 0.08, 0] });
-    for (const x of [-1.6, -0.5, 0.6, 1.7]) k.add(block(0.9 + (x > 0 ? 0.15 : 0), 0.2 + Math.abs(x) * 0.03, 0.36, 0.04, 0.02), MAT.concrete, { pos: [x, 2.2, 0] });
-    for (const x of [-1.1, 1.1]) k.add(block(0.08, 1.9, 0.44, 0.02, 0.01), MAT.darkSteel, { pos: [x, 1.05, 0] });
+    k.add(block(4.4, 2.1, 0.4, 0.05, 0.025), PM.concrete, { pos: [0, 1.05, 0] });
+    k.add(block(4.5, 0.16, 0.5, 0.04, 0.02), PM.iron, { pos: [0, 0.08, 0] });
+    for (const x of [-1.6, -0.5, 0.6, 1.7]) k.add(block(0.9 + (x > 0 ? 0.15 : 0), 0.2 + Math.abs(x) * 0.03, 0.36, 0.04, 0.02), PM.concrete, { pos: [x, 2.2, 0] });
+    for (const x of [-1.1, 1.1]) k.add(block(0.08, 1.9, 0.44, 0.02, 0.01), PM.darkSteel, { pos: [x, 1.05, 0] });
+    // broken top edge: reinforcing bar and chunks that have fallen off
+    for (let i = 0; i < 6; i++) rebar(k, -1.9 + i * 0.7, 2.28, (i % 2 ? 1 : -1) * 0.06, 0.32 + (i % 3) * 0.12, ((i % 3) - 1) * 0.3, i);
+    for (let i = 0; i < 4; i++) chunk(k, -1.7 + i * 1.1, 0.07, 0.42 * (i % 2 ? -1 : 1), 1 + (i % 2) * 0.5, 800 + i);
   },
   bunker(k) {
     // squat pillbox: thick walls, a firing slit on each face, a lid that overhangs
-    k.add(block(3.3, 1.3, 3.3, 0.18, 0.06), MAT.concrete, { pos: [0, 0.65, 0] });
-    k.add(block(3.3, 0.35, 3.3, 0.18, 0.06), MAT.concrete, { pos: [0, 1.6, 0] });
+    k.add(block(3.3, 1.3, 3.3, 0.18, 0.06), PM.concrete, { pos: [0, 0.65, 0] });
+    k.add(block(3.3, 0.35, 3.3, 0.18, 0.06), PM.concrete, { pos: [0, 1.6, 0] });
     for (let a = 0; a < 4; a++) {
       const r = (a * Math.PI) / 2;
-      for (const sx of [-1, 1]) k.add(block(0.7, 0.32, 0.3, 0.05, 0.02), MAT.concrete, { pos: [Math.sin(r) * 1.5 + Math.cos(r) * sx * 1.25, 1.42, Math.cos(r) * 1.5 - Math.sin(r) * sx * 1.25], rot: [0, r, 0] });
+      for (const sx of [-1, 1]) k.add(block(0.7, 0.32, 0.3, 0.05, 0.02), PM.concrete, { pos: [Math.sin(r) * 1.5 + Math.cos(r) * sx * 1.25, 1.42, Math.cos(r) * 1.5 - Math.sin(r) * sx * 1.25], rot: [0, r, 0] });
     }
-    k.add(block(3.5, 0.22, 3.5, 0.12, 0.05), MAT.iron, { pos: [0, 1.89, 0] });
-    k.add(block(3.0, 0.12, 0.08, 0.03, 0.01), MAT.darkSteel, { pos: [0, 1.42, 0] });
+    k.add(block(3.5, 0.22, 3.5, 0.12, 0.05), PM.iron, { pos: [0, 1.89, 0] });
+    k.add(block(3.0, 0.12, 0.08, 0.03, 0.01), PM.darkSteel, { pos: [0, 1.42, 0] });
+    // shell-bitten corner, bar showing through, spalled lumps around the base
+    for (let i = 0; i < 5; i++) rebar(k, 1.3 + (i % 3) * 0.12, 1.55, 1.6 - i * 0.1, 0.4 + (i % 2) * 0.15, 0.4 - i * 0.12, i * 1.3);
+    for (let i = 0; i < 6; i++) chunk(k, Math.cos(i * 1.1) * 2.15, 0.07, Math.sin(i * 1.1) * 2.15, 1.2, 900 + i);
   },
   trap(k) {
     // Czech hedgehog: three angle-iron beams crossing at the middle
     const beam = profile([[-0.6, -0.05], [0.6, -0.05], [0.6, 0.05], [-0.6, 0.05]], 0.1, 0.01);
     const dirs = [[0.62, 0, 0], [0, 0, 0.62], [0, 0.62, 0]];
     const rots = [[0, 0.785, 0.62], [0.62, 0.785 + Math.PI / 2, 0], [Math.PI / 2 - 0.2, 0, 0.3]];
-    for (let i = 0; i < 3; i++) k.add(beam, MAT.steel, { pos: [0, 0.42, 0], rot: rots[i] });
+    for (let i = 0; i < 3; i++) k.add(beam, PM.steel, { pos: [0, 0.42, 0], rot: rots[i] });
     void dirs;
   },
 };

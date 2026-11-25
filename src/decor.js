@@ -207,6 +207,7 @@ export function buildDecor(battle, seed = 11) {
     P.needsUpdate = S.needsUpdate = A.needsUpdate = true;
   };
   tick(0);
+  group.userData.fires = wrecks.map((w) => ({ x: w.x, y: w.y + 1.0, z: w.z }));
   group.userData.tick = tick;
   group.userData.smoke = pts;
   return group;

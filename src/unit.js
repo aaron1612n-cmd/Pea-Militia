@@ -54,11 +54,13 @@ export class Unit {
     this.burn = 0;
     this.suppression = 0;
     this.flinch = 0;
+    this.dying = false; this.dyingT = 0; this.dyK = 0; this.clutch = 0; this.dyHit = null; this.dyFrom = null; this.dyFight = false;
     this.kills = 0;
     this.god = false;
     this.shots = 0;
     // battlefield injuries: bleeding (hp/s), crippled legs, down and crawling, stagger, shell shock
     this.bleed = 0; this.leg = 0; this.arm = 0; this.down = false; this.stagger = 0; this.shock = 0;
+    this.dying = false; this.dyK = 0; this.clutch = 0; this.dyHit = null;
     this.bandageT = 0; this.jamT = 0; this.cry = 0; this.corpseHp = 70;
 
     this.weapons = loadout.map((id) => makeWeapon(id));
@@ -156,9 +158,25 @@ export class Unit {
   // zone: 'head' | 'torso' | 'arm' | 'leg'. Damage is already scaled by the zone.
   hurt(dmg, from, world, kind = 'bullet', zone = 'torso') {
     if (!this.alive || this.god) return;
-    this.hp -= dmg * this.mod.dmgIn * (this.isPlayer ? 0.8 : 1);
+    const dealt = dmg * this.mod.dmgIn * (this.isPlayer ? 0.8 : 1);
+    this.hp -= dealt;
     this.lastHurt = this.t;
     this.flinch = Math.min(1, this.flinch + dmg / 40);
+    if (zone === 'torso' && kind !== 'fire' && dmg > 20) this.clutch = 1; // a hand goes to the wound
+    // A body hit rarely drops a man on the spot: he staggers, clutches the wound and goes down a
+    // few seconds later. Only the head, a blast, fire or a very heavy round kills outright.
+    if (this.hp <= 0 && this.alive && kind !== 'fire') {
+      const lastLegs = this.dying;
+      if (!lastLegs && this.survivable(dealt, zone, kind)) {
+        this.beginDying(-this.hp, zone, dmg, from, world);
+        this.hp = 1;
+      } else if (lastLegs && zone !== 'head' && kind !== 'blast' && dealt < 110) {
+        // shot again on the way down: that cuts the time he has left
+        this.dyingT -= 0.35 + dealt / 90; this.dyHit = this.lastHit; this.dyFrom = from || this.dyFrom;
+        this.hp = 1;
+        if (this.dyingT <= 0) { this.hp = 0; }
+      } else this.hp = Math.min(this.hp, 0);
+    }
     if (this.hp > 0 && kind !== 'fire') {
       // wounds keep bleeding until somebody bandages them; hits to the limbs cripple
       this.bleed = Math.min(4, this.bleed + dmg * (kind === 'blast' ? 0.05 : 0.035));
@@ -170,6 +188,24 @@ export class Unit {
     }
     if (this.onHurt) this.onHurt(dmg, from, kind);
     if (this.hp <= 0) this.die(from, world);
+  }
+
+  survivable(dealt, zone, kind) {
+    if (this.isPlayer || zone === 'head' || kind === 'blast') return false;
+    if (kind !== 'bullet' && kind !== 'plasma') return false;
+    return dealt < 110 && -this.hp < 75;
+  }
+
+  // mortally wounded: still on his feet for a while, slower the worse it was
+  beginDying(over, zone, dmg, from, world) {
+    this.dying = true;
+    const base = Math.max(1.3, 3.6 - over / 35);
+    this.dyingT = base * (0.8 + Math.random() * 0.6) * (zone === 'leg' ? 1.2 : 1);
+    this.dyFight = Math.random() < 0.4;
+    this.dyFrom = from; this.dyHit = this.lastHit; this.stagger = 1.1; this.flinch = 1; this.clutch = 1;
+    this.cry = 0;
+    if (world?.audio) { world.audio.play('scream', this.center(), 1); this.cry = 2; }
+    world?.events.push({ type: 'down', unit: this });
   }
 
   // too hurt to stand: drop and crawl for cover or a medic
@@ -193,7 +229,7 @@ export class Unit {
 
   // a bandage stops the bleeding and gets a downed soldier back up
   bandage(amount = 20) {
-    this.bleed = 0;
+    this.bleed = 0; this.dying = false;
     this.hp = Math.min(this.maxHp, this.hp + amount);
     this.leg *= 0.5; this.arm *= 0.5;
     if (this.down && this.hp > this.maxHp * 0.3) { this.down = false; }
@@ -259,7 +295,20 @@ export class Unit {
     // no regeneration: wounds bleed until bandaged, minor ones clot slowly
     this.stagger = Math.max(0, this.stagger - dt); this.shock = Math.max(0, this.shock - dt); this.cry -= dt;
     if (this.jamT > 0) this.jamT -= dt;
-    if (this.bleed > 0) {
+    this.clutch = Math.max(0, this.clutch - dt * 0.8);
+    this.dyK += ((this.dying ? 1 : 0) - this.dyK) * (1 - Math.exp(-5 * dt));
+    if (this.dying) {
+      this.dyingT -= dt;
+      this.stagger = Math.max(this.stagger, 0.5);
+      if (this.dyingT <= 0) {
+        const h = this.dyHit || this.lastHit;
+        this.lastHit = h ? { ...h, t: this.t } : null;
+        this.dying = false; this.hp = 0;
+        this.die(this.dyFrom, world);
+        return;
+      }
+    }
+    if (this.bleed > 0 && !this.dying) {
       this.hp -= this.bleed * dt;
       this.bleed = this.bleed > 0.25 ? this.bleed * Math.exp(-dt * 0.012) : Math.max(0, this.bleed - dt * 0.004);
       if (this.hp <= 0) { this.lastHit = null; this.die(null, world); return; }
@@ -338,7 +387,7 @@ export class Unit {
     if (sprint) { if (!this.mod.noTire) this.stamina -= dt / 7; this.restT = 0.9; if (this.stamina <= 0) { this.stamina = 0; this.winded = true; sprint = false; } }
     else { this.restT = Math.max(0, (this.restT || 0) - dt); if (this.restT <= 0) this.stamina = Math.min(1, this.stamina + dt / 5); }
     if (this.winded && this.stamina > 0.35) this.winded = false;
-    const cantFight = this.down || this.stagger > 0.35 || this.bandageT > 0 || this.jamT > 0 || (this.shock > 0 && !this.isPlayer);
+    const cantFight = (this.dying && !this.dyFight) || this.down || this.stagger > 0.35 || this.bandageT > 0 || this.jamT > 0 || (this.shock > 0 && !this.isPlayer);
     const prone = (c.prone || this.down || (this.shock > 0 && !this.isPlayer)) && this.grounded ? 1 : 0;
     // getting up goes prone -> crouch -> standing, never straight from the dirt to a sprint
     const rising = !prone && (this.proneK || 0) > 0.3;
@@ -346,9 +395,9 @@ export class Unit {
     this.proneK = (this.proneK || 0) + (prone - (this.proneK || 0)) * (1 - Math.exp(-5 * dt));
     const lean = !sprint && this.proneK < 0.3 ? THREE.MathUtils.clamp(c.lean || 0, -1, 1) : 0;
     this.leanK = (this.leanK || 0) + (lean - (this.leanK || 0)) * (1 - Math.exp(-10 * dt));
-    const kneel = (c.kneel || rising) && !sprint && !prone ? 1 : 0;
+    const kneel = (c.kneel || rising || this.dying) && !sprint && !prone ? 1 : 0;
     this.kneelK += (kneel - this.kneelK) * (1 - Math.exp(-9 * dt));
-    const speed = WALK * this.speedK * this.mod.speed * (c.speed ?? 1) * (def.move || 1) * (sprint ? SPRINT : 1) * (1 - 0.6 * this.kneelK) * (1 - 0.72 * this.proneK) * (1 - 0.5 * Math.abs(this.leanK)) * (1 - 0.25 * this.suppression) * (1 - 0.28 * this.ads) * (this.reloadT > 0 ? 0.82 : 1) * (1 - 0.12 * this.recoilBuild) * (1 - 0.55 * this.leg) * (this.down ? 0.28 : 1) * (this.stagger > 0 ? 0.45 : 1) * (this.shock > 0 && !this.isPlayer ? 0.2 : 1) * (this.bandageT > 0 ? 0.2 : 1);
+    const speed = WALK * this.speedK * this.mod.speed * (c.speed ?? 1) * (def.move || 1) * (sprint ? SPRINT : 1) * (1 - 0.6 * this.kneelK) * (1 - 0.72 * this.proneK) * (1 - 0.5 * Math.abs(this.leanK)) * (1 - 0.25 * this.suppression) * (1 - 0.28 * this.ads) * (this.reloadT > 0 ? 0.82 : 1) * (1 - 0.12 * this.recoilBuild) * (1 - 0.55 * this.leg) * (this.down ? 0.28 : 1) * (this.stagger > 0 ? 0.45 : 1) * (this.dying ? 0.55 : 1) * (this.shock > 0 && !this.isPlayer ? 0.2 : 1) * (this.bandageT > 0 ? 0.2 : 1);
     this.sprinting = sprint;
     this.move(dt, c.wx, c.wz, c.jump && this.proneK < 0.3 && this.leg < 0.5 && !this.down, speed, world, aiming || c.faceYaw !== undefined);
     c.jump = false;
@@ -544,7 +593,7 @@ export class Unit {
     s.twist = this.twist; s.ready = Math.min(this.ready, 1 - this.wallK * 0.85); s.recoil = this.recoil;
     s.reload = this.reloadT > 0 ? 1 - this.reloadT / this.reloadDur : -1;
     s.throw = this.throwT > 0 ? 1 - this.throwT / 0.6 : -1;
-    s.flinch = this.flinch; s.ads = this.ads; s.fp = this.fp || 0; s.sprint = this.sprinting;
+    s.flinch = this.flinch; s.dying = Math.max(this.dyK, this.clutch * 0.7); s.ads = this.ads; s.fp = this.fp || 0; s.sprint = this.sprinting;
     s.lean = this.alive ? this.leanK || 0 : 0; s.prone = this.alive ? this.proneK || 0 : 0;
     s.dead = this.alive ? -1 : Math.min(1, this.deadT / 0.7);
     s.weapon = this.weapon.id;

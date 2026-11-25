@@ -293,30 +293,60 @@ export function packGeo() {
   ];
   return done(loftY(st, { n: 20, p: 5 }, { crease: 38 }), 1);
 }
-// ---- hand: a gloved fist with a palm, four fingers in two knuckled segments and a thumb. Origin
-// where the gun is held; the palm cradles under it and the fingers wrap up and over the near side.
-// side +1 is the left hand (+x, the support hand), -1 the right.
-const GLOVE = [0.085, 0.075, 0.062], GLOVE_DK = [0.05, 0.045, 0.04], CUFF = [0.15, 0.13, 0.1];
-function handBuild(side) {
+// ---- hands: gloved, with a shaped palm, knuckled fingers and a thumb. Two builds:
+//  left 'cup' (the support hand): origin on the bar it holds (a fore-end, handle or tube along z); the
+//   palm cradles under it, the fingers wrap up and over the near side, the thumb lies along the top.
+//  right 'grip' (the trigger hand): origin on a pistol grip (along y); the palm presses on the grip's
+//   right side, three fingers wrap its front, the index finger lies along the receiver by the trigger,
+//   and the thumb folds around the back.
+// A vertical foregrip turns the left hand a quarter about x (see GRIPS in rig.js).
+const GLOVE = [0.085, 0.075, 0.062], GLOVE_DK = [0.05, 0.045, 0.04], CUFF = [0.15, 0.13, 0.1], PAD = [0.035, 0.03, 0.027];
+const finger = (path, r, dk = GLOVE_DK) => tubeAlong(path, [r, r * 0.98, r * 0.94, r * 0.88, r * 0.8], 6, 8, dk);
+function cupHand() {
   const l = [];
-  const X = (x) => x * side;
-  l.push(bake(new RoundedBoxGeometry(0.052, 0.02, 0.058, 1, 0.008), GLOVE, [0, -0.024, 0.0])); // palm cradling the gun
-  l.push(bake(new RoundedBoxGeometry(0.02, 0.034, 0.058, 1, 0.008), GLOVE, [X(0.024), -0.012, 0])); // heel of the hand rising on the outside
-  // four fingers: knuckle on the outside, over the top of the grip and back to the palm
+  l.push(bake(blob(0.026, 0.011, 0.03, 12, 8), GLOVE, [0, -0.022, -0.002])); // palm cradling the bar
+  l.push(bake(blob(0.012, 0.019, 0.029, 10, 8), GLOVE, [0.026, -0.011, -0.002])); // heel of the hand rising on the outside
+  l.push(bake(blob(0.01, 0.013, 0.026, 10, 8), GLOVE, [0.026, 0.004, 0.0])); // back of the hand, knuckles forward
   for (let i = 0; i < 4; i++) {
-    const z = -0.0195 + i * 0.013, rr = 0.0068 - (i === 3 ? 0.0006 : 0);
-    const path = [[X(0.03), -0.012, z], [X(0.031), 0.006, z], [X(0.02), 0.019, z + 0.001], [X(0.004), 0.021, z + 0.001], [X(-0.012), 0.012, z]];
-    l.push(...tubeAlong(path, [rr, rr, rr * 0.95, rr * 0.9, rr * 0.82], 5, 5, GLOVE_DK));
+    const z = -0.0195 + i * 0.013, r = 0.0066 - (i === 3 ? 0.0008 : 0);
+    const path = [[0.031, -0.006, z + 0.002], [0.034, 0.008, z + 0.002], [0.024, 0.0205, z + 0.0015], [0.008, 0.0235, z + 0.001], [-0.008, 0.017, z]];
+    l.push(...finger(path, r));
+    l.push(bake(blob(r * 1.05, r * 1.05, r * 1.05, 6, 5), GLOVE_DK, [0.033, 0.0, z + 0.002])); // knuckle
   }
-  // thumb folds across from the palm to lie along the top of the gun
-  l.push(...tubeAlong([[X(-0.012), -0.02, 0.018], [X(-0.016), -0.004, 0.03], [X(-0.008), 0.014, 0.028], [X(0.002), 0.02, 0.014]], [0.0088, 0.008, 0.0075, 0.0068], 5, 5, GLOVE_DK));
-  // gauntlet cuff where the glove meets the sleeve
-  l.push(bake(new THREE.CylinderGeometry(0.0285, 0.03, 0.03, 12), CUFF, [0, -0.012, -0.045], [Math.PI / 2, 0, 0]));
-  const out = merge(l);
-  return out;
+  // thumb along the near side, tip curling over the top
+  l.push(...tubeAlong([[0.004, -0.02, 0.022], [-0.012, -0.012, 0.03], [-0.016, 0.004, 0.03], [-0.008, 0.018, 0.022]], [0.0092, 0.0086, 0.0078, 0.0068], 6, 8, GLOVE_DK));
+  l.push(bake(blob(0.0125, 0.0125, 0.012, 8, 6), GLOVE, [0.004, -0.02, 0.018])); // thumb base muscle
+  l.push(bake(new THREE.CylinderGeometry(0.0265, 0.0285, 0.026, 14), CUFF, [0.004, -0.014, -0.044], [Math.PI / 2, 0, 0])); // gauntlet cuff
+  l.push(bake(new THREE.CylinderGeometry(0.0272, 0.0272, 0.006, 14), PAD, [0.004, -0.014, -0.0315], [Math.PI / 2, 0, 0])); // cuff strap
+  return merge(l);
+}
+// sd: -1 right hand (palm on the grip's right side), +1 left. wrapIndex: the index finger wraps too (foregrip)
+function gripHand(sd = -1, wrapIndex = false) {
+  const l = [];
+  const X = (x) => x * -sd;
+  const P = (pts) => pts.map(([x, y, z]) => [X(x), y, z]);
+  l.push(bake(blob(0.011, 0.031, 0.024, 10, 8), GLOVE, [X(-0.027), -0.006, -0.006])); // palm flat on the grip's side
+  l.push(bake(blob(0.011, 0.02, 0.014, 8, 6), GLOVE, [X(-0.029), -0.012, -0.02])); // heel behind
+  // fingers wrap the front of the grip, one above the other, tips ending on its far side
+  const ys = [0.0185, 0.006, -0.0065, -0.019];
+  for (let i = wrapIndex ? 0 : 1; i < 4; i++) {
+    const y = ys[i], r = 0.0066 - (i === 3 ? 0.0008 : 0);
+    l.push(...finger(P([[-0.024, y, 0.004], [-0.025, y, 0.016], [-0.014, y, 0.0225], [0.004, y, 0.0225], [0.016, y, 0.014]]), r));
+    l.push(bake(blob(r * 1.05, r * 1.05, r * 1.05, 6, 5), GLOVE_DK, [X(-0.026), y, 0.012])); // knuckle
+  }
+  if (!wrapIndex) {
+    // index finger off the grip and along the receiver beside the trigger
+    l.push(...finger(P([[-0.024, ys[0], 0.004], [-0.024, ys[0], 0.02], [-0.02, ys[0], 0.036], [-0.016, ys[0] - 0.001, 0.05]]), 0.0066));
+    l.push(bake(blob(0.0072, 0.0072, 0.0072, 6, 5), GLOVE_DK, [X(-0.026), ys[0], 0.012]));
+  }
+  // thumb folds around the back of the grip
+  l.push(...tubeAlong(P([[-0.026, 0.01, -0.014], [-0.018, 0.016, -0.026], [0.0, 0.016, -0.026], [0.014, 0.011, -0.012]]), [0.0092, 0.0086, 0.0078, 0.0068], 6, 8, GLOVE_DK));
+  l.push(bake(blob(0.0125, 0.012, 0.0125, 8, 6), GLOVE, [X(-0.028), 0.008, -0.016])); // thumb base muscle
+  l.push(bake(new THREE.CylinderGeometry(0.0265, 0.0285, 0.026, 14), CUFF, [X(-0.034), -0.03, -0.04], [Math.PI / 2 - 0.5, 0, X(0.1)])); // gauntlet cuff
+  return merge(l);
 }
 export function handGeos() {
-  return { left: handBuild(1), right: handBuild(-1) };
+  return { left: cupHand(), right: gripHand(-1), leftGrip: gripHand(1, true) };
 }
 export const fistGeo = () => handGeos().left;
 
