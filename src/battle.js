@@ -31,37 +31,41 @@ export const SQUAD_MIX = [
 export const SQUAD_SIZE = 6;
 export const HOLD_WIN = 60; // seconds holding every point
 
-// Uniform grid over the map for neighbour and line queries.
+// Uniform grid over the map for neighbour and line queries. Cells are a flat array (no hashing),
+// and clear() empties the cells in place, so rebuilding it every frame allocates nothing.
+// Anything past the edge is filed in the nearest edge cell, which queries there also check.
 class Grid {
-  constructor(cell) { this.cell = cell; this.map = new Map(); }
-  key(ix, iz) { return ix * 4096 + iz; }
-  clear() { this.map.clear(); }
-  insert(item, x, z) {
-    const k = this.key(Math.floor(x / this.cell), Math.floor(z / this.cell));
-    let a = this.map.get(k);
-    if (!a) this.map.set(k, (a = []));
+  constructor(cell) {
+    this.cell = cell;
+    this.off = Math.ceil((HALF + 40) / cell); // cells from the middle to the edge
+    this.w = this.off * 2 + 1;
+    this.cells = Array.from({ length: this.w * this.w }, () => []);
+    this.used = [];
+  }
+  ci(i) { i += this.off; return i < 0 ? 0 : i >= this.w ? this.w - 1 : i; }
+  clear() { for (const a of this.used) a.length = 0; this.used.length = 0; }
+  push(i, j, item) {
+    const a = this.cells[this.ci(i) * this.w + this.ci(j)];
+    if (!a.length) this.used.push(a);
     a.push(item);
   }
+  insert(item, x, z) { this.push(Math.floor(x / this.cell), Math.floor(z / this.cell), item); }
   insertBox(item, b) {
     const r = Math.hypot(b.hx, b.hz);
     const x0 = Math.floor((b.x - r) / this.cell), x1 = Math.floor((b.x + r) / this.cell);
     const z0 = Math.floor((b.z - r) / this.cell), z1 = Math.floor((b.z + r) / this.cell);
-    for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) {
-      const k = this.key(i, j);
-      let a = this.map.get(k);
-      if (!a) this.map.set(k, (a = []));
-      a.push(item);
-    }
+    for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) this.push(i, j, item);
   }
   // items in cells overlapping the square around (x, z)
   near(x, z, r, out = []) {
     out.length = 0;
     const stamp = stampN++;
-    const x0 = Math.floor((x - r) / this.cell), x1 = Math.floor((x + r) / this.cell);
-    const z0 = Math.floor((z - r) / this.cell), z1 = Math.floor((z + r) / this.cell);
+    const w = this.w, cells = this.cells;
+    const x0 = this.ci(Math.floor((x - r) / this.cell)), x1 = this.ci(Math.floor((x + r) / this.cell));
+    const z0 = this.ci(Math.floor((z - r) / this.cell)), z1 = this.ci(Math.floor((z + r) / this.cell));
     for (let i = x0; i <= x1; i++) for (let j = z0; j <= z1; j++) {
-      const a = this.map.get(this.key(i, j));
-      if (a) for (const it of a) if (it._stamp !== stamp) { it._stamp = stamp; out.push(it); }
+      const a = cells[i * w + j];
+      for (let k = 0; k < a.length; k++) { const it = a[k]; if (it._stamp !== stamp) { it._stamp = stamp; out.push(it); } }
     }
     return out;
   }
@@ -70,17 +74,18 @@ class Grid {
     out.length = 0;
     const len = Math.hypot(bx - ax, bz - az);
     const steps = Math.max(1, Math.ceil(len / (this.cell * 0.5)));
+    const w = this.w, cells = this.cells;
     let last = -1;
     for (let s = 0; s <= steps; s++) {
       const x = ax + ((bx - ax) * s) / steps, z = az + ((bz - az) * s) / steps;
       const ix = Math.floor(x / this.cell), iz = Math.floor(z / this.cell);
       for (let di = -1; di <= 1; di++) for (let dj = -1; dj <= 1; dj++) {
-        const k = this.key(ix + di, iz + dj);
+        const k = this.ci(ix + di) * w + this.ci(iz + dj);
         if (k === last) continue;
-        const a = this.map.get(k);
-        if (a) for (const it of a) if (it._stamp !== stamp) { it._stamp = stamp; out.push(it); }
+        const a = cells[k];
+        for (let n = 0; n < a.length; n++) { const it = a[n]; if (it._stamp !== stamp) { it._stamp = stamp; out.push(it); } }
       }
-      last = this.key(ix, iz);
+      last = this.ci(ix) * w + this.ci(iz);
     }
     return out;
   }

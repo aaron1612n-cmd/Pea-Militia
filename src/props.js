@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { MAT, Kit, instance, profile, roundRect, turnedY, ring, bolt, block, pipe } from './models.js';
+import { MAT, Kit, instance, profile, roundRect, turnedY, ring, bolt, block as roundBlock, pipe } from './models.js';
 import { toWorld } from './physics.js';
 import { ellipsoid } from './geo.js';
 import { weather } from './grime.js';
@@ -27,15 +27,22 @@ export const PROPS = {
 export const PROP_SCALE = 1.6;
 for (const d of Object.values(PROPS)) if (!d.raw) { d.hx *= PROP_SCALE; d.hz *= PROP_SCALE; d.h *= PROP_SCALE; }
 
-let bagGeo = null;
+// Two detail levels of the same props: the near one has bevelled blocks and fine lumps, the far one
+// (used past FAR_PROPS metres, where a bevel is under a pixel) swaps them for plain boxes and coarse
+// lumps, which cuts the triangle count of a masonry wall to a tenth. Built by the same code with this flag.
+export const FAR_PROPS = 48;
+let far = false;
+const block = (w, h, d, r, bevel) => (far ? new THREE.BoxGeometry(w, h, d) : roundBlock(w, h, d, r, bevel));
+const bagGeos = [null, null];
 function bag() {
   // a stuffed sack: flattened, squared-off pillow with tucked ends
-  if (!bagGeo) bagGeo = ellipsoid(0.27, 0.072, 0.15, 12, 8, (v) => {
+  const f = far ? 1 : 0;
+  if (!bagGeos[f]) bagGeos[f] = ellipsoid(0.27, 0.072, 0.15, f ? 7 : 12, f ? 4 : 8, (v) => {
     v.x = Math.sign(v.x) * Math.abs(v.x) ** 0.55;
     v.z = Math.sign(v.z) * Math.abs(v.z) ** 0.7;
     v.y *= 1 - 0.25 * v.x * v.x;
   });
-  return bagGeo;
+  return bagGeos[f];
 }
 
 const stone = (c) => weather(new THREE.MeshStandardMaterial({ color: c, roughness: 0.92, flatShading: true }), 'stone');
@@ -49,7 +56,7 @@ const PM = new Proxy({}, { get: (c, k) => (c[k] ??= KIND[k] ? weather(MAT[k], KI
 
 // A lumpy stone: a low-poly sphere pushed about by a seeded wobble.
 function lump(rx, ry, rz, seed) {
-  const g = new THREE.IcosahedronGeometry(1, 1);
+  const g = new THREE.IcosahedronGeometry(1, far ? 0 : 1);
   const p = g.attributes.position;
   let s = seed * 7919 + 13;
   const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
@@ -195,8 +202,8 @@ const BUILD = {
     for (const x of [-0.6, 0.6]) k.add(block(0.18, 0.06, 0.66, 0.02, 0.005), PM.darkSteel, { pos: [x, 0.005, 0], scale: [1, 0.3, 1] });
   },
   drum(k) {
-    k.add(turnedY([[0, 0], [0.245, 0], [0.26, 0.02], [0.26, 0.56], [0.245, 0.58], [0, 0.58]], 24), PM.iron);
-    for (const y of [0.03, 0.2, 0.38, 0.55]) k.add(ring(0.263, 0.012, 24), PM.darkSteel, { pos: [0, y, 0], rot: [Math.PI / 2, 0, 0] });
+    k.add(turnedY([[0, 0], [0.245, 0], [0.26, 0.02], [0.26, 0.56], [0.245, 0.58], [0, 0.58]], far ? 10 : 24), PM.iron);
+    for (const y of far ? [] : [0.03, 0.2, 0.38, 0.55]) k.add(ring(0.263, 0.012, 24), PM.darkSteel, { pos: [0, y, 0], rot: [Math.PI / 2, 0, 0] });
     k.add(turnedY([[0, 0.58], [0.045, 0.58], [0.045, 0.62], [0, 0.62]], 12), PM.brass, { pos: [0.11, 0, 0] });
     k.add(ring(0.035, 0.007, 12), PM.brass, { pos: [0.11, 0.635, 0], rot: [Math.PI / 2, 0, 0] });
     k.add(pipe([[-0.1, 0.58, 0], [-0.1, 0.66, 0], [-0.18, 0.68, 0]], 0.014, 10, 6), PM.brass);
@@ -208,7 +215,7 @@ const BUILD = {
     for (const x of [-1.15, 1.15]) {
       k.add(profile([[-0.42, 0], [0.42, 0], [0.06, 0.9], [-0.06, 0.9]], 0.07, 0.008), PM.darkSteel, { pos: [x, 0, 0] });
     }
-    for (let x = -1.15; x <= 1.16; x += 0.23) for (const y of [0.08, 1.37]) for (const z of [-0.06, 0.06]) k.add(bolt(0.016), PM.darkSteel, { pos: [x, y, z], rot: [z > 0 ? Math.PI / 2 : -Math.PI / 2, 0, 0] });
+    if (!far) for (let x = -1.15; x <= 1.16; x += 0.23) for (const y of [0.08, 1.37]) for (const z of [-0.06, 0.06]) k.add(bolt(0.016), PM.darkSteel, { pos: [x, y, z], rot: [z > 0 ? Math.PI / 2 : -Math.PI / 2, 0, 0] });
     k.add(block(0.5, 0.12, 0.13, 0.02, 0.01), PM.brass, { pos: [0.42, 1.1, 0] }); // brass vision slot frame
   },
   slab(k) {
@@ -293,6 +300,18 @@ export function coverSpots(prop) {
 // Draws every prop of a type with one instanced mesh per part, so a big field of cover costs a
 // few draw calls instead of one per sandbag. Each prop keeps a plain Group as its transform;
 // call sync(prop) after moving it and drop(prop) when it is gone.
+// Every slot's matrix lives in a master list; cull() packs just the props the camera or the
+// sun's shadow can see (and that are inside the fog) into the front of the instance buffers,
+// which the parts of a type share, so the GPU only draws what reaches the picture. Props past
+// FAR_PROPS metres use the coarse model (see above), in their own set of instanced meshes.
+const bakedFar = new Map();
+function bakeFar(type) {
+  if (!bakedFar.has(type)) {
+    far = true;
+    try { const k = new Kit(); BUILD[type](k); bakedFar.set(type, k.bake()); } finally { far = false; }
+  }
+  return bakedFar.get(type);
+}
 export class PropBatch {
   constructor(scene) {
     this.scene = scene;
@@ -301,65 +320,120 @@ export class PropBatch {
     this.q = new THREE.Quaternion();
     this.up = new THREE.Vector3(0, 1, 0);
     this.one = new THREE.Vector3();
-    this.white = new THREE.Color(1, 1, 1);
-    this.tint = new THREE.Color();
+    this.all = false; // true draws everything in full detail (menu shots, tests)
   }
   _type(type) {
     let t = this.types.get(type);
     if (t) return t;
     if (!baked.has(type)) { const k = new Kit(); BUILD[type](k); baked.set(type, k.bake()); }
-    t = { parts: baked.get(type).map(({ geometry, material }) => this._mesh(geometry, material, 64)), free: [], used: 0 };
+    t = { levels: [{ baked: baked.get(type) }, { baked: bakeFar(type) }], free: [], used: 0, cap: 0, mat: null, col: null, bs: null, live: null, dirty: true };
+    this._grow(t, 64);
     this.types.set(type, t);
     return t;
   }
-  _mesh(geometry, material, cap) {
-    const im = new THREE.InstancedMesh(geometry, material, cap);
-    im.count = 0; im.frustumCulled = false; im.castShadow = true; im.receiveShadow = true; im.name = 'props';
-    im.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    im.setColorAt(0, this.white); im.instanceColor.array.fill(1);
-    this.scene.add(im);
-    return im;
+  // (re)allocate the master lists and the instance buffers for `cap` slots
+  _grow(t, cap) {
+    const mat = new Float32Array(cap * 16), col = new Float32Array(cap * 3).fill(1), bs = new Float32Array(cap * 4), live = new Uint8Array(cap);
+    if (t.mat) { mat.set(t.mat); col.set(t.col); bs.set(t.bs); live.set(t.live); }
+    t.mat = mat; t.col = col; t.bs = bs; t.live = live; t.cap = cap; t.dirty = true;
+    for (const L of t.levels) {
+      if (L.parts) for (const m of L.parts) { this.scene.remove(m); m.dispose?.(); }
+      L.im = new THREE.InstancedBufferAttribute(new Float32Array(cap * 16), 16); L.im.setUsage(THREE.DynamicDrawUsage);
+      L.ic = new THREE.InstancedBufferAttribute(new Float32Array(cap * 3), 3); L.ic.setUsage(THREE.DynamicDrawUsage);
+      L.vis = new Int32Array(cap); L.tmp = new Int32Array(cap); L.n = -1; L.k = 0; L.kk = -1;
+      L.parts = L.baked.map(({ geometry, material }) => {
+        const mesh = new THREE.InstancedMesh(geometry, material, cap);
+        mesh.instanceMatrix = L.im; mesh.instanceColor = L.ic;
+        mesh.count = 0; mesh.frustumCulled = false; mesh.castShadow = true; mesh.receiveShadow = true; mesh.name = 'props'; mesh.visible = false;
+        // the shadow pass draws only the front part of the list: the props the shadow box holds
+        mesh.onBeforeShadow = () => { mesh._full = mesh.count; mesh.count = Math.min(mesh.count, L.k); };
+        mesh.onAfterShadow = () => { mesh.count = mesh._full; };
+        this.scene.add(mesh);
+        return mesh;
+      });
+    }
   }
   add(p) {
     const t = this._type(p.type);
     p.slot = t.free.length ? t.free.pop() : t.used++;
-    if (p.slot >= t.parts[0].instanceMatrix.count) {
-      // grow: new, bigger meshes with the old matrices copied over
-      t.parts = t.parts.map((im) => {
-        const bigger = this._mesh(im.geometry, im.material, im.instanceMatrix.count * 2);
-        bigger.instanceMatrix.array.set(im.instanceMatrix.array);
-        bigger.instanceColor.array.set(im.instanceColor.array);
-        this.scene.remove(im); im.dispose();
-        return bigger;
-      });
-    }
-    for (const im of t.parts) im.count = Math.max(im.count, t.used);
+    if (p.slot >= t.cap) this._grow(t, t.cap * 2);
+    t.live[p.slot] = 1; t.dirty = true;
   }
   sync(p) {
     const t = this.types.get(p.type);
     if (!t) return;
     const s = PROPS[p.type].raw ? 1 : PROP_SCALE;
+    const sy = s * (p.sy ?? 1);
     this.q.setFromAxisAngle(this.up, p.group.rotation.y);
-    this.m.compose(p.group.position, this.q, this.one.set(s, s * (p.sy ?? 1), s));
-    for (const im of t.parts) { im.setMatrixAt(p.slot, this.m); im.instanceMatrix.needsUpdate = true; }
+    this.m.compose(p.group.position, this.q, this.one.set(s, sy, s));
+    this.m.toArray(t.mat, p.slot * 16);
+    // a sphere around the whole prop (it can stand taller than it is wide)
+    const b = p.box, i = p.slot * 4, g = p.group.position;
+    t.bs[i] = g.x; t.bs[i + 1] = g.y + b.h * 0.5; t.bs[i + 2] = g.z; t.bs[i + 3] = Math.hypot(b.hx, b.hz, b.h * 0.5) + 0.6;
+    t.dirty = true;
   }
   // darken a prop as it takes damage (1 = pristine)
   shade(p, v) {
     const t = this.types.get(p.type);
     if (!t || p.slot == null) return;
-    this.tint.setScalar(v);
-    for (const im of t.parts) { im.setColorAt(p.slot, this.tint); im.instanceColor.needsUpdate = true; }
+    t.col[p.slot * 3] = t.col[p.slot * 3 + 1] = t.col[p.slot * 3 + 2] = v;
+    t.dirty = true;
   }
   drop(p) {
     const t = this.types.get(p.type);
     if (!t || p.slot == null) return;
-    this.m.makeScale(0, 0, 0);
-    for (const im of t.parts) { im.setMatrixAt(p.slot, this.m); im.setColorAt(p.slot, this.white); im.instanceMatrix.needsUpdate = true; im.instanceColor.needsUpdate = true; }
+    t.live[p.slot] = 0;
+    t.col[p.slot * 3] = t.col[p.slot * 3 + 1] = t.col[p.slot * 3 + 2] = 1;
     t.free.push(p.slot);
+    t.dirty = true;
     p.slot = null;
   }
+  // pack what is in view (or throws a shadow into view) into the instance buffers; cheap when nothing changed.
+  // Props the sun's shadow box holds come first, so the shadow pass can draw just that front part.
+  cull(view) {
+    const e = view.eye, lim2 = FAR_PROPS * FAR_PROPS;
+    for (const t of this.types.values()) {
+      const bs = t.bs, N = t.levels[0], F = t.levels[1];
+      N.k = F.k = 0; // how many are in the shadow box
+      let n = 0, f = 0;
+      for (let pass = 2; pass >= 1; pass--) {
+        for (let s = 0; s < t.used; s++) {
+          if (!t.live[s]) continue;
+          const i = s * 4;
+          const c = this.all ? 2 : view.test(bs[i], bs[i + 1], bs[i + 2], bs[i + 3]);
+          if (c !== pass) continue;
+          const dx = bs[i] - e.x, dy = bs[i + 1] - e.y, dz = bs[i + 2] - e.z, r = bs[i + 3];
+          // a big prop is judged by its nearest edge, so a wall you stand beside keeps its detail along its whole length
+          const d = Math.max(0, Math.sqrt(dx * dx + dy * dy + dz * dz) - r * 0.6);
+          if (!this.all && d * d > lim2) { F.tmp[f++] = s; } else { N.tmp[n++] = s; }
+        }
+        if (pass === 2) { N.k = n; F.k = f; }
+      }
+      this._pack(t, N, n);
+      this._pack(t, F, f);
+      t.dirty = false;
+    }
+  }
+  // write the list into the buffers if it differs from what is already there
+  _pack(t, L, n) {
+    const vis = L.vis, tmp = L.tmp;
+    let same = !t.dirty && n === L.n && L.k === L.kk;
+    if (same) for (let k = 0; k < n; k++) if (vis[k] !== tmp[k]) { same = false; break; }
+    if (same) return;
+    L.n = n; L.kk = L.k;
+    const ma = L.im.array, ca = L.ic.array;
+    for (let k = 0; k < n; k++) {
+      const s = tmp[k];
+      vis[k] = s;
+      for (let j = 0; j < 16; j++) ma[k * 16 + j] = t.mat[s * 16 + j];
+      ca[k * 3] = t.col[s * 3]; ca[k * 3 + 1] = t.col[s * 3 + 1]; ca[k * 3 + 2] = t.col[s * 3 + 2];
+    }
+    L.im.clearUpdateRanges(); L.im.addUpdateRange(0, Math.max(16, n * 16)); L.im.needsUpdate = true;
+    L.ic.clearUpdateRanges(); L.ic.addUpdateRange(0, Math.max(3, n * 3)); L.ic.needsUpdate = true;
+    for (const m of L.parts) { m.count = n; m.visible = n > 0; }
+  }
   clear() {
-    for (const t of this.types.values()) for (const im of t.parts) { this.scene.remove(im); im.dispose(); }
+    for (const t of this.types.values()) for (const L of t.levels) for (const im of L.parts) { this.scene.remove(im); im.dispose(); }
     this.types.clear();
   }
 }
