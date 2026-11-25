@@ -6,29 +6,35 @@ import { GEAR, MARKS, KIND_IDS, kindKey } from './gear.js';
 import { markMaterial, woundMarkMaterial, partMatrix } from './hitmarks.js';
 import { torsoGeo, headGeo, helmetGeo, HELMET_KINDS, bootGeo, handGeos, packGeo, pelvisGeo, neckGeo, deltGeo, LIMB, HEAD_COLORS } from './anatomy.js';
 import { detail, instAttr } from './fabric.js';
-import { WEAPONS, weaponParts } from './weapons.js';
+import { WEAPONS, weaponParts, weaponSlotMatrix } from './weapons.js';
 import { TEAMS } from './factions.js';
 import { makeWoundMesh, makeDentBody, DENT_CAP, MAX_DENTS } from './wounds.js';
 import { stumpGeo, wreckHead, woundMaterial, LOST } from './wreck.js';
+import { liteGeos } from './lod.js';
+import { LOD } from './shapes.js';
 
 // Draws every soldier with a handful of instanced meshes (one per body part and per weapon
 // material), so a few hundred units cost a few dozen draw calls.
 const std = (o) => new THREE.MeshStandardMaterial(o);
+// Near-detail parts. The small ones that sit on the body (neck, hips, boots, shoulders, gloves) are built a little thinner
+// than the big ones (torso, helmet, limbs) so the soldier's triangle count stays in budget.
+const atQ = (q, fn) => { LOD.q = q; try { return fn(); } finally { LOD.q = 1; } };
 export const PART_GEO = {
   body: torsoGeo(5),
   head: headGeo(),
   helmets: Object.fromEntries(HELMET_KINDS.map((k) => [k, helmetGeo(k)])),
   pack: packGeo(),
-  boot: bootGeo('foot'),
-  toe: bootGeo('toe'),
-  pelvis: pelvisGeo(),
-  neck: neckGeo(),
-  delt: deltGeo(),
-  ...(() => { const h = handGeos(); return { handL: h.left, handR: h.right, handG: h.leftGrip, openL: h.openL, openR: h.openR }; })(),
+  boot: atQ(0.75, () => bootGeo('foot')),
+  toe: atQ(0.75, () => bootGeo('toe')),
+  pelvis: atQ(0.75, pelvisGeo),
+  neck: atQ(0.75, neckGeo),
+  delt: atQ(0.75, deltGeo),
+  ...(() => { const h = atQ(0.8, handGeos); return { handL: h.left, handR: h.right, handG: h.leftGrip, openL: h.openL, openR: h.openR }; })(),
 };
 
 const MP = new THREE.Vector3(), MN = new THREE.Vector3(), MQ = new THREE.Quaternion(), MQ2 = new THREE.Quaternion(), MM = new THREE.Matrix4(), MS = new THREE.Vector3(), Z = new THREE.Vector3(0, 0, 1);
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
+const SLOT_M = new THREE.Matrix4(), SLOT_T = new THREE.Matrix4();
 const UI_COL = TEAMS.map((t) => new THREE.Color(t.ui).lerp(new THREE.Color('#ffffff'), 0.35)); // worn kit: a light army tint over its own colours
 const HELM_COL = TEAMS.map((t) => new THREE.Color(t.ui).multiplyScalar(0.72));
 const PALE = new THREE.Color('#d9d6cb');
@@ -124,6 +130,24 @@ export class Crowd {
       this.gear[k] = mks(GEAR[k], gearMat, cap, true, { sway: true }); this.gear[k].name = `crowd-gear-${k}`;
       if (MARKS[k]) { this.marks[k] = mk(MARKS[k], markMat, cap, false, { sway: true }); this.marks[k].name = `crowd-mark-${k}`; }
     }
+    // the lite soldier (see lod.js): thinned copies of the same parts for the middle and far distance. They are their own meshes
+    // with their own counters, so a distant soldier never touches the near-detail meshes at all.
+    const LG = liteGeos(), lite = this.lite = { np: 0, nf: 0, nh: 0, nl: 0, hn: {}, hn2: {}, gn: 0, helmets: {}, hands: {} };
+    for (const k of HELMET_KINDS) { lite.helmets[k] = mks(LG.helmets[k], helmMat, cap, true); lite.helmets[k].name = `crowd-lite-helmet-${k}`; }
+    lite.pelvis = mks(LG.pelvis, this.pelvis.material, cap, true);
+    lite.boot = mks(LG.boot, this.boot.material, cap * 2, false);
+    lite.delt = mks(LG.delt, this.delt.material, cap * 2, true);
+    lite.upperArm = mks(LG.limbs.upperArm, this.upperArm.material, cap * 2, true);
+    lite.foreArm = mks(LG.limbs.foreArm, this.foreArm.material, cap * 2, true);
+    lite.thigh = mks(LG.limbs.thigh, this.thigh.material, cap * 2, true);
+    lite.shin = mks(LG.limbs.shin, this.shin.material, cap * 2, true);
+    lite.gear = mks(LG.gear.rifleman, gearMat, cap, true, { sway: true });
+    for (const id of ['L', 'G', 'R']) { lite.hands[id] = mks(LG.hands[id], glove, cap, false); lite.hands[id].name = `crowd-lite-hands-${id}`; }
+    for (const m of [lite.pelvis, lite.boot, lite.delt, lite.upperArm, lite.foreArm, lite.thigh, lite.shin, lite.gear, ...Object.values(lite.hands), ...Object.values(lite.helmets)]) m.name ||= 'crowd-lite';
+    lite.gear.name = 'crowd-lite-gear'; lite.pelvis.name = 'crowd-lite-pelvis'; lite.boot.name = 'crowd-lite-boots'; lite.delt.name = 'crowd-lite-shoulders';
+    lite.upperArm.name = 'crowd-lite-upperarm'; lite.foreArm.name = 'crowd-lite-forearm'; lite.thigh.name = 'crowd-lite-thigh'; lite.shin.name = 'crowd-lite-shin';
+    for (const m of [...Object.values(lite.hands), lite.delt, lite.gear]) m.castShadow = false;
+    this.np = 0;
     this.body.name = 'crowd-body'; this.head.name = 'crowd-head'; this.boot.name = 'crowd-boots'; this.toe.name = 'crowd-toes'; this.pelvis.name = 'crowd-pelvis'; this.neck.name = 'crowd-neck'; this.delt.name = 'crowd-shoulders';
     // wound faces where limbs and heads were torn off, and ruined heads (see wreck.js)
     const wm = () => woundMaterial({ roughness: 0.5 });
@@ -137,23 +161,31 @@ export class Crowd {
     this.mark = mk(new THREE.PlaneGeometry(1, 1), markMaterial(), cap * 10, false); this.mark.name = 'crowd-hitmarks'; this.mark.castShadow = false; this.nm = 0;
     this.markW = mk(new THREE.PlaneGeometry(1, 1), woundMarkMaterial(), cap * 10, false); this.markW.name = 'crowd-woundmarks'; this.markW.castShadow = false; this.nmw = 0;
     // weapons: one instanced mesh per (weapon, material)
-    this.weapons = {};
+    this.weapons = {}; this.weaponsLite = {};
+    const sc = new THREE.Matrix4().makeScale(U.WEAPON_SCALE, U.WEAPON_SCALE, U.WEAPON_SCALE);
     for (const id of Object.keys(WEAPONS)) {
-      const { parts, muzzle, box, sight } = weaponParts(id);
+      const { box, muzzle, sight } = weaponParts(id);
       setWeaponBounds(id, box, muzzle, sight);
-      const sc = new THREE.Matrix4().makeScale(U.WEAPON_SCALE, U.WEAPON_SCALE, U.WEAPON_SCALE);
-      // One draw per gun: the dull parts (steel, wood, brass, rubber) are merged into one mesh whose colour,
-      // roughness and metalness ride on the vertices; only a glowing part (the plasma cell) keeps a mesh of its own.
-      const plain = parts.filter(({ material: mt }) => !isLit(mt)), lit = parts.filter(({ material: mt }) => isLit(mt));
-      const list = [];
-      if (plain.length) list.push({ geometry: mergeGeometries(plain.map(({ geometry, material }) => paintVerts(geometry, material)), false), material: gunMat() });
-      list.push(...lit);
-      this.weapons[id] = list.map(({ geometry, material }) => {
-        const g = geometry.clone().applyMatrix4(sc);
-        const m = mk(g, material, cap, false);
-        m.name = `crowd-${id}`;
-        return m;
-      });
+      for (const lite of [false, true]) {
+        const { parts } = weaponParts(id, lite);
+        // One draw per gun (and per moving part): the dull parts (steel, wood, brass, rubber) are merged into one mesh whose
+        // colour, roughness and metalness ride on the vertices; only a glowing part (the plasma cell) keeps a mesh of its own.
+        // Moving parts (slot: mag, bolt) are separate meshes so their instance matrix can carry the slot's offset.
+        const list = [];
+        for (const slot of [undefined, ...new Set(parts.map((q) => q.slot).filter(Boolean))]) {
+          const mine = parts.filter((q) => q.slot === slot);
+          const plain = mine.filter(({ material: mt }) => !isLit(mt)), lit = mine.filter(({ material: mt }) => isLit(mt));
+          if (plain.length) list.push({ geometry: mergeGeometries(plain.map(({ geometry, material }) => paintVerts(geometry, material)), false), material: gunMat(), slot });
+          list.push(...lit);
+        }
+        (lite ? this.weaponsLite : this.weapons)[id] = list.map(({ geometry, material, slot }) => {
+          const g = geometry.clone().applyMatrix4(sc);
+          const m = mk(g, material, cap, false);
+          m.name = `crowd-${lite ? 'lite-' : ''}${id}${slot ? '-' + slot : ''}`;
+          m.userData.slot = slot; // a moving part: its matrix is the gun's plus the slot's offset (magazine, bolt)
+          return m;
+        });
+      }
     }
     // wounds wrap the shell (see wounds.js); soldiers with dents draw a finer, dentable body
     this.wound = makeWoundMesh(cap * 6);
@@ -165,8 +197,8 @@ export class Crowd {
     scene.add(this.dentBody);
     this.nd = 0;
     this.n = 0; this.nf = 0; this.nh = 0; this.nl = 0; this.na = 0;
-    this.wn = {};
-    this.sh = { gn: {}, mn: {}, hn: {}, hn2: {}, wn: {} }; this.snapped = false;
+    this.wn = {}; this.wnL = {};
+    this.sh = { gn: {}, mn: {}, hn: {}, hn2: {}, wn: {}, wnL: {}, lite: { hn: {}, hn2: {} } }; this.snapped = false;
     this.tmp = new THREE.Matrix4();
   }
 
@@ -190,10 +222,13 @@ export class Crowd {
 
   begin() {
     this.n = this.nf = this.nh = this.nw = this.nl = this.na = this.nd = this.nm = this.nmw = this.ns = this.nwf = this.nwt = 0;
-    for (const id in this.weapons) this.wn[id] = 0;
+    for (const id in this.weapons) this.wn[id] = this.wnL[id] = 0;
     for (const k of KIND_IDS) this.gn[k] = this.mn[k] = 0;
     for (const k of HELMET_KINDS) this.hn[k] = 0;
     for (const g in this.hands) this.hn2[g] = 0;
+    const L = this.lite; L.np = L.nf = L.nh = L.nl = L.gn = this.np = 0;
+    for (const k of HELMET_KINDS) L.hn[k] = 0;
+    for (const g in L.hands) L.hn2[g] = 0;
   }
 
   // world: the unit's world matrix; p: pose() output (unit-local); opts: { body: false } hides
@@ -204,6 +239,8 @@ export class Crowd {
     let sv = cls + ((opts.seed || 0) * 0.6180339 % 1) * 0.9;
     if (opts.far) sv = -1 - sv;
     const sw = p.sway;
+    const L = opts.lite || opts.far ? this.lite : null; // mid and far soldiers draw their lite parts
+    const HM = L ? L.helmets : this.helmets, HN = L ? L.hn : this.hn;
     if (opts.body !== false && this.n < this.cap) {
       const i = this.n++;
       const bm = t.multiplyMatrices(world, p.body);
@@ -252,44 +289,47 @@ export class Crowd {
       } else {
         this.head.setMatrixAt(i, hm);
         this.head.instanceColor.setXYZ(i, sk.r * 1.6, sk.g * 1.6, sk.b * 1.6);
-        const hk = HELMET_KINDS.includes(opts.kind) ? opts.kind : 'rifleman', hi = this.hn[hk]++;
-        this.helmets[hk].setMatrixAt(hi, t.multiplyMatrices(world, p.head));
-        this.style(this.helmets[hk], hi, sv);
+        const hk = HELMET_KINDS.includes(opts.kind) ? opts.kind : 'rifleman', hi = HN[hk]++;
+        HM[hk].setMatrixAt(hi, t.multiplyMatrices(world, p.head));
+        this.style(HM[hk], hi, sv);
         const hc = opts.kind === 'medic' ? PALE : HELM_COL[team];
-        this.helmets[hk].instanceColor.setXYZ(hi, hc.r, hc.g, hc.b);
+        HM[hk].instanceColor.setXYZ(hi, hc.r, hc.g, hc.b);
       }
       this.pack.setMatrixAt(i, t.multiplyMatrices(world, p.pack));
       this.pack.instanceColor.setXYZ(i, PACK_COL[team].r, PACK_COL[team].g, PACK_COL[team].b);
       this.style(this.pack, i, sv);
       const lost = opts.lost || 0;
       if (!opts.far) {
-        const kk = kindKey(opts.kind), gi = this.gn[kk]++;
-        this.gear[kk].setMatrixAt(gi, t.multiplyMatrices(world, p.body));
+        const kk = kindKey(opts.kind), gm = L ? L.gear : this.gear[kk], gi = L ? L.gn++ : this.gn[kk]++;
+        gm.setMatrixAt(gi, t.multiplyMatrices(world, p.body));
         const ac = UI_COL[team];
-        this.gear[kk].instanceColor.setXYZ(gi, ac.r, ac.g, ac.b);
-        this.style(this.gear[kk], gi, sv); this.swayTo(this.gear[kk], gi, sw);
+        gm.instanceColor.setXYZ(gi, ac.r, ac.g, ac.b);
+        this.style(gm, gi, sv); this.swayTo(gm, gi, sw);
         if (this.marks[kk]) { const mi = this.mn[kk]++; this.marks[kk].setMatrixAt(mi, t); this.swayTo(this.marks[kk], mi, sw); }
       }
       solveLegs(p);
       const tc = TROUSER[team];
       // pelvis and neck: the joints between the chest, the hips and the head
-      this.pelvis.setMatrixAt(i, t.multiplyMatrices(world, p.pelvis));
-      this.pelvis.instanceColor.setXYZ(i, tc.r, tc.g, tc.b);
-      this.style(this.pelvis, i, sv);
-      if (!(hl & LOST.HEAD)) { this.neck.setMatrixAt(i, t.multiplyMatrices(world, p.neck)); this.neck.instanceColor.setXYZ(i, sk.r * 1.6, sk.g * 1.6, sk.b * 1.6); } else this.neck.setMatrixAt(i, ZERO);
+      const pm = L ? L.pelvis : this.pelvis, pi = L ? L.np++ : this.np++;
+      pm.setMatrixAt(pi, t.multiplyMatrices(world, p.pelvis));
+      pm.instanceColor.setXYZ(pi, tc.r, tc.g, tc.b);
+      this.style(pm, pi, sv);
+      if (!L) { if (!(hl & LOST.HEAD)) { this.neck.setMatrixAt(pi, t.multiplyMatrices(world, p.neck)); this.neck.instanceColor.setXYZ(pi, sk.r * 1.6, sk.g * 1.6, sk.b * 1.6); } else this.neck.setMatrixAt(pi, ZERO); }
       for (let k = 0; k < 2; k++) {
         if (lost & (LOST.LEG << k)) { this.addStump(world, p.legs[k][0], 0.056, tc, 0.03); continue; } // torn off at the hip: leg, shin and boot go together
-        if (this.nl + 1 > this.cap * 2) continue;
-        const j = this.nl++;
-        this.thigh.setMatrixAt(j, t.multiplyMatrices(world, p.legs[k][0]));
-        this.thigh.instanceColor.setXYZ(j, tc.r, tc.g, tc.b);
-        this.style(this.thigh, j, sv); this.style(this.shin, j, sv);
-        if (lost & (LOST.SHIN << k)) { this.shin.setMatrixAt(j, ZERO); this.addStump(world, p.legs[k][1], 0.043, tc, 0.03); continue; } // torn off at the knee
-        this.shin.setMatrixAt(j, t.multiplyMatrices(world, p.legs[k][1]));
-        this.shin.instanceColor.setXYZ(j, tc.r, tc.g, tc.b);
+        const TH = L ? L.thigh : this.thigh, SH = L ? L.shin : this.shin;
+        if ((L ? L.nl : this.nl) + 1 > this.cap * 2) continue;
+        const j = L ? L.nl++ : this.nl++;
+        TH.setMatrixAt(j, t.multiplyMatrices(world, p.legs[k][0]));
+        TH.instanceColor.setXYZ(j, tc.r, tc.g, tc.b);
+        this.style(TH, j, sv); this.style(SH, j, sv);
+        if (lost & (LOST.SHIN << k)) { SH.setMatrixAt(j, ZERO); this.addStump(world, p.legs[k][1], 0.043, tc, 0.03); continue; } // torn off at the knee
+        SH.setMatrixAt(j, t.multiplyMatrices(world, p.legs[k][1]));
+        SH.instanceColor.setXYZ(j, tc.r, tc.g, tc.b);
       }
       for (let k = 0; k < p.feet.length; k++) {
         if (lost & ((LOST.LEG | LOST.SHIN) << k)) continue;
+        if (L) { if (L.nf >= this.cap * 2) break; this.style(L.boot, L.nf, sv); L.boot.setMatrixAt(L.nf++, t.multiplyMatrices(world, p.feet[k])); continue; }
         if (this.nf >= this.cap * 2) break;
         this.style(this.boot, this.nf, sv); this.style(this.toe, this.nf, sv);
         this.toe.setMatrixAt(this.nf, t.multiplyMatrices(world, p.toes[k]));
@@ -313,27 +353,35 @@ export class Crowd {
       const h = p.hands[k];
       const al = opts.lost || 0;
       if (al & (LOST.ARM << k)) { this.addStump(world, p.arms[k][0], 0.039, sc, 0.03); continue; } // torn off at the shoulder
-      if (this.nh >= this.cap * 2) break;
-      const j = this.nh++;
-      this.upperArm.setMatrixAt(j, t.multiplyMatrices(world, p.arms[k][0]));
-      this.upperArm.instanceColor.setXYZ(j, sc.r, sc.g, sc.b);
-      this.delt.setMatrixAt(j, t.multiplyMatrices(world, p.delts[k])); this.delt.instanceColor.setXYZ(j, sc.r, sc.g, sc.b);
-      this.style(this.upperArm, j, sv); this.style(this.foreArm, j, sv); this.style(this.delt, j, sv);
-      if (al & (LOST.FORE << k)) { this.foreArm.setMatrixAt(j, ZERO); this.addStump(world, p.arms[k][1], 0.031, sc, 0.024); continue; } // torn off at the elbow, hand and all
+      const UA = L ? L.upperArm : this.upperArm, FA = L ? L.foreArm : this.foreArm, DL = L ? L.delt : this.delt;
+      if ((L ? L.nh : this.nh) >= this.cap * 2) break;
+      const j = L ? L.nh++ : this.nh++;
+      UA.setMatrixAt(j, t.multiplyMatrices(world, p.arms[k][0]));
+      UA.instanceColor.setXYZ(j, sc.r, sc.g, sc.b);
+      DL.setMatrixAt(j, t.multiplyMatrices(world, p.delts[k])); DL.instanceColor.setXYZ(j, sc.r, sc.g, sc.b);
+      this.style(UA, j, sv); this.style(FA, j, sv); this.style(DL, j, sv);
+      if (al & (LOST.FORE << k)) { FA.setMatrixAt(j, ZERO); this.addStump(world, p.arms[k][1], 0.031, sc, 0.024); continue; } // torn off at the elbow, hand and all
       // open fingers when the hand is free, otherwise the cup / grip / foregrip hand the gun asks for
       const free = p.curl[k] < 0.5;
-      const hid = free ? (k === 0 ? 'oL' : 'oR') : k === 0 ? (HOLD[opts.weapon]?.grips?.lk === 'grip' ? 'G' : 'L') : 'R';
-      if (!opts.far2) { const hm = this.hands[hid], n = this.hn2[hid]++; hm.setMatrixAt(n, t.multiplyMatrices(world, h)); this.style(hm, n, sv); } // a glove past ~100 m is under a pixel
-      this.foreArm.setMatrixAt(j, t.multiplyMatrices(world, p.arms[k][1]));
-      this.foreArm.instanceColor.setXYZ(j, sc.r, sc.g, sc.b);
+      let hid = free ? (k === 0 ? 'oL' : 'oR') : k === 0 ? (HOLD[opts.weapon]?.grips?.lk === 'grip' ? 'G' : 'L') : 'R';
+      if (L) hid = hid === 'oL' ? 'L' : hid === 'oR' ? 'R' : hid; // the lite soldier has no spread fingers
+      if (!opts.far2) { const hm = L ? L.hands[hid] : this.hands[hid], n = L ? L.hn2[hid]++ : this.hn2[hid]++; hm.setMatrixAt(n, t.multiplyMatrices(world, h)); this.style(hm, n, sv); } // a glove past ~100 m is under a pixel
+      FA.setMatrixAt(j, t.multiplyMatrices(world, p.arms[k][1]));
+      FA.instanceColor.setXYZ(j, sc.r, sc.g, sc.b);
     }
     if (p.showWeapon && opts.weapon) {
-      const list = this.weapons[opts.weapon];
-      const k = this.wn[opts.weapon];
+      const list = (L ? this.weaponsLite : this.weapons)[opts.weapon], WN = L ? this.wnL : this.wn;
+      const k = WN[opts.weapon];
       if (list && k < list[0].instanceMatrix.count) {
         t.multiplyMatrices(world, p.weapon);
-        for (const m of list) m.setMatrixAt(k, t);
-        this.wn[opts.weapon] = k + 1;
+        for (const m of list) {
+          const sl = m.userData.slot;
+          if (!sl) { m.setMatrixAt(k, t); continue; }
+          weaponSlotMatrix(opts.weapon, sl, p.mvReload ?? -1, p.mvRack || 0, p.mvRecoil || 0, SLOT_M);
+          SLOT_M.elements[12] *= U.WEAPON_SCALE; SLOT_M.elements[13] *= U.WEAPON_SCALE; SLOT_M.elements[14] *= U.WEAPON_SCALE;
+          m.setMatrixAt(k, SLOT_T.multiplyMatrices(t, SLOT_M));
+        }
+        WN[opts.weapon] = k + 1;
       }
     }
   }
@@ -347,7 +395,10 @@ export class Crowd {
     for (const k in this.mn) c.mn[k] = this.mn[k];
     for (const k in this.hn) c.hn[k] = this.hn[k];
     for (const k in this.hn2) c.hn2[k] = this.hn2[k];
-    for (const k in this.wn) c.wn[k] = this.wn[k];
+    for (const k in this.wn) { c.wn[k] = this.wn[k]; c.wnL[k] = this.wnL[k]; }
+    c.np = this.np; const L = this.lite, l = c.lite; l.np = L.np; l.nf = L.nf; l.nh = L.nh; l.nl = L.nl; l.gn = L.gn;
+    for (const k in L.hn) l.hn[k] = L.hn[k];
+    for (const k in L.hn2) l.hn2[k] = L.hn2[k];
     this.snapped = true;
   }
 
@@ -367,10 +418,15 @@ export class Crowd {
     };
     const S = (k, n) => (sh ? k : n); // the shadow count, or the whole list when no snap() came
     fin(this.body, this.n, S(sh?.n, this.n)); fin(this.head, this.n, S(sh?.n, this.n)); for (const k of HELMET_KINDS) fin(this.helmets[k], this.hn[k], S(sh?.hn[k], this.hn[k])); fin(this.pack, this.n, S(sh?.n, this.n));
-    fin(this.boot, this.nf, S(sh?.nf, this.nf)); fin(this.toe, this.nf, S(sh?.nf, this.nf)); fin(this.pelvis, this.n, S(sh?.n, this.n)); fin(this.neck, this.n, S(sh?.n, this.n)); fin(this.delt, this.nh, S(sh?.nh, this.nh));
+    fin(this.boot, this.nf, S(sh?.nf, this.nf)); fin(this.toe, this.nf, S(sh?.nf, this.nf)); fin(this.pelvis, this.np, S(sh?.np, this.np)); fin(this.neck, this.np, S(sh?.np, this.np)); fin(this.delt, this.nh, S(sh?.nh, this.nh));
     for (const g in this.hands) fin(this.hands[g], this.hn2[g], S(sh?.hn2[g], this.hn2[g]));
     fin(this.upperArm, this.nh, S(sh?.nh, this.nh)); fin(this.foreArm, this.nh, S(sh?.nh, this.nh));
     fin(this.thigh, this.nl, S(sh?.nl, this.nl)); fin(this.shin, this.nl, S(sh?.nl, this.nl));
+    const L = this.lite, ls = sh?.lite;
+    for (const k of HELMET_KINDS) fin(L.helmets[k], L.hn[k], S(ls?.hn[k], L.hn[k]));
+    fin(L.pelvis, L.np, S(ls?.np, L.np)); fin(L.boot, L.nf, S(ls?.nf, L.nf)); fin(L.delt, L.nh, S(ls?.nh, L.nh)); fin(L.upperArm, L.nh, S(ls?.nh, L.nh)); fin(L.foreArm, L.nh, S(ls?.nh, L.nh));
+    fin(L.thigh, L.nl, S(ls?.nl, L.nl)); fin(L.shin, L.nl, S(ls?.nl, L.nl)); fin(L.gear, L.gn, S(ls?.gn, L.gn));
+    for (const g in L.hands) fin(L.hands[g], L.hn2[g], S(ls?.hn2[g], L.hn2[g]));
     fin(this.mark, this.nm); fin(this.markW, this.nmw);
     fin(this.stump, this.ns, S(sh?.ns, this.ns)); fin(this.wreckFace, this.nwf, S(sh?.nwf, this.nwf)); fin(this.wreckTop, this.nwt, S(sh?.nwt, this.nwt));
     fin(this.wound, this.nw); fin(this.dentBody, this.nd, S(sh?.nd, this.nd));
@@ -378,6 +434,9 @@ export class Crowd {
     wg.aC.needsUpdate = wg.aS.needsUpdate = wg.aN.needsUpdate = true;
     for (let k = 0; k < MAX_DENTS; k++) dg[`aD${k}`].needsUpdate = true;
     for (const k of KIND_IDS) { fin(this.gear[k], this.gn[k], S(sh?.gn[k], this.gn[k])); if (this.marks[k]) fin(this.marks[k], this.mn[k], S(sh?.mn[k], this.mn[k])); }
-    for (const id in this.weapons) for (const m of this.weapons[id]) fin(m, this.wn[id], S(sh?.wn[id], this.wn[id]));
+    for (const id in this.weapons) {
+      for (const m of this.weapons[id]) fin(m, this.wn[id], S(sh?.wn[id], this.wn[id]));
+      for (const m of this.weaponsLite[id]) fin(m, this.wnL[id], S(sh?.wnL[id], this.wnL[id]));
+    }
   }
 }

@@ -32,7 +32,7 @@ function envelope(st) {
 function onShell(E, { y0, y1, range, off = 0, thick = 0.006, bevel = 0.004, bulge = 0, rows = 6, cols = 8, sink = 0.004, edge = 0.4, crease = 45, walls = true, k = 1 }) {
   return patch({
     surf: (u, v) => { const e = E(v); return new V(e.rx * k * Math.sin(u), v, e.cz + e.rz * k * Math.cos(u)); },
-    v0: y0, v1: y1, range, rows, cols, off, thick, bevel, bulge, sink, edge, crease, uScale: 0.08, walls,
+    v0: y0, v1: y1, range, rows: Math.ceil(rows * 1.4), cols: Math.ceil(cols * 1.5), off, thick, bevel, bulge, sink, edge, crease: crease + 14, uScale: 0.08, walls,
   });
 }
 // mirror a geometry across x (flips winding so faces stay outward)
@@ -54,7 +54,7 @@ const LENS = 0.05;
 // ---------- shared pieces ----------
 // a dome shell from stations; the lower rim gets a rolled lip
 function shell(st, { n = 16, p = 2.3, crease = 0 } = {}) {
-  return loftY(st, { n, p }, { crease, cap0: false, cap1: true });
+  return loftY(st, { n: Math.max(n, 24), p, sub: 3 }, { crease, cap0: false, cap1: true });
 }
 // a stud/boss: short turned cylinder along z at (x, y, z) pointing forward
 function boss(r, len, x, y, z, { n = 8, shade = 0.5, dir = [0, 0, 1] } = {}) {
@@ -72,7 +72,7 @@ HELMET.rifleman = () => {
     { t: 0.137, rx: 0.087, rz: 0.097, cz: -0.008 }, { t: 0.163, rx: 0.075, rz: 0.085, cz: -0.008 }, { t: 0.184, rx: 0.053, rz: 0.062, cz: -0.008 }, { t: 0.198, rx: 0.024, rz: 0.03, cz: -0.008 }, { t: 0.2, rx: 0.003, rz: 0.003, cz: -0.008 },
   ];
   const E = envelope(st), l = [];
-  l.push(done(shell(st, { crease: 28 }), SHELL_COL));
+  l.push(done(shell(st, { crease: 62 }), SHELL_COL));
   // rolled rim: a ring around the lower edge of the shell
   l.push(done(loftY([{ t: 0.05, rx: 0.081, rz: 0.09, cz: -0.008 }, { t: 0.06, rx: 0.088, rz: 0.097, cz: -0.008 }, { t: 0.068, rx: 0.0875, rz: 0.0965, cz: -0.008 }, { t: 0.074, rx: 0.082, rz: 0.091, cz: -0.008 }], { n: 16, p: 2.3 }, { crease: 40 }), 0.62));
   // heavy brow bar and cheek bars framing the visor
@@ -109,7 +109,7 @@ HELMET.assault = () => {
     { t: 0.158, rx: 0.074, rz: 0.086, cz: -0.01 }, { t: 0.18, rx: 0.052, rz: 0.062, cz: -0.01 }, { t: 0.193, rx: 0.024, rz: 0.03, cz: -0.01 }, { t: 0.195, rx: 0.003, rz: 0.003, cz: -0.01 },
   ];
   const E = envelope(st), l = [];
-  l.push(done(shell(st, { p: 2.6, crease: 30 }), SHELL_COL));
+  l.push(done(shell(st, { p: 2.6, crease: 62 }), SHELL_COL));
   // the face: goggles in front of the eyes, mask below
   const ES = envelope([{ t: 0.0, rx: 0.052, rz: 0.066, cz: 0.012 }, { t: 0.05, rx: 0.066, rz: 0.078, cz: 0.006 }, { t: 0.1, rx: 0.077, rz: 0.088, cz: -0.004 }, { t: 0.13, rx: 0.08, rz: 0.09, cz: -0.006 }]);
   l.push(done(onShell(E, { y0: 0.082, y1: 0.124, range: () => [-1.38, 1.38], off: 0.005, thick: 0.012, bevel: 0.005, bulge: 0.006, cols: 16, rows: 4, k: 1.02 }), 0.3)); // goggle frame
@@ -142,7 +142,7 @@ HELMET.gunner = () => {
     { t: 0.16, rx: 0.088, rz: 0.1, cz: -0.01 }, { t: 0.186, rx: 0.068, rz: 0.078, cz: -0.01 }, { t: 0.198, rx: 0.036, rz: 0.044, cz: -0.01 }, { t: 0.2, rx: 0.004, rz: 0.004, cz: -0.01 },
   ];
   const E = envelope(st), l = [];
-  l.push(done(shell(st, { p: 3.2, crease: 28 }), SHELL_COL));
+  l.push(done(shell(st, { p: 3.2, crease: 62 }), SHELL_COL));
   // visor frame: a thick brow and cheek plates with a narrow slit between them
   l.push(done(onShell(E, { y0: 0.1, y1: 0.156, range: () => [-1.3, 1.3], off: 0.005, thick: 0.02, bevel: 0.01, bulge: 0.004, cols: 14, rows: 5, k: 1.0 }), 0.6));
   l.push(done(onShell(E, { y0: 0.098, y1: 0.114, range: () => [-1.1, 1.1], off: 0.022, thick: 0.004, bevel: 0.002, cols: 14, rows: 2, k: 1.0, edge: 0.9 }), LENS)); // the slit
@@ -169,7 +169,7 @@ HELMET.mortar = () => {
     { t: 0.165, rx: 0.07, rz: 0.08, cz: -0.008 }, { t: 0.187, rx: 0.042, rz: 0.05, cz: -0.008 }, { t: 0.2, rx: 0.016, rz: 0.02, cz: -0.008 }, { t: 0.2015, rx: 0.003, rz: 0.003, cz: -0.008 },
   ];
   const E = envelope(st), l = [];
-  l.push(done(shell(st, { p: 2.1, crease: 28 }), SHELL_COL));
+  l.push(done(shell(st, { p: 2.1, crease: 62 }), SHELL_COL));
   // the brim: a flared skirt all the way round, sloping down, with a rolled edge
   l.push(done(loftY([
     { t: 0.108, rx: 0.086, rz: 0.095, cz: -0.008 }, { t: 0.104, rx: 0.112, rz: 0.122, cz: -0.006 }, { t: 0.09, rx: 0.14, rz: 0.15, cz: -0.004 }, { t: 0.084, rx: 0.143, rz: 0.153, cz: -0.004 }, { t: 0.086, rx: 0.14, rz: 0.15, cz: -0.004 }, { t: 0.1, rx: 0.1, rz: 0.11, cz: -0.006 }, { t: 0.108, rx: 0.084, rz: 0.093, cz: -0.008 },
@@ -199,7 +199,7 @@ HELMET.coil = () => {
     { t: 0.156, rx: 0.088, rz: 0.098, cz: -0.008 }, { t: 0.18, rx: 0.062, rz: 0.07, cz: -0.008 }, { t: 0.196, rx: 0.028, rz: 0.034, cz: -0.008 }, { t: 0.1985, rx: 0.003, rz: 0.003, cz: -0.008 },
   ];
   const E = envelope(st), l = [];
-  l.push(done(loftY(st, { n: 18, p: 2 }, { crease: 30, cap0: false }), SHELL_COL));
+  l.push(done(loftY(st, { n: 24, p: 2, sub: 3 }, { crease: 62, cap0: false }), SHELL_COL));
   // neck seal: a ribbed ring at the base
   for (const [y, r] of [[0.008, 0.052], [0.02, 0.058]]) l.push(done(loftY([{ t: y - 0.006, rx: r - 0.006, rz: r - 0.004 }, { t: y, rx: r + 0.004, rz: r + 0.006 }, { t: y + 0.006, rx: r - 0.006, rz: r - 0.004 }], { n: 14 }, { crease: 40 }), 0.42, { pos: [0, 0, -0.004] }));
   // the visor: a big dome of glass that wraps the face, with a bright rim and a glowing core
@@ -231,7 +231,7 @@ HELMET.medic = () => {
     { t: 0.14, rx: 0.088, rz: 0.098, cz: -0.008 }, { t: 0.167, rx: 0.074, rz: 0.084, cz: -0.008 }, { t: 0.187, rx: 0.05, rz: 0.058, cz: -0.008 }, { t: 0.198, rx: 0.022, rz: 0.028, cz: -0.008 }, { t: 0.2, rx: 0.003, rz: 0.003, cz: -0.008 },
   ];
   const E = envelope(st), l = [];
-  l.push(done(shell(st, { p: 2.2, crease: 28 }), 0.96));
+  l.push(done(shell(st, { p: 2.2, crease: 62 }), 0.96));
   l.push(done(loftY([{ t: 0.05, rx: 0.081, rz: 0.09, cz: -0.008 }, { t: 0.06, rx: 0.088, rz: 0.097, cz: -0.008 }, { t: 0.068, rx: 0.0875, rz: 0.0965, cz: -0.008 }, { t: 0.074, rx: 0.082, rz: 0.091, cz: -0.008 }], { n: 16, p: 2.2 }, { crease: 40 }), 0.7));
   // a wide dark visor in a soft frame, with a strap behind
   l.push(done(onShell(E, { y0: 0.07, y1: 0.132, range: () => [-1.3, 1.3], off: 0.004, thick: 0.014, bevel: 0.006, bulge: 0.006, cols: 16, rows: 5, k: 1.015, crease: 45 }), 0.55));

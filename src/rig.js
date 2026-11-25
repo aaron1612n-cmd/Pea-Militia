@@ -49,15 +49,15 @@ export const ANIM = {
 // the chest, MG slung on the hip, coil gun across the body, mortar on the shoulder.
 const QV = Math.PI / 2;
 export const GRIPS = {
-  rifle: { x: 0.06, pz: 0.18, rh: [-0.036, -0.012], lh: [0.0, 0.3, 0, 0, 0], mag: [-0.03, 0.085, 0, 0, 0],
+  rifle: { x: 0.16, pz: 0.2, rh: [-0.036, -0.012], lh: [0.0, 0.3, 0, 0, 0], mag: [-0.03, 0.085, 0, 0, 0],
     walk: [0, 0, -0.04, 0], run: [-0.02, 0.02, -0.16, 0.1], bob: 0.5 },
-  smg: { x: 0.06, pz: 0.18, rh: [-0.036, -0.004], lh: [-0.044, 0.282, 0, 0, 0], lk: 'grip', mag: [-0.095, 0.1, 0, 0, 0],
+  smg: { x: 0.16, pz: 0.2, rh: [-0.036, -0.004], lh: [-0.044, 0.282, 0, 0, 0], lk: 'grip', mag: [-0.095, 0.1, 0, 0, 0],
     walk: [0.01, 0, 0.06, 0], run: [0.03, 0.0, 0.2, 0.12], bob: 0.4 },
-  mg: { x: 0.04, pz: 0.17, rh: [-0.036, -0.012], lh: [-0.075, 0.35, 0, 0, 0], mag: [-0.1, 0.12, 0, 0, 0],
+  mg: { x: 0.15, pz: 0.19, rh: [-0.036, -0.012], lh: [-0.075, 0.35, 0, 0, 0], mag: [-0.1, 0.12, 0, 0, 0],
     walk: [-0.01, 0, -0.1, 0], run: [-0.03, 0.01, -0.22, 0.14], bob: 1.1 },
-  plasma: { x: 0.07, pz: 0.2, rh: [-0.036, -0.012], lh: [-0.034, 0.12, 0, 0, 0], mag: [-0.1, 0.12, 0, 0, 0],
+  plasma: { x: 0.16, pz: 0.16, rh: [-0.036, -0.012], lh: [-0.034, 0.12, 0, 0, 0], mag: [-0.1, 0.12, 0, 0, 0],
     walk: [0, 0, 0.0, -0.05], run: [0.01, 0, 0.12, -0.1], bob: 0.5 },
-  launcher: { x: 0.08, pz: 0.2, rh: [-0.03, 0.0], lh: [-0.04, 0.12, 0, 0, 0], mag: [0.15, 0.1, 0, 0, 0],
+  launcher: { x: 0.16, pz: 0.16, rh: [-0.03, 0.0], lh: [-0.04, 0.12, 0, 0, 0], mag: [0.15, 0.1, 0, 0, 0],
     walk: [0.02, 0, 0.2, 0], run: [0.05, 0.02, 0.45, 0.1], bob: 0.9 },
   grenade: null,
 };
@@ -153,6 +153,7 @@ export function makePose() {
     legs: [[new THREE.Matrix4(), new THREE.Matrix4()], [new THREE.Matrix4(), new THREE.Matrix4()]],
     arms: [[new THREE.Matrix4(), new THREE.Matrix4()], [new THREE.Matrix4(), new THREE.Matrix4()]],
     weapon: new THREE.Matrix4(), muzzle: new THREE.Vector3(), showWeapon: true, height: U.TOP,
+    mvReload: -1, mvRack: 0, mvRecoil: 0,
   };
 }
 
@@ -171,6 +172,7 @@ function poseCore(s, out) {
   const limp = Math.abs(s.limp || 0);
   const kneelStill = kneel * (1 - w); // one knee down; moving crouched is a walk with bent legs
   out.gait = g;
+  out.mvReload = s.reload ?? -1; out.mvRack = s.rack || 0; out.mvRecoil = s.recoil || 0; // drives the gun's moving parts (magazine, bolt)
 
   // ---- feet: planted while they carry the body, lifted and swung through between strikes
   if (dead < 0) {
@@ -327,7 +329,7 @@ function poseCore(s, out) {
   E.set(0, twist, 0, 'YXZ');
   Q2.setFromEuler(E);
   // the rifle crosses in front of the right shoulder: butt at the shoulder, muzzle toward the middle
-  E.set(-pitch, twist + 0.2 * (1 - ads) + car(3), -rk * h.anim.roll + bobR, 'YXZ');
+  E.set(-pitch, twist + 0.12 * (1 - ads) + car(3), -rk * h.anim.roll + bobR, 'YXZ');
   Q.setFromEuler(E);
   T.set(px, py, pz).applyAxisAngle(THREE.Object3D.DEFAULT_UP, twist);
   // the grip sits a little forward and below the shoulder line; recoil kicks it back
@@ -366,7 +368,19 @@ export function pose(s, out = makePose()) {
   postures(s, out);
   crawl(s, out);
   clutch(s, out);
+  groundFeet(s, out);
   return out;
+}
+// Lying down (or fallen), the boots turn toes-down; lift each one until its lowest point (toe tip, heel, welt) rests on the ground
+const FOOT_LOW = [[0, 0.012, 0.152], [0, 0.0, 0.14], [0.04, 0.0, 0.1], [-0.04, 0.0, 0.1], [0, 0.0, -0.09], [0.035, 0.0, -0.08], [-0.035, 0.0, -0.08]].map((q) => new THREE.Vector3(...q));
+function groundFeet(s, out) {
+  const k = (s.dead ?? -1) >= 0 ? smooth(0, 0.3, s.dead) : smooth(0.3, 0.9, s.prone || 0);
+  if (k <= 0) return;
+  for (const f of out.feet) {
+    let lo = Infinity;
+    for (const q of FOOT_LOW) lo = Math.min(lo, V3.copy(q).applyMatrix4(f).y);
+    if (lo < 0.004) f.elements[13] += (0.004 - lo) * k;
+  }
 }
 
 // The gun rides with the chest as the body leans into a run, so the two never swing into each other.

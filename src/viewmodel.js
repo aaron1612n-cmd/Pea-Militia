@@ -84,6 +84,7 @@ export class ViewModel {
     const rb = u.recoilBuild || 0;
     const jam = u.jamT > 0 ? Math.sin(u.t * 24) * 0.5 + 0.5 : 0; // clearing a jam: the gun rocks as the bolt is worked
     const air = u.air;
+    p.mvReload = rp; p.mvRack = rack; p.mvRecoil = rec;
 
     camera.updateMatrixWorld();
     // the (unseen) body the arms hang from sits below and behind the eyes; aiming lifts the

@@ -864,6 +864,7 @@ function respawnPlayer() {
 
 // ---------------- render: everyone through the instanced crowd ----------------
 const viewPose = makePose();
+const LOD_MID = 16; // beyond this, soldiers draw their lite parts (see lod.js)
 const LOD_FAR = 52; // beyond this, soldiers draw as the plain block, hands, feet, arms and weapon
 const view = new View();
 let unitView = new Uint8Array(256); // per soldier: 0 skip, 1 camera only, 2 camera and shadow box
@@ -899,7 +900,7 @@ function drawUnits() {
         continue;
       }
       const dd = u.pos.distanceToSquared(cp);
-      crowd.add(u.world, u.poseOut, u.team, { weapon: u.weapon.id, seed: u.id, wound: u.wound, lost: u.lost, wounds: u.wounds, marks: u.marks, kind: u.kind, far: dd > LOD_FAR * LOD_FAR, far2: dd > LOD_FAR2 * LOD_FAR2 });
+      crowd.add(u.world, u.poseOut, u.team, { weapon: u.weapon.id, seed: u.id, wound: u.wound, lost: u.lost, wounds: u.wounds, marks: u.marks, kind: u.kind, far: dd > LOD_FAR * LOD_FAR, lite: dd > LOD_MID * LOD_MID, far2: dd > LOD_FAR2 * LOD_FAR2 });
     }
     if (pass === 2) crowd.snap();
   }

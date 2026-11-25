@@ -6,6 +6,9 @@ import { mergeGeometries, toCreasedNormals } from 'three/examples/jsm/utils/Buff
 // follow the shell they sit on), or a tube along a path. Every builder returns a plain geometry
 // (position + normal + colour, not indexed) ready for mergeGeometries.
 const V = THREE.Vector3;
+// Level of detail for geometry built from here on: 1 is full, lower thins every ring, row and column so the same
+// builders make a cheap copy for distant soldiers (see lod.js). Set it, build, set it back.
+export const LOD = { q: 1 };
 const _a = new V(), _b = new V(), _c = new V(), _n = new V();
 export const clamp01 = (x) => Math.min(1, Math.max(0, x));
 export const sstep = (a, b, x) => { const t = clamp01((x - a) / (b - a || 1e-9)); return t * t * (3 - 2 * t); };
@@ -85,6 +88,7 @@ export const merge = (list) => mergeGeometries(list, false);
 // A superellipse ring (p = 2 ellipse, larger p squarer) perpendicular to an axis. Point j sits at
 // angle rot + j/n of a turn; `bump(a)` scales the radius at that angle for ridges and notches.
 function ring(n, p, rot, bump, f) {
+  if (LOD.q < 1) n = Math.max(6, Math.round(n * LOD.q));
   const out = [], e = 2 / p;
   for (let j = 0; j < n; j++) {
     const a = rot + (j / n) * Math.PI * 2;
@@ -125,7 +129,30 @@ export function loft(rings, { cap0 = true, cap1 = true, crease = 0, smooth = tru
 
 // Stations along an axis → rings. kind 'y' (ringY), 'z' (ringZ) or 'x' (ringX). Each station:
 // { t (position on the axis), rx, rz|ry, cx, cz|cy, p }. `opts` fills in the ring options.
+// Insert k smooth stations between each pair (Catmull-Rom through every numeric field), so a coarse
+// profile becomes a rounded one without hand-writing more rows.
+export function refine(st, k) {
+  if (!k || st.length < 3 || LOD.q < 1) return st;
+  const keys = [...new Set(st.flatMap((s) => Object.keys(s)))].filter((f) => st.every((s) => s[f] === undefined || typeof s[f] === 'number'));
+  const out = [];
+  const g = (i, f) => { const s = st[Math.max(0, Math.min(st.length - 1, i))]; return s[f] ?? st[i < 0 ? 0 : Math.min(st.length - 1, i)][f] ?? 0; };
+  for (let i = 0; i < st.length - 1; i++) {
+    for (let j = 0; j < k; j++) {
+      const u = j / k, u2 = u * u, u3 = u2 * u, o = { ...st[i] };
+      for (const f of keys) {
+        if (f === 'p') { o[f] = st[i][f] !== undefined && st[i + 1][f] !== undefined ? st[i][f] + (st[i + 1][f] - st[i][f]) * u : st[i][f]; continue; }
+        const p0 = g(i - 1, f), p1 = g(i, f), p2 = g(i + 1, f), p3 = g(i + 2, f);
+        o[f] = 0.5 * (2 * p1 + (-p0 + p2) * u + (2 * p0 - 5 * p1 + 4 * p2 - p3) * u2 + (-p0 + 3 * p1 - 3 * p2 + p3) * u3);
+        if (f[0] === 'r') o[f] = Math.max(0.0003, o[f]);
+      }
+      out.push(o);
+    }
+  }
+  out.push(st[st.length - 1]);
+  return out;
+}
 export function loftAxis(kind, stations, opts = {}, lo = {}) {
+  if (opts.sub) stations = refine(stations, opts.sub);
   const rings = stations.map((s) => {
     const o = { ...opts, cx: s.cx ?? 0, p: s.p ?? opts.p ?? 2, bump: s.bump ?? opts.bump, rot: s.rot ?? opts.rot ?? 0 };
     if (kind === 'y') return ringY(s.t, s.rx, s.rz ?? s.rx, { ...o, cz: s.cz ?? 0 });
@@ -161,6 +188,7 @@ export function rod(a, b, r0, r1 = r0, { n = 8, crease = 0 } = {}) {
 
 // ---- tube along a path ----------------------------------------------------------------------
 export function tubePath(points, radius, { n = 6, seg = 10, crease = 0, p = 2 } = {}) {
+  if (LOD.q < 1) { n = Math.max(3, Math.round(n * Math.max(0.5, LOD.q))); seg = Math.max(3, Math.round(seg * LOD.q)); }
   const curve = new THREE.CatmullRomCurve3(points.map((q) => new V(...q)), false, 'centripetal');
   const frames = curve.computeFrenetFrames(seg, false);
   const rings = [];
@@ -181,6 +209,7 @@ function lerpList(l, t) { const x = t * (l.length - 1), i = Math.min(l.length - 
 
 // flat strap along a path: width across, thick out of the surface; `up(t)` is the outward normal
 export function ribbon(points, width, thick, up, { seg = 12, crease = 55, edge = 0.5 } = {}) {
+  if (LOD.q < 1) seg = Math.max(3, Math.round(seg * LOD.q));
   const curve = new THREE.CatmullRomCurve3(points.map((q) => new V(...q)), false, 'centripetal');
   const ups = Array.isArray(up) && Array.isArray(up[0]) ? up.map((u) => new V(...u).normalize()) : null;
   const upAt = (t, c) => {
@@ -217,6 +246,7 @@ export function ribbon(points, width, thick, up, { seg = 12, crease = 55, edge =
 // uScale converts u units to metres (1 for metres, the radius for angles).
 // closedU joins the last column to the first (a belt all the way round).
 export function patch({ surf, v0, v1, range, rows = 8, cols = 6, off = 0, thick = 0.01, bevel = 0.006, bulge = 0, sink = 0.004, uScale = 1, flip: fl = false, closedU = false, edge = 0.35, crease = 40, hem = 0, walls = true, solid = false }) {
+  if (LOD.q < 1) { rows = Math.max(2, Math.round(rows * LOD.q)); cols = Math.max(2, Math.round(cols * LOD.q)); }
   const pos = [], idx = [];
   const grid = [];
   const eps = 0.002;

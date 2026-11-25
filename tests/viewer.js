@@ -47,7 +47,7 @@ window.shot = ({ kind = 'rifleman', team = 0, view = 'front', mode = 'idle', zoo
   if (s.walk > 0) { const sw = new Sway(); for (let i = 0; i < 90; i++) sw.update(1 / 60, 0, s.speed, 0, (phase + i * s.speed * 0.4 / 60 / (0.45 + 0.32 * s.speed)) % 1, 1, 0, p.sway); }
   const world = new THREE.Matrix4();
   crowd.begin();
-  crowd.add(world, p, team, { weapon: WEAPON[kind], seed: 2, kind });
+  crowd.add(world, p, team, { weapon: WEAPON[kind], seed: 2, kind, lite: !!s.lite, far: !!s.far });
   crowd.end();
   const [cy, d, lx = 0, lz = 0] = ZOOM[zoom] || ZOOM.full;
   const a = ANG[view] ?? 0;
