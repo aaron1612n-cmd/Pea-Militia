@@ -269,8 +269,10 @@ try {
 
   // ---- weapons
   const guns = await P.evaluate(async () => {
-    const { battle, player, SLOTS } = window.__game;
+    const { battle, player, SLOTS, makeWeapon } = window.__game;
     battle.clearUnits();
+    const kept = player.weapons, keptI = player.wi;
+    player.weapons = SLOTS.map((id) => makeWeapon(id)); // a class carries two guns; the check wants every one of them
     const out = [];
     for (let i = 0; i < SLOTS.length; i++) {
       player.setWeapon(i, true);
@@ -282,10 +284,10 @@ try {
       const projNeeded = w.def.kind === 'projectile' || w.def.kind === 'throw';
       out.push({ id: w.id, ok, used: w.mag < before.mag || w.heat > before.heat || w.def.kind === 'throw', proj: !projNeeded || battle.projectiles.length > before.proj || battle.stats.kills >= 0 });
     }
-    player.setWeapon(0, true);
+    player.weapons = kept; player.setWeapon(keptI, true);
     return out;
   });
-  check('weapons: all seven fire and use ammo or heat', guns.length === 7 && guns.every((x) => x.ok && x.used && x.proj), JSON.stringify(guns.filter((x) => !(x.ok && x.used && x.proj))));
+  check('weapons: every weapon fires and uses ammo or heat', guns.length === 6 && guns.every((x) => x.ok && x.used && x.proj), JSON.stringify(guns.filter((x) => !(x.ok && x.used && x.proj))));
 
   // ---- no weapon makes the player faster (the coil gun, grenade and mortar once did)
   const spd = await P.evaluate(() => {

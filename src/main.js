@@ -20,7 +20,7 @@ import { buildMap } from './map.js';
 import { Effects } from './effects.js';
 import { Audio } from './audio.js';
 import { Hud } from './hud.js';
-import { SLOTS, WEAPONS, weaponModel } from './weapons.js';
+import { SLOTS, WEAPONS, weaponModel, makeWeapon } from './weapons.js';
 import { Sandbox } from './sandbox.js';
 import { TEAMS, hostile } from './factions.js';
 import { ViewModel, VM_FOV, VIEW } from './viewmodel.js';
@@ -1100,7 +1100,7 @@ if (params.has('play')) startBattle({ mode: params.get('play') || 'battle' });
 
 // Test hooks for the check suite.
 window.__game = { maxSpeed: MAX_SPEED,
-  THREE, scene, camera, renderer, cam, input, crowd, fx, SLOTS, U, pose, makePose, solveLegs, solveArms, HOLD, HALF, weaponModel,
+  THREE, scene, camera, renderer, cam, input, crowd, fx, SLOTS, makeWeapon, U, pose, makePose, solveLegs, solveArms, HOLD, HALF, weaponModel,
   spec, height, get battle() { return battle; }, get player() { return player; }, get state() { return state; }, gov,
   sandbox, atmo, ambience, envNow: () => updateEnv(1e9, atmo.hour, atmo.weather, true), start: startBattle, openMenu, pause,
   freeze(on = true) { frozen = on; },
