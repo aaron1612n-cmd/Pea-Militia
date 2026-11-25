@@ -49,13 +49,13 @@ export const ANIM = {
 // the chest, MG slung on the hip, coil gun across the body, mortar on the shoulder.
 const QV = Math.PI / 2;
 export const GRIPS = {
-  rifle: { x: 0.06, pz: 0.18, rh: [-0.036, -0.012], lh: [0.0, 0.3, 0, 0, 0], mag: [-0.03, 0.085, 0, 0, 0],
+  rifle: { x: 0.11, pz: 0.24, rh: [-0.036, -0.012], lh: [0.0, 0.3, 0, 0, 0], mag: [-0.03, 0.085, 0, 0, 0],
     walk: [0, 0, -0.04, 0], run: [-0.02, 0.02, -0.16, 0.1], bob: 0.5 },
-  smg: { x: 0.06, pz: 0.18, rh: [-0.036, -0.004], lh: [-0.044, 0.282, 0, 0, 0], lk: 'grip', mag: [-0.095, 0.1, 0, 0, 0],
+  smg: { x: 0.11, pz: 0.24, rh: [-0.036, -0.004], lh: [-0.044, 0.282, 0, 0, 0], lk: 'grip', mag: [-0.095, 0.1, 0, 0, 0],
     walk: [0.01, 0, 0.06, 0], run: [0.03, 0.0, 0.2, 0.12], bob: 0.4 },
-  mg: { x: 0.04, pz: 0.17, rh: [-0.036, -0.012], lh: [-0.075, 0.35, 0, 0, 0], mag: [-0.1, 0.12, 0, 0, 0],
+  mg: { x: 0.1, pz: 0.23, rh: [-0.036, -0.012], lh: [-0.075, 0.35, 0, 0, 0], mag: [-0.1, 0.12, 0, 0, 0],
     walk: [-0.01, 0, -0.1, 0], run: [-0.03, 0.01, -0.22, 0.14], bob: 1.1 },
-  plasma: { x: 0.07, pz: 0.2, rh: [-0.036, -0.012], lh: [-0.034, 0.12, 0, 0, 0], mag: [-0.1, 0.12, 0, 0, 0],
+  plasma: { x: 0.11, pz: 0.26, rh: [-0.036, -0.012], lh: [-0.034, 0.12, 0, 0, 0], mag: [-0.1, 0.12, 0, 0, 0],
     walk: [0, 0, 0.0, -0.05], run: [0.01, 0, 0.12, -0.1], bob: 0.5 },
   launcher: { x: 0.08, pz: 0.2, rh: [-0.03, 0.0], lh: [-0.04, 0.12, 0, 0, 0], mag: [0.15, 0.1, 0, 0, 0],
     walk: [0.02, 0, 0.2, 0], run: [0.05, 0.02, 0.45, 0.1], bob: 0.9 },
@@ -329,7 +329,7 @@ function poseCore(s, out) {
   E.set(0, twist, 0, 'YXZ');
   Q2.setFromEuler(E);
   // the rifle crosses in front of the right shoulder: butt at the shoulder, muzzle toward the middle
-  E.set(-pitch, twist + 0.2 * (1 - ads) + car(3), -rk * h.anim.roll + bobR, 'YXZ');
+  E.set(-pitch, twist + 0.12 * (1 - ads) + car(3), -rk * h.anim.roll + bobR, 'YXZ');
   Q.setFromEuler(E);
   T.set(px, py, pz).applyAxisAngle(THREE.Object3D.DEFAULT_UP, twist);
   // the grip sits a little forward and below the shoulder line; recoil kicks it back
