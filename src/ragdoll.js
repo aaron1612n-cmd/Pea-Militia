@@ -93,7 +93,12 @@ class Box {
     // rolling resistance and air drag so bodies settle instead of rocking
     const damp = this.hits ? Math.exp(-6.5 * dt) : Math.exp(-0.15 * dt);
     this.w.multiplyScalar(damp);
-    if (this.hits >= 2) this.v.x *= Math.exp(-2.6 * dt), this.v.z *= Math.exp(-2.6 * dt);
+    if (this.hits >= 2) {
+      this.v.x *= Math.exp(-2.6 * dt); this.v.z *= Math.exp(-2.6 * dt);
+      // dry friction takes over at a crawl, so a body stops dead instead of creeping (or sliding down a slope)
+      const hs = Math.hypot(this.v.x, this.v.z);
+      if (hs < 0.9) { const k = Math.max(0, hs - 9 * dt) / (hs || 1); this.v.x *= k; this.v.z *= k; }
+    }
     // edge of the slab and prop sides: push the box centre out horizontally
     if (world) {
       const probe = this.probe || (this.probe = { pos: new THREE.Vector3(), vel: this.v });
@@ -105,9 +110,9 @@ class Box {
     this.age = (this.age || 0) + dt;
     // settled: resting on 2+ corners and barely moving (looser the longer it has been going)
     const lax = this.age > 2.5 ? 4 : 1;
-    if (this.hits >= 2 && this.v.lengthSq() < 0.08 * lax && this.w.lengthSq() < 0.5 * lax) {
+    if (this.hits >= 2 && this.v.lengthSq() < 0.16 * lax && this.w.lengthSq() < 0.7 * lax) {
       this.rest += dt;
-      if (this.rest > 0.3) { this.asleep = true; this.v.set(0, 0, 0); this.w.set(0, 0, 0); }
+      if (this.rest > 0.2) { this.asleep = true; this.v.set(0, 0, 0); this.w.set(0, 0, 0); }
     } else this.rest = 0;
   }
 
@@ -162,7 +167,7 @@ export class Ragdoll {
       hm.multiplyMatrices(unit.world, parts[i]);
       const p = new THREE.Vector3().setFromMatrixPosition(hm);
       const a = ANCHOR[i];
-      this.limbs.push({ p, o: p.clone().addScaledVector(this.body.v, -1 / 60), a });
+      this.limbs.push({ p, o: p.clone().addScaledVector(this.body.v, -1 / 60), a, foot: i >= 2 });
     }
     // the gun drops out of the hands and tumbles on its own
     const h = HOLD[unit.weapon.id];
@@ -193,6 +198,7 @@ export class Ragdoll {
   }
 
   step(dt, world) {
+    this.floor = world ? (x, z, y) => world.groundAt(x, z, y + 0.3) : null;
     if (this.asleep) return;
     this.t += dt;
     const n = dt > 1 / 50 ? 2 : 1;
@@ -230,7 +236,14 @@ export class Ragdoll {
         l.p.copy(_t.applyQuaternion(b.q).add(b.pos));
       }
       // ground, with friction
-      const g = (world ? world.groundAt(l.p.x, l.p.z, l.p.y + 0.2) : 0) + r;
+      let g = (world ? world.groundAt(l.p.x, l.p.z, l.p.y + 0.2) : 0) + r;
+      if (l.foot && world) {
+        // boots are 0.2 m long and lie along the body's z axis: toe and heel must clear the ground too
+        for (const dz of [-0.1, 0.1]) {
+          _t.set(0, 0, dz).applyQuaternion(b.q).add(l.p);
+          g = Math.max(g, world.groundAt(_t.x, _t.z, _t.y + 0.2) + r + 0.02 - _t.y + l.p.y);
+        }
+      }
       if (l.p.y < g) {
         l.p.y = g;
         l.o.x += (l.p.x - l.o.x) * 0.4;
@@ -252,6 +265,7 @@ export class Ragdoll {
       parts[i].compose(_p, this.body.q, ONE);
     }
     out.showWeapon = !!this.gun;
+    out.floor = this.floor;
     if (this.gun) {
       _p.copy(this.gunMid).applyQuaternion(this.gun.q).negate().add(this.gun.pos);
       _p.y -= sink;

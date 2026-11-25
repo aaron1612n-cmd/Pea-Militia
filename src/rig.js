@@ -393,15 +393,19 @@ function joint(out, root, target, l1, l2, pole, over) {
   if (_up.lengthSq() < 1e-6) _up.set(0, 0, 1).addScaledVector(_d, -_d.z);
   _up.normalize();
   _a.copy(root).addScaledVector(_d, x).addScaledVector(_up, h);
+  // a knee or elbow of a body lying down can't sink into the ground (p.floor is set for ragdolls)
+  if (FLOOR) { const g = FLOOR(_a.x, _a.z, _a.y) + 0.05; if (_a.y < g) _a.y = g; }
   const full = target.distanceTo(root) > d + 1e-4;
   _e.copy(root).addScaledVector(_d, d); // reachable end (target when within reach)
   segment(out[0], root, _a, over);
   segment(out[1], _a, full ? _e : target, over);
   return stretch;
 }
+let FLOOR = null;
 export const SEG_OVER = 0.0; // limb segments overlap their joints by this much
 const _ank = new THREE.Vector3(0, 0.092, -0.004);
 export function solveLegs(p) {
+  FLOOR = p.floor || null;
   M.copy(p.body);
   M.decompose(_bp, _bq, _bs);
   p.legStretch = 1;
@@ -412,10 +416,12 @@ export function solveLegs(p) {
     _pole.set(side * 0.12, 0, 1).applyQuaternion(_bq);
     p.legStretch = Math.max(p.legStretch, joint(p.legs[i], _s, _t, U.LEG[0], U.LEG[1], _pole, 0.02));
   }
+  FLOOR = null;
   return p;
 }
 // arms: shoulder joint to the hand, elbows down and out. hands[0] is the left (support) hand at +x.
 export function solveArms(p) {
+  FLOOR = p.floor || null;
   M.copy(p.body);
   M.decompose(_bp, _bq, _bs);
   for (let i = 0; i < 2; i++) {
@@ -425,5 +431,6 @@ export function solveArms(p) {
     _pole.set(side * 0.7, -1, -0.5).applyQuaternion(_bq);
     joint(p.arms[i], _s, _t, U.ARM[0], U.ARM[1], _pole, 0.02);
   }
+  FLOOR = null;
   return p;
 }
