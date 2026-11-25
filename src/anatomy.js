@@ -3,7 +3,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { U, SEG_LEN } from './rig.js';
 import { mergeByPosition } from './geo.js';
-import { loftY, loftZ, lathe, plate, rod, patch, done, sstep, tubePath, ribbon } from './shapes.js';
+import { loftY, loftZ, lathe, plate, rod, patch, done, sstep, tubePath, ribbon, LOD } from './shapes.js';
 
 // The soldier's body, built once and drawn instanced. Every part is a shaped, welded mesh: a
 // torso that narrows at the waist and slopes into the neck, a head with a face under a steel
@@ -29,6 +29,7 @@ function bake(geo, shade = 1, at = [0, 0, 0], rot = [0, 0, 0], scale = [1, 1, 1]
 const merge = (list) => mergeGeometries(list, false);
 // smooth ellipsoid, welded so shading has no seam
 function blob(rx, ry, rz, w = 14, h = 10) {
+  if (LOD.q < 1) { w = Math.max(5, Math.round(w * LOD.q)); h = Math.max(3, Math.round(h * LOD.q)); }
   const g = new THREE.SphereGeometry(1, w, h);
   g.scale(rx, ry, rz);
   g.deleteAttribute('normal'); g.deleteAttribute('uv');
@@ -46,6 +47,7 @@ function curve(t, keys) {
 }
 // a smooth tube along a path of points with a radius per point, closed with rounded ends
 function tubeAlong(points, radii, radial = 6, seg = 10, shade = 1) {
+  if (LOD.q < 1) { radial = Math.max(3, Math.round(radial * 0.6)); seg = Math.max(2, Math.round(seg * LOD.q)); }
   const pts = points.map((p) => new THREE.Vector3(...p));
   const path = new THREE.CatmullRomCurve3(pts, false, 'catmullrom', 0.4);
   const tube = new THREE.TubeGeometry(path, seg, 1, radial, false);
@@ -202,7 +204,7 @@ function limbSolid(st, { n = 10, p = 2.2, shade = 1 } = {}) {
     return out;
   };
   const all = [...cap(first, -1).reverse(), ...stations, ...cap(last, 1)];
-  return done(loftZ(all, { n, p, sub: 2 }, { crease: 0 }), shade);
+  return done(loftZ(all, { n, p, sub: 1 }, { crease: 0 }), shade);
 }
 // small faceted armour cup standing on a limb, axis along +y at pos
 function cupY(pts, { n = 8, sx = 1, sz = 1, shade = 0.45, pos, flipY = false }) {
@@ -273,6 +275,7 @@ function limb(kind) {
 }
 export const LIMB = {};
 for (const k of ['thigh', 'shin', 'upperArm', 'foreArm']) LIMB[k] = limb(k);
+export const limbGeo = limb;
 
 // ---- boot: origin on the sole under the middle of the foot, toe toward +z, shaft up to the ankle.
 // A laced combat boot built from a lofted upper (heel, arch, vamp, toe), a tread sole with a heel

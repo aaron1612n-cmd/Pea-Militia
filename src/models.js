@@ -1,5 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
+import { LOD } from './shapes.js';
+const lq = (n, min) => (LOD.q < 1 ? Math.max(min, Math.round(n * LOD.q)) : n); // thinner when building a distant copy
 
 // Shared kit for weapons, props and vehicles: worn WW2 steel and wood, brass fittings,
 // one cold teal glow for the "future" parts.
@@ -100,8 +102,9 @@ export function profile(pts, thick, bevel = 0.006, segs = 2) {
   const s = new THREE.Shape();
   s.moveTo(pts[0][0], pts[0][1]);
   for (let i = 1; i < pts.length; i++) s.lineTo(pts[i][0], pts[i][1]);
-  const depth = Math.max(0.0005, thick - bevel * 2);
-  const g = new THREE.ExtrudeGeometry(s, { depth, bevelEnabled: bevel > 0, bevelThickness: bevel, bevelSize: bevel, bevelSegments: segs, curveSegments: 6 });
+  const lite = LOD.q < 1; // a distant copy skips the bevel but keeps the thickness
+  const depth = Math.max(0.0005, lite ? thick : thick - bevel * 2);
+  const g = new THREE.ExtrudeGeometry(s, { depth, bevelEnabled: bevel > 0 && !lite, bevelThickness: bevel, bevelSize: bevel, bevelSegments: segs, curveSegments: lq(6, 1) });
   g.translate(0, 0, -depth / 2);
   g.rotateY(-Math.PI / 2);
   return g;
@@ -121,7 +124,7 @@ export function roundRect(z0, y0, z1, y1, r) {
 // Turned part along +z from a list of [radius, z] points (closed at both ends if r=0 there).
 export function turned(pts, segs = 16) {
   const v = pts.map(([r, z]) => new THREE.Vector2(Math.max(r, 0.0001), z));
-  const g = new THREE.LatheGeometry(v, segs);
+  const g = new THREE.LatheGeometry(v, lq(segs, 6));
   g.rotateX(Math.PI / 2);
   return g;
 }
@@ -138,7 +141,7 @@ export function rod(r, z0, z1, segs = 10) {
 }
 
 export function ring(r, tube, segs = 20) {
-  return new THREE.TorusGeometry(r, tube, 6, segs);
+  return new THREE.TorusGeometry(r, tube, lq(6, 3), lq(segs, 6));
 }
 
 export function bolt(r = 0.008) {
@@ -148,7 +151,7 @@ export function bolt(r = 0.008) {
 
 export function pipe(points, r, segs = 24, radial = 8) {
   const c = new THREE.CatmullRomCurve3(points.map((p) => new THREE.Vector3(...p)));
-  return new THREE.TubeGeometry(c, segs, r, radial, false);
+  return new THREE.TubeGeometry(c, lq(segs, 4), r, lq(radial, 3), false);
 }
 
 // Rounded block: a rounded-rect silhouette extruded with a soft bevel. For crates, hulls, plates.
@@ -158,7 +161,7 @@ export function block(w, h, d, r = 0.02, bevel = 0.01) {
 }
 
 export function ellipsoidGeo(rx, ry, rz, w = 16, h = 10) {
-  const g = new THREE.SphereGeometry(1, w, h);
+  const g = new THREE.SphereGeometry(1, lq(w, 5), lq(h, 3));
   g.scale(rx, ry, rz);
   return g;
 }

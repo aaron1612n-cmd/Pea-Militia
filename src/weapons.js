@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { LOD } from './shapes.js';
 import { MAT, Kit, instance, profile, roundRect, turned, rod, ring, bolt, pipe, ellipsoidGeo, block } from './models.js';
 
 // Weapons: WW2 service arms, a little steam, a little future. Models are in hold units
@@ -287,16 +288,22 @@ function grenade(k) {
 const BUILD = { rifle, smg, mg, plasma, launcher, grenade };
 const baked = new Map();
 
-export function weaponParts(id) {
-  if (!baked.has(id)) {
+// lite: a thinned copy for distant soldiers (same builders at lower quality; see lod.js)
+export function weaponParts(id, lite = false) {
+  const key = lite ? id + ':lite' : id;
+  if (!baked.has(key)) {
     const k = new Kit();
-    const { muzzle, sight } = BUILD[id](k);
-    const parts = k.bake();
+    LOD.q = lite ? 0.3 : 1;
+    let r;
+    try { r = BUILD[id](k); } finally { LOD.q = 1; }
+    const { muzzle, sight } = r;
+    // a distant gun does not work its magazine or bolt: the moving parts fold back into the one mesh
+    const parts = k.bake().map((q) => (lite ? { ...q, slot: undefined } : q));
     const box = new THREE.Box3();
     for (const p of parts) { p.geometry.computeBoundingBox(); box.union(p.geometry.boundingBox); }
-    baked.set(id, { parts, muzzle, sight, box });
+    baked.set(key, { parts, muzzle, sight, box });
   }
-  return baked.get(id);
+  return baked.get(key);
 }
 
 export function weaponModel(id) {
