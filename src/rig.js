@@ -273,6 +273,7 @@ export function pose(s, out = makePose()) {
   freeArm(s, out);
   postures(s, out);
   crawl(s, out);
+  clutch(s, out);
   return out;
 }
 
@@ -319,6 +320,25 @@ function crawl(s, out) {
     h.elements[14] += Math.sin(a) * 0.05 * w;
     h.elements[13] += Math.max(0, Math.cos(a)) * 0.04 * w - 0.03 * w;
   }
+}
+
+// A man hit in the body doubles over: the chest folds forward over the hips and the free hand
+// goes to the wound. k: 0 upright .. 1 doubled over.
+const CP = new THREE.Vector3();
+function clutch(s, out) {
+  const k = s.dying || 0;
+  if (k < 0.01 || (s.dead ?? -1) >= 0 || (s.prone || 0) > 0.3) return;
+  const a = 0.55 * k + 0.05 * k * Math.sin((s.t || 0) * 8);
+  const py = U.LIFT + 0.15;
+  R.makeTranslation(0, py, 0).multiply(R2.makeRotationX(a)).multiply(M.makeTranslation(0, -py, 0));
+  for (const m of [out.body, out.head, out.pack, out.weapon, out.hands[0], out.hands[1]]) m.premultiply(R);
+  out.muzzle.applyMatrix4(R);
+  // the off hand presses the belly
+  const h = out.hands[0];
+  h.decompose(FP, FQ, FS);
+  CP.set(0.07, -0.08, U.D / 2 + 0.04).applyMatrix4(out.body);
+  FP.lerp(CP, Math.min(1, k * 1.4));
+  h.compose(FP, FQ, S1);
 }
 
 function postures(s, out) {

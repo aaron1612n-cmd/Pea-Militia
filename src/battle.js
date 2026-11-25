@@ -649,7 +649,7 @@ export class Battle {
     let zone = 'torso';
     if (kind === 'bullet' && point) {
       zone = this.hitZone(u, point);
-      dmg *= { head: 2.6, torso: 1.15, arm: 0.6, leg: 0.7 }[zone];
+      dmg *= { head: 2.6, torso: 0.9, arm: 0.6, leg: 0.7 }[zone];
     }
     const c = u.center();
     // sparks only where a round strikes steel: the helmet, or now and then the vest
@@ -940,7 +940,7 @@ export class Battle {
 
   // a medic gets a fallen soldier back on their feet
   revive(u) {
-    u.alive = true; u.rag = null; u.hp = 45; u.deadT = 0; u.vel.set(0, 0, 0); u.suppression = 0; u.burn = 0; u.flinch = 0;
+    u.alive = true; u.dying = false; u.dyK = 0; u.clutch = 0; u.rag = null; u.hp = 45; u.deadT = 0; u.vel.set(0, 0, 0); u.suppression = 0; u.burn = 0; u.flinch = 0;
     u.wound = 0; u.lost = 0; u.wounds = null; u.marks = null; u.bleed = 0; u.leg = 0; u.arm = 0; u.down = false; u.shock = 0; u.stagger = 0; u.corpseHp = 70;
     u.onRevive?.();
     this.events.push({ type: 'revive', unit: u });

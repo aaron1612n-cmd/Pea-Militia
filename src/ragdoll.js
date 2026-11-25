@@ -46,9 +46,9 @@ class Box {
     // the legs still carry the body for a moment after the hit, then buckle: a falling soldier
     // sags, folds and topples over, instead of dropping like a plank
     if (this.legs > 0) {
-      this.legs = Math.max(0, this.legs - dt / 0.6);
+      this.legs = Math.max(0, this.legs - dt / 0.42);
       const k = this.legs * this.legs;
-      this.v.y += GRAV * dt * k * 0.92;
+      this.v.y += GRAV * dt * k * 0.62;
       this.v.x *= Math.exp(-1.2 * k * dt); this.v.z *= Math.exp(-1.2 * k * dt);
       // gravity pulls the unsupported top of the body over, along the way it was pushed
       const f = (1 - this.legs) * this.fall * dt;
@@ -146,7 +146,14 @@ export class Ragdoll {
     this.body.v.copy(unit.vel).add(kick);
     // the hit lands high on the body, so it topples away from the shot, slowly: weight, not a spin
     const hitAt = new THREE.Vector3(0, 0.3 + Math.random() * 0.15, 0).applyQuaternion(this.body.q);
-    const horiz = _v.copy(kick).setY(0).addScaledVector(unit.vel, 0.5).setY(0);
+    // the fall follows the hit: running momentum can add to it but never turns the body the other way
+    const horiz = _v.copy(kick).setY(0);
+    const kl = horiz.length();
+    if (kl > 0.05) {
+      const kx = horiz.x / kl, kz = horiz.z / kl, along = unit.vel.x * kx + unit.vel.z * kz;
+      horiz.addScaledVector(_t.set(kx, 0, kz), Math.max(0, along) * 0.5);
+      if (along < 0) this.body.v.addScaledVector(_t, -along * 0.65); // a man running into a hit is stopped by it
+    } else horiz.addScaledVector(unit.vel, 0.5).setY(0);
     const run = Math.hypot(unit.vel.x, unit.vel.z);
     const blast = unit.heavy;
     this.body.w.crossVectors(hitAt, horiz).multiplyScalar(blast ? 4 : 1.1 + Math.min(run, 9) * 0.12);
@@ -157,7 +164,7 @@ export class Ragdoll {
       const hl = horiz.length() || 1;
       // fall along the push; a slump with no push falls forward or back at random
       this.body.tip.set(horiz.z / hl, 0, -horiz.x / hl);
-      this.body.fall = 5.5 + Math.random() * 2;
+      this.body.fall = 8 + Math.random() * 3;
     }
     // limbs start where the pose had them
     this.limbs = [];
@@ -167,7 +174,10 @@ export class Ragdoll {
       hm.multiplyMatrices(unit.world, parts[i]);
       const p = new THREE.Vector3().setFromMatrixPosition(hm);
       const a = ANCHOR[i];
-      this.limbs.push({ p, o: p.clone().addScaledVector(this.body.v, -1 / 60), a, foot: i >= 2 });
+      // hands lag behind the shove and fling up and back, like arms on a falling body
+      const o = p.clone().addScaledVector(this.body.v, -1 / 60);
+      if (i < 2) o.addScaledVector(_p.copy(kick).setY(0), 0.5 / 60).y -= 1.6 / 60;
+      this.limbs.push({ p, o, a, foot: i >= 2 });
     }
     // the gun drops out of the hands and tumbles on its own
     const h = HOLD[unit.weapon.id];
