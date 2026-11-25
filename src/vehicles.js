@@ -17,12 +17,12 @@ export const VEHICLES = {};
 
 VEHICLES.walker = {
   name: 'Strider', drive: 'legged', seats: 1,
-  hx: 1.5, hz: 1.5, h: 2.3, lift: 2.5, eyeH: 4.6, // hit box starts above the legs
+  hx: 1.5, hz: 1.5, h: 2.9, lift: 2.7, eyeH: 5.15, // hit box starts above the legs
   hp: 700, armor: { bullet: 0.07, blast: 0.55, plasma: 0.6, flame: 0.15 },
   maxSpeed: 6.2, maxRev: 2.6, accel: 2.8, brake: 7, turn: 1.0, maxSlope: 0.95, tilt: 0.3,
-  mass: 40, camDist: 12, camHeight: 5.2, camUp: 7.8, camSide: 1.6, cockpit: [0, 4.7, 0.2], cockpitKind: 'walker', steamAt: [-0.5, 4.3, -1.3], step: 1.3, crush: true, crushH: 2.2, runover: 0,
+  mass: 40, camDist: 12, camHeight: 5.2, camUp: 7.8, camSide: 1.6, cockpit: [0, 5.15, 0.35], cockpitKind: 'walker', steamAt: [-0.6, 5.7, -1.1], step: 1.3, crush: true, crushH: 2.2, runover: 0,
   hint: 'WASD walk · click shoots · right-click mortar · X leaves',
-  turret: { rate: 1.5, pitchRate: 1.2, pitchMin: -0.45, pitchMax: 0.5, pivot: [0, 4.35, 0] },
+  turret: { rate: 1.5, pitchRate: 1.2, pitchMin: -0.45, pitchMax: 0.5, pivot: [0, 4.55, 0] },
   weapons: [
     { id: 'autocannon', name: 'Autocannon', ai: 'light', kind: 'hitscan', damage: 30, interval: 0.12, spread: 0.022, sound: 'mg', mag: Infinity, reserve: Infinity, range: 110, tracer: '#ffc070', burst: [8, 14], vehicleGun: true },
     { id: 'mortar', name: 'Steam mortar', ai: 'heavy', kind: 'projectile', proj: 'shell', lob: 1.05, damage: 170, radius: 5.2, speed: 40, gravity: 16, interval: 3.4, spread: 0.02, sound: 'cannon', mag: Infinity, reserve: Infinity, range: 150, minRange: 22, burst: [1, 1], vehicleGun: true },
@@ -35,8 +35,8 @@ const C = {
 };
 
 // ---- vertex-coloured kit: every part is merged into one geometry
-class CKit {
-  constructor() { this.list = []; }
+export class CKit {
+  constructor(name = '') { this.list = []; this.name = name; }
   add(geo, color, { pos = [0, 0, 0], rot = [0, 0, 0], scale = 1 } = {}) {
     const g = geo.index ? geo.toNonIndexed() : geo.clone();
     for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
@@ -49,6 +49,7 @@ class CKit {
     for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
     g.setAttribute('color', new THREE.BufferAttribute(col, 3));
     this.list.push(g);
+    CKit.log?.push({ kit: this, g }); // the strider check lists every piece a kit is built from
     return this;
   }
   bake() { return this.list.length ? mergeGeometries(this.list, false) : new THREE.BufferGeometry(); }
@@ -64,99 +65,102 @@ const modelCache = new Map();
 const _up = new THREE.Vector3(0, 1, 0), _q2 = new THREE.Quaternion(), _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _s = new THREE.Vector3(), _p = new THREE.Vector3(), _b = [0, 0, 0];
 
 // ---------------- the strider ----------------
-const WL = { hip: 2.95, x: 1.2, L1: 1.75, L2: 1.85, ankle: 0.36 };
+// A two-legged steam walker, built the way it would have to be to stand: a pelvis cradle on a hip axle
+// that runs out through both leg hubs, an armoured tub on the cradle with the boilers on a shelf behind,
+// and a rotating head on a ring on the roof. The head is the cockpit (canopy glass in front, the pilot's
+// eye behind it) and carries the weapons on bolted-on hardpoints, one at each cheek: an autocannon in a
+// ball mount on the right, a steam mortar on a trunnion yoke on the left. Each leg is a clevis frame: two
+// plates on the hip hub, the shin between them on a knee pin, a ram behind the knee, and an ankle pin
+// through the foot's cheek plates. Every part sits on, or pins into, the part that carries it.
+const WL = { hip: 3.15, x: 1.2, L1: 1.75, L2: 1.85, ankle: 0.36 };
+// the thigh's edges in (z, y) at depth d below the hip (the frame tapers toward the knee)
+const thighFront = (d) => 0.4 - 0.1 * (d / WL.L1), thighRear = (d) => -0.36 + 0.12 * (d / WL.L1);
+const shinRear = (d) => -0.24 + 0.08 * (d / WL.L2), shinFront = (d) => 0.26 - 0.1 * (d / WL.L2);
+const THIGH_LUG = [0, -0.55, thighRear(0.55) - 0.09 - 0.02], SHIN_LUG = [0, -0.95, shinRear(0.95) - 0.12];
+const GUN_AT = [0.92, 0.45, 0.84], MORTAR_AT = [-0.92, 0.8, -0.15], MORTAR_TILT = -1.05;
 
 function striderParts(team) {
   const T = TEAMS[team] || TEAMS[0];
   const paint = T.body, trim = T.trim;
-  const hull = new CKit(), turret = new CKit(), gunK = new CKit(), glow = [];
-  // pelvis and hip housings
-  hull.add(block(2.1, 0.62, 1.5, 0.12, 0.04), C.steel, { pos: [0, 0, 0] });
+  const hull = new CKit('hull'), turret = new CKit('head'), gunK = new CKit('gun'), glow = [];
+  const dome = (kit, r, pos, rot, col = C.steel) => kit.add(new THREE.SphereGeometry(r, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2), col, { pos, rot });
+  const row = (kit, a, b, n, rot, r = 0.028, col = C.steel) => { for (let i = 0; i < n; i++) { const t = n === 1 ? 0.5 : i / (n - 1); dome(kit, r, [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t], rot, col); } };
+  // ---- pelvis: a cradle on the hip axle, a flange round the axle on each side
+  hull.add(block(2.0, 0.6, 1.3, 0.1, 0.04), C.steel);
+  hull.add(cyl(0.22, 2.3, 18), C.iron, { rot: [0, 0, Math.PI / 2] }); // the hip axle: out through both leg hubs
   for (const s of [-1, 1]) {
-    hull.add(cyl(0.4, 0.5, 18), C.iron, { pos: [s * 1.0, 0, 0], rot: [0, 0, Math.PI / 2] });
-    for (const dx of [0.2, 0.3]) hull.add(ring(0.4, 0.03, 18), C.brass, { pos: [s * (1.0 + dx), 0, 0], rot: [0, Math.PI / 2, 0] });
+    hull.add(cyl(0.4, 0.2, 20), C.iron, { pos: [s * 0.88, 0, 0], rot: [0, 0, Math.PI / 2] });
+    hull.add(ring(0.36, 0.03, 20), C.brass, { pos: [s * 0.98, 0, 0], rot: [0, Math.PI / 2, 0] });
   }
-  // torso: a tapering armoured tub
-  hull.add(profile([[-1.0, 0.25], [1.0, 0.25], [1.25, 0.75], [1.05, 1.35], [0.55, 1.55], [-0.85, 1.45], [-1.15, 0.9]], 1.9, 0.07, 2), paint, { pos: [0, 0, 0] });
-  hull.add(profile([[-1.0, 0.7], [1.15, 0.78], [1.0, 0.9], [-1.0, 0.86]], 1.96, 0.02, 1), trim);
-  for (const s of [-1, 1]) hull.add(block(0.08, 0.7, 1.7, 0.03, 0.02), C.steel, { pos: [s * 1.0, 0.7, 0.1], rot: [0, 0, s * 0.12] }); // side plates
-  // cockpit glass and its frame, glowing slit lamps
-  hull.add(ellipsoid(0.62, 0.42, 0.55, 16, 10, (v) => { if (v.y < -0.1) v.y *= 0.2; }), '#2c4947', { pos: [0, 1.0, 1.0] });
-  hull.add(ring(0.55, 0.035, 18), C.dark, { pos: [0, 1.0, 1.28], rot: [-0.55, 0, 0] });
-  for (const s of [-1, 1]) glow.push([cyl(0.09, 0.1, 10), [s * 0.8, 0.5, 1.22], [Math.PI / 2, 0, 0]]);
-  // back: twin boilers, rings, stacks and a steam manifold
+  // ---- the tub: the armoured body on the cradle
+  hull.add(profile([[-1.05, 0.22], [1.0, 0.22], [1.2, 0.55], [1.1, 1.0], [0.6, 1.35], [-0.9, 1.4], [-1.15, 1.0], [-1.15, 0.5]], 1.9, 0.07, 2), paint);
+  hull.add(profile([[-1.05, 0.62], [1.18, 0.66], [1.1, 0.76], [-1.1, 0.74]], 1.96, 0.02, 1), trim); // belt
+  hull.add(cyl(0.78, 0.14, 26), C.steel, { pos: [0, 1.4, 0] }); // the roof ring the head turns on
+  hull.add(ring(0.74, 0.03, 26), C.brass, { pos: [0, 1.47, 0], rot: [Math.PI / 2, 0, 0] });
+  // side details, all flush on the tub's flanks: panel seams, vent slats, a tool box
+  for (const s of [-1, 1]) {
+    for (const z of [-0.5, 0.45]) hull.add(block(0.03, 0.8, 0.03, 0.005, 0.003), C.dark, { pos: [s * 0.955, 0.85, z] });
+    for (let i = 0; i < 4; i++) hull.add(block(0.03, 0.04, 0.34, 0.008, 0.004), C.dark, { pos: [s * 0.955, 1.0 + i * 0.07, 0.0] });
+    hull.add(block(0.14, 0.34, 0.6, 0.03, 0.012), C.canvas, { pos: [s * 1.0, 0.45, -0.6] });
+    row(hull, [s * 0.95, 0.5, 0.65], [s * 0.95, 0.5, 1.0], 4, [0, 0, -s * Math.PI / 2]);
+  }
+  // ---- engine: twin boilers on a shelf off the back of the tub, a manifold across them and the stacks
+  hull.add(block(1.7, 0.12, 0.8, 0.03, 0.015), C.iron, { pos: [0, 0.34, -1.2] });
   for (const s of [-1, 1]) {
     hull.add(cyl(0.34, 1.3, 18), C.brass, { pos: [s * 0.55, 1.05, -1.05] });
     for (const y of [0.55, 1.05, 1.5]) hull.add(ring(0.345, 0.025, 18), C.copper, { pos: [s * 0.55, y, -1.05], rot: [Math.PI / 2, 0, 0] });
     hull.add(turnedY([[0.0, 0], [0.34, 0], [0.2, 0.18], [0.0, 0.2]], 14), C.brass, { pos: [s * 0.55, 1.7, -1.05] });
-    hull.add(pipe([[s * 0.55, 1.85, -1.05], [s * 0.55, 2.2, -1.05], [s * 0.6, 2.5, -1.1]], 0.08, 8, 8), C.iron);
+    hull.add(pipe([[s * 0.55, 1.85, -1.05], [s * 0.55, 2.2, -1.05], [s * 0.6, 2.5, -1.1]], 0.08, 8, 8), C.iron); // stack
+    hull.add(cyl(0.1, 0.1, 10), C.dark, { pos: [s * 0.6, 2.5, -1.1] }); // stack mouth
   }
-  hull.add(pipe([[-0.55, 1.0, -0.78], [0, 1.1, -0.74], [0.55, 1.0, -0.78]], 0.05, 10, 6), C.copper);
-  hull.add(block(1.3, 0.3, 0.2, 0.03, 0.02), C.dark, { pos: [0, 0.55, -1.3] }); // exhaust shroud
-  // belly pipes, tool boxes
-  for (const s of [-1, 1]) hull.add(block(0.4, 0.34, 0.6, 0.04, 0.02), C.canvas, { pos: [s * 1.12, 0.2, -0.5] });
-  hull.add(pipe([[-0.9, 0.1, 0.5], [-0.3, -0.12, 0.6], [0.3, -0.12, 0.6], [0.9, 0.1, 0.5]], 0.045, 12, 6), C.copper);
-  // strider detail: armour plate seams and rivets, ladder, hatches, running lights, exhaust louvres, hydraulic lines
+  hull.add(pipe([[-0.55, 1.0, -0.76], [0, 1.1, -0.72], [0.55, 1.0, -0.76]], 0.05, 10, 6), C.copper); // manifold across the boilers
+  hull.add(pipe([[0, 1.1, -0.72], [0, 1.2, -0.3], [0, 1.4, 0]], 0.04, 10, 6), C.copper); // steam line up to the head's ring
+  // ladder on the back of the tub between the boilers
+  for (const s of [-1, 1]) hull.add(block(0.05, 0.9, 0.04, 0.01, 0.006), C.steel, { pos: [s * 0.18, 0.88, -1.17] });
+  for (let i = 0; i < 6; i++) hull.add(block(0.36, 0.03, 0.03, 0.006, 0.003), C.steel, { pos: [0, 0.5 + i * 0.15, -1.17] });
+  // ---- the head: base drum, a shell with a raked canopy, a back bin, a sensor mast
+  turret.add(cyl(0.72, 0.2, 26), C.steel, { pos: [0, 0.08, 0] });
+  turret.add(profile([[-0.7, 0.1], [0.75, 0.1], [0.95, 0.4], [0.8, 0.82], [0.3, 1.02], [-0.5, 0.95], [-0.75, 0.55]], 1.3, 0.05, 2), paint);
+  turret.add(profile([[-0.7, 0.34], [0.9, 0.34], [0.92, 0.42], [-0.72, 0.42]], 1.36, 0.015, 1), trim); // stripe round the head
+  // canopy: two raked panes, a centre post, a brow and a sill, all on the sloped front
+  const lean = -Math.atan2(0.15, 0.42), nrm = [0, Math.sin(-lean), Math.cos(lean)];
+  const onFront = (y, off = 0.0) => [0.875 + (y - 0.61) * (-0.15 / 0.42) + nrm[2] * off, y, 0];
+  for (const x of [-0.31, 0.31]) {
+    const c = onFront(0.61, 0.02);
+    turret.add(block(0.52, 0.36, 0.05, 0.01, 0.006), '#2c4947', { pos: [x, c[1] + nrm[1] * 0.02, c[0] + 0.0], rot: [lean, 0, 0] });
+  }
+  turret.add(block(0.06, 0.44, 0.07, 0.01, 0.005), C.dark, { pos: [0, 0.61 + nrm[1] * 0.02, 0.875 + 0.02], rot: [lean, 0, 0] });
+  turret.add(block(1.24, 0.08, 0.09, 0.015, 0.008), C.dark, { pos: [0, 0.83, 0.79], rot: [lean, 0, 0] }); // brow
+  turret.add(block(1.24, 0.07, 0.09, 0.015, 0.008), C.dark, { pos: [0, 0.4, 0.93], rot: [lean, 0, 0] }); // sill
+  turret.add(block(0.5, 0.04, 0.5, 0.03, 0.01), C.dark, { pos: [-0.2, 1.0, -0.12] }); // roof hatch
+  turret.add(block(1.1, 0.5, 0.3, 0.05, 0.02), C.iron, { pos: [0, 0.5, -0.8] }); // ammunition bin on the back
+  // headlamps in pods under the canopy, a sensor head on a mast, a whip antenna
   for (const s of [-1, 1]) {
-    for (let i = 0; i < 6; i++) hull.add(new THREE.SphereGeometry(0.03, 5, 4), C.steel, { pos: [s * 1.2, 0.5 + i * 0.12, 0.8] });
-    hull.add(block(0.04, 0.9, 0.04, 0.01, 0.006), C.dark, { pos: [s * 1.17, 0.75, 0.3] }); // armour seam
-    hull.add(block(0.04, 0.9, 0.04, 0.01, 0.006), C.dark, { pos: [s * 1.1, 0.75, -0.6] });
-    for (let i = 0; i < 5; i++) hull.add(block(0.04, 0.05, 0.2, 0.01, 0.005), C.dark, { pos: [s * 1.06, 0.45 + i * 0.1, -0.2] }); // louvres
-    hull.add(pipe([[s * 0.95, 0.1, 0.2], [s * 1.12, 0.0, 0.0], [s * 1.2, 0.0, -0.4]], 0.03, 10, 6), C.copper); // hydraulic line
-    hull.add(block(0.05, 0.9, 0.04, 0.01, 0.006), C.steel, { pos: [s * 0.2, 0.7, -1.55] }); // rear ladder rail
+    turret.add(cyl(0.1, 0.18, 12), C.dark, { pos: [s * 0.45, 0.24, 0.9], rot: [Math.PI / 2, 0, 0] });
+    glow.push([cyl(0.075, 0.03, 10), [s * 0.45, 0.24, 1.0], [Math.PI / 2, 0, 0]]);
   }
-  for (let i = 0; i < 7; i++) hull.add(block(0.4, 0.03, 0.03, 0.006, 0.003), C.steel, { pos: [0, 0.35 + i * 0.13, -1.55] }); // ladder rungs
-  hull.add(block(0.4, 0.04, 0.4, 0.03, 0.01), C.dark, { pos: [0, 1.5, 0.25] }); // roof hatch
-  hull.add(block(1.2, 0.1, 0.06, 0.015, 0.008), trim, { pos: [0, 0.2, 1.3] }); // lower chin plate
-  for (let i = 0; i < 5; i++) hull.add(new THREE.SphereGeometry(0.03, 5, 4), C.steel, { pos: [-0.4 + i * 0.2, 0.22, 1.32] });
-  hull.add(block(0.9, 0.04, 0.04, 0.01, 0.005), C.brass, { pos: [0, 1.3, -0.45] }); // manifold bar
-  for (const s of [-1, 1]) glow.push([bolt(0.05), [s * 1.15, 0.9, 0.9], [0, 0, -Math.PI / 2 * s]]);
-  // hull plating: layered armour over the hip housings, panel lines, rivet rows and bolt heads
-  const rivets = (kit, a, b, n, rot, r = 0.03, col = C.steel) => { for (let i = 0; i < n; i++) { const t = n === 1 ? 0.5 : i / (n - 1); kit.add(new THREE.SphereGeometry(r, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2), col, { pos: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t], rot }); } };
-  for (const s of [-1, 1]) {
-    hull.add(block(0.1, 0.62, 1.1, 0.06, 0.03), paint, { pos: [s * 1.3, 0.12, 0.0], rot: [0, 0, s * 0.1] }); // hip armour, a plate over each housing
-    hull.add(block(0.06, 0.5, 0.9, 0.05, 0.02), C.iron, { pos: [s * 1.37, 0.05, 0.0], rot: [0, 0, s * 0.1] }); // second layer
-    rivets(hull, [s * 1.42, 0.3, -0.45], [s * 1.42, 0.3, 0.45], 6, [0, 0, -s * Math.PI / 2 + s * 0.1]);
-    rivets(hull, [s * 1.42, -0.12, -0.45], [s * 1.42, -0.12, 0.45], 6, [0, 0, -s * Math.PI / 2 + s * 0.1]);
-    for (const z of [-0.2, 0.2]) hull.add(block(0.07, 0.6, 0.025, 0.01, 0.005), C.dark, { pos: [s * 1.345, 0.1, z], rot: [0, 0, s * 0.1] }); // panel line
-    hull.add(block(0.05, 0.12, 0.34, 0.02, 0.01), trim, { pos: [s * 1.43, 0.34, 0.0], rot: [0, 0, s * 0.1] }); // unit stripe
-    // hull side vents and a grab rail
-    for (let i = 0; i < 4; i++) hull.add(block(0.05, 0.035, 0.34, 0.01, 0.005), C.dark, { pos: [s * 1.07, 1.05 + i * 0.07, 0.58] });
-    hull.add(pipe([[s * 1.1, 1.2, 0.95], [s * 1.2, 1.2, 0.95], [s * 1.2, 1.2, 0.35], [s * 1.1, 1.2, 0.35]], 0.025, 12, 6), C.steel);
-    // shoulder lamp pods on the chin
-    hull.add(cyl(0.1, 0.16, 12), C.dark, { pos: [s * 0.55, 0.34, 1.26], rot: [Math.PI / 2, 0, 0] });
-    glow.push([cyl(0.075, 0.03, 10), [s * 0.55, 0.34, 1.35], [Math.PI / 2, 0, 0]]);
-  }
-  // cockpit: frame ribs over the glass, a brow visor, wipers and a roof searchlight
-  for (const x of [-0.3, 0, 0.3]) hull.add(block(0.04, 0.5, 0.04, 0.01, 0.005), C.dark, { pos: [x, 1.05, 1.5], rot: [-0.55, 0, 0] });
-  hull.add(profile([[0.9, 1.5], [1.55, 1.38], [1.62, 1.3], [0.9, 1.34]], 1.3, 0.02, 1), paint, { pos: [0, 0.0, 0.0] }); // brow visor
-  for (const x of [-0.18, 0.22]) hull.add(rod(0.012, 0, 0.5, 6), C.dark, { pos: [x, 0.78, 1.37], rot: [-0.55 + 0.3, 0, x > 0 ? 0.5 : -0.4] }); // wipers
-  hull.add(cyl(0.12, 0.12, 14), C.dark, { pos: [0.55, 1.58, 0.55] });
-  glow.push([cyl(0.09, 0.03, 12), [0.55, 1.58, 0.65], [Math.PI / 2, 0, 0]]);
-  hull.add(rod(0.012, 0, 1.2, 6), C.dark, { pos: [-0.7, 1.45, -0.9], rot: [-1.45, 0, 0.1] }); // whip antenna
-  // belly armour skirt and a tow shackle
-  hull.add(block(1.5, 0.08, 0.5, 0.03, 0.015), C.iron, { pos: [0, -0.28, 0.5] });
-  hull.add(ring(0.1, 0.025, 14), C.steel, { pos: [0, 0.18, 1.34], rot: [0.3, 0, 0] });
-  // turret: a squat drum, a cheek for the cannon, the mortar tube racked on the left
-  turret.add(cyl(0.62, 0.3, 22), C.steel, { pos: [0, 0.1, 0] });
-  turret.add(profile([[-0.7, 0.2], [0.7, 0.2], [0.55, 0.62], [-0.5, 0.7]], 1.3, 0.05, 2), paint, { pos: [0, 0.1, 0] });
-  turret.add(block(0.5, 0.5, 0.6, 0.06, 0.03), C.iron, { pos: [0.55, 0.5, 0.45] });  // gun cradle
-  turret.add(block(0.5, 0.2, 0.5, 0.03, 0.02), paint, { pos: [-0.5, 0.38, -0.2] }); // mortar seat
-  turret.add(rod(0.2, 0.0, 1.35, 14), C.dark, { pos: [-0.5, 0.55, -0.2], rot: [-1.05, 0, 0] });
-  turret.add(turned([[0.2, 1.2], [0.26, 1.2], [0.26, 1.35], [0.2, 1.35]], 14), C.iron, { pos: [-0.5, 0.55, -0.2], rot: [-1.05, 0, 0] });
-  for (const z of [0.4, 0.8]) turret.add(ring(0.205, 0.03, 14), C.brass, { pos: [-0.5 + 0, 0.55 + z * Math.sin(1.05), -0.2 + z * Math.cos(1.05)], rot: [-1.05, 0, 0] });
-  turret.add(block(0.7, 0.04, 0.5, 0.01, 0.006), trim, { pos: [0, 0.78, -0.1] });
-  for (let i = 0; i < 6; i++) turret.add(new THREE.SphereGeometry(0.028, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2), C.steel, { pos: [-0.5 + i * 0.2, 0.7, 0.5] });
-  turret.add(block(0.06, 0.26, 0.5, 0.02, 0.01), trim, { pos: [0.7, 0.45, -0.1] }); // side stripe
-  turret.add(cyl(0.05, 0.4, 8), C.dark, { pos: [0.68, 0.7, -0.45] }); // sight mast
-  turret.add(cyl(0.09, 0.14, 10), C.iron, { pos: [0.68, 0.92, -0.45], rot: [Math.PI / 2, 0, 0] });
-  // autocannon on the gun pivot: shrouded barrel, brake, drum
-  gunK.add(block(0.34, 0.34, 0.9, 0.05, 0.02), C.steel, { pos: [0, 0, 0.1] });
-  gunK.add(rod(0.07, 0.4, 2.3, 12), C.dark);
-  gunK.add(turned([[0.13, 0.5], [0.15, 0.55], [0.15, 1.5], [0.13, 1.55]], 14), C.steel);
+  turret.add(cyl(0.045, 0.4, 8), C.dark, { pos: [0.42, 1.15, -0.2] });
+  turret.add(cyl(0.1, 0.24, 12), C.iron, { pos: [0.42, 1.36, -0.2], rot: [Math.PI / 2, 0, 0] });
+  glow.push([cyl(0.07, 0.03, 10), [0.42, 1.36, -0.07], [Math.PI / 2, 0, 0]]);
+  turret.add(rod(0.012, 0, 1.2, 6), C.dark, { pos: [-0.45, 0.95, -0.5], rot: [-Math.PI / 2 - 0.18, 0, 0.1] });
+  // ---- right hardpoint: a housing bolted to the cheek, the autocannon's ball mount on its face
+  turret.add(block(0.56, 0.5, 0.7, 0.05, 0.02), C.iron, { pos: [GUN_AT[0], GUN_AT[1], GUN_AT[2] - 0.4] });
+  turret.add(ring(0.25, 0.04, 16), C.brass, { pos: [GUN_AT[0], GUN_AT[1], GUN_AT[2] - 0.1] });
+  row(turret, [GUN_AT[0] - 0.2, GUN_AT[1] + 0.27, GUN_AT[2] - 0.45], [GUN_AT[0] + 0.2, GUN_AT[1] + 0.27, GUN_AT[2] - 0.45], 4, [0, 0, 0]);
+  // ---- left hardpoint: a base on the cheek, two yoke plates, the mortar tube pinned between them
+  turret.add(block(0.56, 0.36, 0.7, 0.05, 0.02), C.iron, { pos: [MORTAR_AT[0], 0.35, MORTAR_AT[2]] });
+  for (const s of [-1, 1]) turret.add(block(0.06, 0.5, 0.5, 0.03, 0.012), paint, { pos: [MORTAR_AT[0] + s * 0.25, 0.7, MORTAR_AT[2]] });
+  turret.add(cyl(0.07, 0.66, 10), C.steel, { pos: [...MORTAR_AT], rot: [0, 0, Math.PI / 2] }); // trunnion pin
+  const tubeAt = { pos: [...MORTAR_AT], rot: [MORTAR_TILT, 0, 0] };
+  turret.add(rod(0.19, -0.35, 1.1, 16), C.dark, tubeAt);
+  turret.add(turned([[0.19, 1.0], [0.25, 1.0], [0.25, 1.1], [0.19, 1.1]], 16), C.iron, tubeAt); // muzzle collar
+  for (const z of [0.3, 0.6]) turret.add(ring(0.195, 0.025, 16), C.brass, { pos: [MORTAR_AT[0], MORTAR_AT[1] + z * Math.sin(-MORTAR_TILT), MORTAR_AT[2] + z * Math.cos(MORTAR_TILT)], rot: [MORTAR_TILT, 0, 0] });
+  // ---- the autocannon (origin: the ball): shroud, barrel, brake, ammunition drum on the outboard side
+  gunK.add(new THREE.SphereGeometry(0.21, 14, 10), C.steel);
+  gunK.add(turned([[0.12, 0.1], [0.15, 0.15], [0.15, 1.5], [0.12, 1.55]], 14), C.steel);
+  gunK.add(rod(0.07, 0.1, 2.3, 12), C.dark);
   gunK.add(turned([[0.0001, 2.2], [0.1, 2.2], [0.1, 2.42], [0.06, 2.42]], 12), C.iron);
-  gunK.add(cyl(0.22, 0.3, 14), C.iron, { pos: [0.28, -0.05, 0.0], rot: [0, 0, Math.PI / 2] });
-  gunK.add(block(0.2, 0.08, 0.5, 0.02, 0.01), C.brass, { pos: [-0.12, 0.2, 0.2] });
+  gunK.add(cyl(0.2, 0.3, 14), C.iron, { pos: [0.3, -0.02, -0.02], rot: [0, 0, Math.PI / 2] });
   return { hull, turret, gunK, glow };
 }
 
@@ -164,64 +168,45 @@ function striderLeg(team) {
   const T = TEAMS[team] || TEAMS[0];
   const paint = T.body, trim = T.trim;
   const { L1, L2 } = WL;
-  const thigh = new CKit(), shin = new CKit(), foot = new CKit(), toes = new CKit(), ramTube = new CKit(), ramRod = new CKit();
+  const thigh = new CKit('thigh'), shin = new CKit('shin'), foot = new CKit('foot'), toes = new CKit('toes'), ramTube = new CKit('ram tube'), ramRod = new CKit('ram rod');
   const dome = (kit, r, pos, rot, col = C.steel) => kit.add(new THREE.SphereGeometry(r, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2), col, { pos, rot });
-  // hip: a gimbal drum between two collars, bolted down
-  thigh.add(cyl(0.3, 0.62, 16), C.brass, { rot: [0, 0, Math.PI / 2] });
-  for (const sx of [-1, 1]) {
-    thigh.add(cyl(0.36, 0.06, 18), C.iron, { pos: [sx * 0.33, 0, 0], rot: [0, 0, Math.PI / 2] });
-    thigh.add(ring(0.31, 0.03, 18), C.copper, { pos: [sx * 0.31, 0, 0], rot: [0, Math.PI / 2, 0] });
-    for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2; dome(thigh, 0.026, [sx * 0.365, Math.cos(a) * 0.27, Math.sin(a) * 0.27], [0, 0, -sx * Math.PI / 2]); }
+  // ---- thigh: a hub on the hip axle, two frame plates, spacers between them, a front shield, the ram lug behind
+  thigh.add(cyl(0.3, 0.6, 18), C.iron, { rot: [0, 0, Math.PI / 2] });
+  for (const s of [-1, 1]) {
+    thigh.add(cyl(0.34, 0.05, 18), C.brass, { pos: [s * 0.3, 0, 0], rot: [0, 0, Math.PI / 2] });
+    for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2; dome(thigh, 0.025, [s * 0.325, Math.cos(a) * 0.27, Math.sin(a) * 0.27], [0, 0, -s * Math.PI / 2]); }
+    thigh.add(profile([[thighRear(0), 0.0], [thighFront(0), 0.0], [thighFront(L1), -L1], [thighRear(L1), -L1]], 0.08, 0.02, 1), paint, { pos: [s * 0.19, 0, 0] });
   }
-  // thigh: a tapered armoured slab with layered plates, a piston pair and a stiffening rib
-  thigh.add(profile([[-0.34, -0.1], [0.34, -0.1], [0.24, -L1 + 0.1], [-0.24, -L1 + 0.1]], 0.4, 0.05, 2), paint);
-  thigh.add(block(0.05, L1 * 0.8, 0.3, 0.01, 0.005), C.steel, { pos: [0.24, -L1 * 0.5, 0.0] });
-  thigh.add(block(0.05, L1 * 0.8, 0.3, 0.01, 0.005), C.steel, { pos: [-0.24, -L1 * 0.5, 0.0] });
-  thigh.add(block(0.3, L1 * 0.62, 0.05, 0.02, 0.01), C.iron, { pos: [0, -L1 * 0.52, 0.3], rot: [0.12, 0, 0] }); // front shield
-  for (const y of [-0.55, -0.9, -1.25]) thigh.add(block(0.32, 0.03, 0.06, 0.01, 0.005), C.dark, { pos: [0, y, 0.3], rot: [0.12, 0, 0] }); // panel lines
-  for (const sx of [-1, 1]) for (let i = 0; i < 5; i++) dome(thigh, 0.022, [sx * 0.13, -0.5 - i * 0.2, 0.33 - i * 0.012], [0.12 + Math.PI / 2, 0, 0]);
-  for (const sx of [-1, 1]) {
-    thigh.add(rod(0.05, -L1 * 0.9, -0.2, 8).rotateX(-Math.PI / 2), C.copper, { pos: [sx * 0.29, 0, 0.38] });
-    thigh.add(cyl(0.065, 0.55, 10), C.steel, { pos: [sx * 0.29, -0.55, 0.38] }); // piston sleeve
-    for (const y of [-0.34, -0.76]) thigh.add(ring(0.068, 0.014, 10), C.brass, { pos: [sx * 0.29, y, 0.38], rot: [Math.PI / 2, 0, 0] });
-  }
-  thigh.add(block(0.36, 0.3, 0.1, 0.03, 0.015), trim, { pos: [0, -0.3, -0.3] }); // rear marking plate
-  // knee: a drum between two collars, with a plated cap on the front
-  thigh.add(cyl(0.24, 0.58, 16), C.iron, { pos: [0, -L1, 0], rot: [0, 0, Math.PI / 2] });
-  for (const d of [-0.22, 0.22]) thigh.add(ring(0.245, 0.025, 16), C.brass, { pos: [d, -L1, 0], rot: [0, Math.PI / 2, 0] });
-  thigh.add(block(0.46, 0.3, 0.16, 0.05, 0.02), paint, { pos: [0, -L1 + 0.02, 0.28], rot: [0.15, 0, 0] });
-  for (const sx of [-1, 1]) { dome(thigh, 0.026, [sx * 0.2, -L1 + 0.04, 0.36], [0.15 + Math.PI / 2, 0, 0]); dome(thigh, 0.03, [sx * 0.3, -L1, 0], [0, 0, -sx * Math.PI / 2]); }
-  // ram anchor lug at the upper rear of the thigh
-  thigh.add(block(0.14, 0.16, 0.12, 0.02, 0.01), C.iron, { pos: [0, -0.5, -0.34] });
-  // shin: slimmer, with a front greave, calf cover, hose loops and the ram's lower mount
-  shin.add(profile([[-0.24, 0], [0.24, 0], [0.16, -L2 + 0.1], [-0.16, -L2 + 0.1]], 0.32, 0.04, 2), paint);
-  shin.add(pipe([[0.0, -0.1, -0.26], [0.0, -L2 * 0.5, -0.34], [0.0, -L2 + 0.35, -0.2]], 0.05, 10, 6), C.copper);
-  shin.add(block(0.4, 0.2, 0.3, 0.04, 0.02), C.steel, { pos: [0, -L2 * 0.35, 0.18] });
-  shin.add(block(0.26, L2 * 0.62, 0.05, 0.02, 0.01), C.iron, { pos: [0, -L2 * 0.5, 0.24], rot: [0.09, 0, 0] }); // greave
-  for (const y of [-0.5, -0.85, -1.2]) shin.add(block(0.28, 0.025, 0.06, 0.008, 0.004), C.dark, { pos: [0, y, 0.25], rot: [0.09, 0, 0] });
-  for (const sx of [-1, 1]) for (let i = 0; i < 4; i++) dome(shin, 0.02, [sx * 0.1, -0.45 - i * 0.28, 0.28 - i * 0.007], [0.09 + Math.PI / 2, 0, 0]);
-  shin.add(block(0.2, 0.55, 0.1, 0.03, 0.015), C.iron, { pos: [0, -0.95, -0.3] }); // calf cover over the hose
-  shin.add(pipe([[0.12, -0.25, 0.1], [0.3, -0.5, 0.0], [0.3, -1.0, -0.05], [0.18, -1.35, 0.05]], 0.03, 14, 6), C.rubber); // hose loop
-  shin.add(block(0.14, 0.16, 0.12, 0.02, 0.01), C.iron, { pos: [0, -0.95, -0.4] }); // ram lug
-  shin.add(cyl(0.2, 0.46, 14), C.iron, { pos: [0, -L2 + 0.1, 0], rot: [0, 0, Math.PI / 2] });
-  for (const sx of [-1, 1]) { shin.add(ring(0.205, 0.022, 14), C.brass, { pos: [sx * 0.2, -L2 + 0.1, 0], rot: [0, Math.PI / 2, 0] }); dome(shin, 0.024, [sx * 0.235, -L2 + 0.1, 0], [0, 0, -sx * Math.PI / 2]); }
+  for (const d of [0.5, 1.0, 1.45]) thigh.add(block(0.36, 0.14, 0.1, 0.02, 0.01), C.steel, { pos: [0, -d, thighFront(d) - 0.03] }); // spacers on the front edge
+  thigh.add(block(0.5, L1 * 0.62, 0.06, 0.02, 0.01), C.iron, { pos: [0, -L1 * 0.52, thighFront(L1 * 0.52) + 0.01], rot: [0.057, 0, 0] }); // front shield
+  for (const y of [-0.6, -0.95, -1.3]) thigh.add(block(0.52, 0.03, 0.065, 0.01, 0.005), C.dark, { pos: [0, y, thighFront(-y) + 0.01], rot: [0.057, 0, 0] });
+  thigh.add(block(0.4, 0.24, 0.14, 0.02, 0.01), C.iron, { pos: [0, THIGH_LUG[1], thighRear(0.55) - 0.02] }); // rear cross-spacer with the ram lug on it
+  thigh.add(block(0.4, 0.3, 0.06, 0.02, 0.01), trim, { pos: [0, -0.2, thighRear(0.2) - 0.02] }); // rear marking plate
+  // knee: the pin and its caps, through the plates
+  thigh.add(cyl(0.2, 0.56, 16), C.iron, { pos: [0, -L1, 0], rot: [0, 0, Math.PI / 2] });
+  for (const s of [-1, 1]) { thigh.add(cyl(0.24, 0.04, 16), C.brass, { pos: [s * 0.28, -L1, 0], rot: [0, 0, Math.PI / 2] }); dome(thigh, 0.05, [s * 0.31, -L1, 0], [0, 0, -s * Math.PI / 2]); }
+  // ---- shin: one box-section member between the thigh plates, boss at the knee, boss at the ankle
+  shin.add(cyl(0.17, 0.3, 16), C.iron, { rot: [0, 0, Math.PI / 2] });
+  shin.add(profile([[shinRear(0), 0.0], [shinFront(0), 0.0], [shinFront(L2), -L2], [shinRear(L2), -L2]], 0.3, 0.03, 2), paint);
+  shin.add(block(0.4, L2 * 0.6, 0.05, 0.02, 0.01), C.iron, { pos: [0, -L2 * 0.5, shinFront(L2 * 0.5) + 0.0], rot: [0.054, 0, 0] }); // greave
+  for (const y of [-0.5, -0.85, -1.2]) shin.add(block(0.42, 0.025, 0.06, 0.008, 0.004), C.dark, { pos: [0, y, shinFront(-y) + 0.0], rot: [0.054, 0, 0] });
+  shin.add(block(0.2, 0.34, 0.14, 0.02, 0.01), C.iron, { pos: [0, SHIN_LUG[1], shinRear(0.95) - 0.05] }); // ram lug on the back
+  shin.add(cyl(0.2, 0.4, 16), C.iron, { pos: [0, -L2, 0], rot: [0, 0, Math.PI / 2] });
   // hydraulic ram: a sleeve from the thigh lug and a polished rod from the shin lug, aimed at each other (unit length along +z)
-  ramTube.add(turned([[0.0001, 0], [0.085, 0], [0.085, 0.92], [0.07, 0.96], [0.0001, 0.96]], 12), C.dark);
-  for (const z of [0.15, 0.75]) ramTube.add(ring(0.088, 0.016, 12), C.brass, { pos: [0, 0, z] });
-  ramTube.add(turned([[0.04, 0.9], [0.1, 0.9], [0.1, 1.0], [0.04, 1.0]], 12), C.iron);
-  ramRod.add(turned([[0.0001, 0], [0.04, 0], [0.04, 0.98], [0.0001, 0.98]], 10), '#b9bcbc');
-  ramRod.add(turned([[0.0001, 0], [0.075, 0], [0.075, 0.1], [0.0001, 0.1]], 10), C.iron);
-  // foot: ankle ball under a bellows, a broad armoured pad with a tread, and a heel guard
-  foot.add(cyl(0.3, 0.1, 16), C.steel, { pos: [0, WL.ankle + 0.06, 0] });
-  foot.add(new THREE.SphereGeometry(0.24, 12, 8), C.iron, { pos: [0, WL.ankle + 0.06, 0] });
-  for (const y of [0.14, 0.2, 0.26]) foot.add(ring(0.27 - (y - 0.14) * 0.5, 0.025, 14), C.rubber, { pos: [0, WL.ankle + y - 0.12, 0], rot: [Math.PI / 2, 0, 0] });
-  foot.add(block(0.5, 0.3, 0.5, 0.05, 0.02), C.steel, { pos: [0, WL.ankle - 0.05, 0] });
-  foot.add(profile([[-0.5, 0.0], [0.58, 0.0], [0.6, 0.1], [0.5, 0.22], [-0.45, 0.22]], 0.8, 0.04, 2), C.iron);
-  foot.add(block(0.5, 0.1, 0.3, 0.02, 0.01), C.dark, { pos: [0, 0.07, -0.55] }); // heel
-  for (let i = 0; i < 5; i++) foot.add(block(0.76, 0.03, 0.05, 0.008, 0.004), C.rubber, { pos: [0, 0.015, -0.4 + i * 0.2] }); // tread bars
-  foot.add(block(0.46, 0.04, 0.34, 0.02, 0.01), paint, { pos: [0, 0.26, 0.2] }); // top plate
-  for (const sx of [-1, 1]) dome(foot, 0.02, [sx * 0.3, 0.285, 0.3], [0, 0, 0]);
-  // toes: three claws on a hinge bar, ridged on top; origin at the hinge (0, 0, 0), toes reach +z
+  ramTube.add(turned([[0.0001, 0], [0.11, 0], [0.11, 0.92], [0.09, 0.96], [0.0001, 0.96]], 12), C.dark);
+  for (const z of [0.15, 0.75]) ramTube.add(ring(0.113, 0.018, 12), C.brass, { pos: [0, 0, z] });
+  ramTube.add(turned([[0.055, 0.9], [0.13, 0.9], [0.13, 1.0], [0.055, 1.0]], 12), C.iron);
+  ramRod.add(turned([[0.0001, 0], [0.055, 0], [0.055, 0.98], [0.0001, 0.98]], 10), '#b9bcbc');
+  ramRod.add(turned([[0.0001, 0], [0.1, 0], [0.1, 0.1], [0.0001, 0.1]], 10), C.iron);
+  // ---- foot: a broad pad with a tread, two cheek plates holding the ankle pin, a heel guard
+  foot.add(profile([[-0.55, 0.0], [0.58, 0.0], [0.6, 0.1], [0.5, 0.22], [-0.5, 0.22]], 0.76, 0.04, 2), C.iron);
+  for (let i = 0; i < 5; i++) foot.add(block(0.76, 0.03, 0.05, 0.008, 0.004), C.rubber, { pos: [0, 0.015, -0.4 + i * 0.2] });
+  for (const s of [-1, 1]) foot.add(profile([[-0.32, 0.2], [0.32, 0.2], [0.22, 0.58], [-0.22, 0.58]], 0.06, 0.015, 1), paint, { pos: [s * 0.23, 0, 0] });
+  foot.add(cyl(0.07, 0.62, 10), C.steel, { pos: [0, WL.ankle, 0], rot: [0, 0, Math.PI / 2] }); // ankle pin
+  for (const s of [-1, 1]) dome(foot, 0.07, [s * 0.31, WL.ankle, 0], [0, 0, -s * Math.PI / 2], C.brass);
+  foot.add(block(0.5, 0.1, 0.3, 0.02, 0.01), C.dark, { pos: [0, 0.14, -0.5] }); // heel guard
+  foot.add(block(0.5, 0.04, 0.34, 0.02, 0.01), paint, { pos: [0, 0.23, 0.3] }); // top plate
+  // ---- toes: three claws on a hinge bar; origin at the hinge (0, 0, 0), toes reach +z
   toes.add(cyl(0.09, 0.78, 10), C.steel, { pos: [0, 0.1, 0], rot: [0, 0, Math.PI / 2] });
   for (const x of [-0.26, 0, 0.26]) {
     toes.add(profile([[0.0, 0.0], [0.54, 0.0], [0.64, 0.07], [0.1, 0.17]], 0.2, 0.02, 1), C.dark, { pos: [x, 0, 0] });
@@ -251,10 +236,10 @@ function buildStriderModel(team) {
   bodyG.add(hull, lamps);
   const turretPivot = new THREE.Group(); turretPivot.position.set(...def.turret.pivot);
   const tMesh = mesh(m.turret);
-  const gun = new THREE.Group(); gun.position.set(0.55, 0.5, 0.45);
+  const gun = new THREE.Group(); gun.position.set(...GUN_AT);
   const gMesh = mesh(m.gun);
   const muzzle = new THREE.Object3D(); muzzle.position.set(0, 0, 2.45);
-  const mortarMuzzle = new THREE.Object3D(); mortarMuzzle.position.set(-0.5, 0.55 + 1.38 * Math.sin(1.05), -0.2 + 1.38 * Math.cos(1.05));
+  const mortarMuzzle = new THREE.Object3D(); mortarMuzzle.position.set(MORTAR_AT[0], MORTAR_AT[1] + 1.12 * Math.sin(-MORTAR_TILT), MORTAR_AT[2] + 1.12 * Math.cos(MORTAR_TILT));
   gun.add(gMesh, muzzle);
   turretPivot.add(tMesh, gun, mortarMuzzle);
   const meshes = [hull, tMesh, gMesh];
@@ -265,7 +250,7 @@ function buildStriderModel(team) {
     return { side, th, sh, ft, toe, rt, rr, fp: new THREE.Vector3(), from: new THREE.Vector3(), to: new THREE.Vector3(), stepping: false, u: 0, dur: 0.45, init: false };
   });
   root.add(bodyG, turretPivot);
-  const parts = { root, turretPivot, gun, gunZ: 0.45, recoilK: 0.0, muzzles: [muzzle, mortarMuzzle], meshes, legs, lastT: -1, hy: WL.hip };
+  const parts = { root, turretPivot, gun, gunZ: GUN_AT[2], recoilK: 0.0, muzzles: [muzzle, mortarMuzzle], meshes, legs, lastT: -1, hy: WL.hip };
   parts.animate = (v) => striderAnimate(v, parts, bodyG);
   return parts;
 }
@@ -345,8 +330,8 @@ function striderAnimate(v, P, bodyG) {
     leg.sh.position.copy(_ik.K);
     leg.sh.quaternion.setFromUnitVectors(_ik.dn, _ik.tmp.subVectors(_ik.A, _ik.K).normalize());
     // the ram runs from the lug on the thigh to the lug on the shin: sleeve and rod aimed at each other, telescoping with the knee
-    _ik.R1.set(0, -0.5, -0.34).applyQuaternion(leg.th.quaternion).add(leg.th.position);
-    _ik.R2.set(0, -0.95, -0.4).applyQuaternion(leg.sh.quaternion).add(leg.sh.position);
+    _ik.R1.set(...THIGH_LUG).applyQuaternion(leg.th.quaternion).add(leg.th.position);
+    _ik.R2.set(...SHIN_LUG).applyQuaternion(leg.sh.quaternion).add(leg.sh.position);
     _ik.d.subVectors(_ik.R2, _ik.R1);
     const rd = Math.max(0.2, _ik.d.length()); _ik.d.multiplyScalar(1 / rd);
     leg.rt.position.copy(_ik.R1); leg.rt.quaternion.setFromUnitVectors(_ik.Z, _ik.d); leg.rt.scale.set(1, 1, rd * 0.62);
