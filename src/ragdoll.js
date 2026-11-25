@@ -55,6 +55,18 @@ class Box {
       const f = (1 - this.legs) * this.fall * dt;
       this.w.x += this.tip.x * f; this.w.z += this.tip.z * f;
     }
+    // a body never ends up sitting: while the torso is still upright on the ground it keeps
+    // toppling the way it was pushed (the ground damps a plain torque, so steer the spin directly)
+    if (this.fall && this.legs <= 0 && !this.asleep && _t.set(0, 1, 0).applyQuaternion(this.q).y > 0.3) {
+      const k = Math.min(1, 7 * dt);
+      this.w.x += (this.tip.x * 2.2 - this.w.x) * k;
+      this.w.z += (this.tip.z * 2.2 - this.w.z) * k;
+      // a box turning about its bottom edge: the centre moves with the spin, or the ground cancels it
+      _r.set(this.tip.z * 0.2, HY, -this.tip.x * 0.2).applyQuaternion(this.q);
+      _v.set(this.tip.x * 2.2, 0, this.tip.z * 2.2).cross(_r);
+      this.v.x += (_v.x - this.v.x) * k; this.v.z += (_v.z - this.v.z) * k; this.v.y = Math.max(this.v.y, _v.y * 0.6);
+      this.rest = 0;
+    }
     this.pos.addScaledVector(this.v, dt);
     const wl = this.w.length();
     if (wl > 1e-6) {
@@ -137,7 +149,7 @@ class Box {
 const B = { x: U.W / 2 - 0.03, y: U.H / 2 - 0.03, z: U.D / 2 - 0.03 };
 const BODY_PTS = [];
 for (const sx of [-1, 1]) for (const sy of [-1, 1]) for (const sz of [-1, 1]) BODY_PTS.push(new THREE.Vector3(sx * B.x, sy * B.y, sz * B.z));
-for (const sx of [-1, 1]) for (const sy of [-1, 1]) BODY_PTS.push(new THREE.Vector3(sx * (U.PACK[0] / 2 - 0.02), U.PACK_Y - U.BODY_Y + sy * (U.PACK[1] / 2 - 0.02), -U.D / 2 - U.PACK[2] + 0.03));
+for (const sx of [-1, 1]) for (const sy of [-1, 1]) BODY_PTS.push(new THREE.Vector3(sx * (U.PACK[0] / 2 - 0.02), U.PACK_Y - U.BODY_Y + sy * (U.PACK[1] / 2 - 0.02), -U.D / 2 - U.PACK[2] * 0.4 + 0.03)); // the pack sinks into the dirt a little so a body can lie flat instead of propped on it
 
 // the head and helmet lift the body's contact points so it never sinks into the ground
 for (const [x, y, z] of [[0, 0.4, 0.0], [-0.08, 0.3, 0.04], [0.08, 0.3, 0.04], [0, 0.3, -0.07]]) BODY_PTS.push(new THREE.Vector3(x, y, z));
@@ -175,8 +187,9 @@ export class Ragdoll {
     // standing soldiers buckle at the knees; one thrown by a blast or already airborne has nothing to stand on
     if (unit.grounded && !blast) {
       this.body.legs = 1;
-      const hl = horiz.length() || 1;
+      let hl = horiz.length();
       // fall along the push; a slump with no push falls forward or back at random
+      if (hl < 0.05) { const a = this.body.q.clone(); horiz.set(0, 0, Math.random() < 0.5 ? 1 : -1).applyQuaternion(a).setY(0); hl = horiz.length() || 1; if (horiz.lengthSq() < 1e-6) horiz.set(1, 0, 0), hl = 1; }
       this.body.tip.set(horiz.z / hl, 0, -horiz.x / hl);
       this.body.fall = 8 + Math.random() * 3;
     }

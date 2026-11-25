@@ -115,6 +115,20 @@
       <canvas id="radar" class="radar" width="300" height="300" role="button" aria-label="Open full map (N)"></canvas>
       <div id="bigmap" class="bigmap" hidden role="dialog" aria-label="Battlefield map"><canvas id="bigcanvas" width="900" height="900"></canvas><p>North up · orange diamond: enemy you tagged · red: spotted by your side · N or tap to close</p></div>
       <ol id="feed" class="feed" aria-live="polite"></ol>
+      <div id="spec" class="spec">
+        <button id="specPrev" class="spec-btn" type="button" aria-label="Previous soldier (Q)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M15 5l-7 7 7 7" /></svg></button>
+        <div class="spec-card" id="specCard" aria-live="polite">
+          <p id="specHint" class="spec-hint"><span class="mouse-only">Click a soldier, or Q / E, to follow</span><span class="touch-only">Tap a soldier, or use the arrows, to follow</span></p>
+          <div id="specInfo" class="spec-info" hidden>
+            <div class="spec-row"><b id="specName"></b><span id="specTeam" class="num"></span><span id="specKills" class="num"></span></div>
+            <div class="spec-hp"><i id="specHp"></i></div>
+            <p id="specFight" class="spec-fight"></p>
+          </div>
+        </div>
+        <button id="specNext" class="spec-btn" type="button" aria-label="Next soldier (E)"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 5l7 7-7 7" /></svg></button>
+        <button id="specMode" class="spec-btn spec-txt" type="button" aria-label="Camera style (V)" title="Camera style (V)" hidden>Duel</button>
+        <button id="specFree" class="spec-btn spec-txt" type="button" aria-label="Stop following" title="Stop following (WASD)" hidden>Free</button>
+      </div>
       <div class="vitals">
         <span class="label">HP</span><div class="hp"><i id="hpbar"></i><s id="stambar"></s></div><b id="hpnum" class="num">100</b>
       </div>

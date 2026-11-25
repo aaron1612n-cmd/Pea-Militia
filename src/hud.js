@@ -1,4 +1,4 @@
-import { HOLD_WIN } from './battle.js';
+import { HOLD_WIN, KINDS } from './battle.js';
 import { CLASSES } from './classes.js';
 import * as THREE from 'three';
 import { TEAMS } from './factions.js';
@@ -9,6 +9,7 @@ import { minimapImage } from './terrain.js';
 const $ = (id) => document.getElementById(id);
 const V = new THREE.Vector3();
 const PX = 2.2; // compass pixels per degree
+const input_touch = () => document.documentElement.dataset.input === 'touch';
 
 // Heads-up display: points and tickets, radar, health, weapon, crosshair, hit markers,
 // a short feed of the player's kills and point captures.
@@ -92,6 +93,82 @@ export class Hud {
     g.globalAlpha = 1;
   }
 
+  clearMarks() {
+    const c = this.marks;
+    if (this.markedOnce || c.width) { this.mc.clearRect(0, 0, c.width, c.height); this.markedOnce = false; }
+    this.pts = null;
+  }
+
+  // Free camera: a chevron over every soldier in view, in his team colour, fading with distance from the
+  // camera. The followed soldier gets a bracket and a line to whoever he is fighting; the soldier nearest
+  // the screen centre is lit with a name, so one click or tap follows him.
+  drawSpecMarks(battle, camera, player, spec) {
+    const c = this.marks, dpr = Math.min(2, devicePixelRatio || 1);
+    const W = Math.round(innerWidth * dpr), H = Math.round(innerHeight * dpr);
+    if (c.width !== W || c.height !== H) { c.width = W; c.height = H; }
+    const g = this.mc;
+    g.clearRect(0, 0, W, H);
+    this.markedOnce = true;
+    const pts = this.pts = [];
+    const cp = camera.position;
+    const acc = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim() || '#ff7a1a';
+    const proj = (u, up) => { V.set(u.pos.x, u.pos.y + up, u.pos.z).project(camera); return V.z > 1 || V.z < -1 || Math.abs(V.x) > 1.1 || Math.abs(V.y) > 1.1 ? null : { x: (V.x * 0.5 + 0.5) * W, y: (-V.y * 0.5 + 0.5) * H }; };
+    for (const u of spec.list(battle, player)) {
+      const d = Math.hypot(u.pos.x - cp.x, u.pos.z - cp.z);
+      if (d > 140 || u === spec.unit) continue;
+      const p = proj(u, 1.5);
+      if (!p) continue;
+      pts.push({ u, x: p.x, y: p.y, d });
+      const s = (3.5 + 4 * Math.max(0, 1 - d / 70)) * dpr;
+      g.globalAlpha = Math.max(0.25, 0.9 * (1 - d / 160));
+      g.fillStyle = TEAMS[u.team].ui;
+      g.strokeStyle = '#101316'; g.lineWidth = 1.2 * dpr;
+      g.beginPath(); g.moveTo(p.x - s, p.y - s); g.lineTo(p.x + s, p.y - s); g.lineTo(p.x, p.y + s * 0.5); g.closePath(); g.fill(); g.stroke();
+    }
+    g.globalAlpha = 1;
+    // the soldier under the centre of the screen
+    this.hover = null;
+    {
+      const reach = (input_touch() ? 70 : 80) * dpr;
+      const hit = spec.pick(pts, W / 2, H / 2, reach);
+      if (hit) {
+        this.hover = hit;
+        const p = pts.find((q) => q.u === hit);
+        g.strokeStyle = acc; g.lineWidth = 2 * dpr;
+        const r = 13 * dpr;
+        g.beginPath(); g.arc(p.x, p.y, r, 0, Math.PI * 2); g.stroke();
+        g.font = `600 ${Math.round(12 * dpr)}px "Chakra Petch", sans-serif`; g.textAlign = 'center';
+        const txt = `${KINDS[hit.kind]?.name || 'Soldier'} · ${TEAMS[hit.team].short}`;
+        g.lineWidth = 3 * dpr; g.strokeStyle = 'rgba(16,19,22,0.9)'; g.fillStyle = '#e6e8e4';
+        g.strokeText(txt, p.x, p.y - r - 6 * dpr); g.fillText(txt, p.x, p.y - r - 6 * dpr);
+      }
+    }
+    // the followed soldier and his fight
+    const u = spec.unit;
+    if (!u || !u.alive) return;
+    const a = proj(u, 2.25), t = spec.target, b = t && t.alive ? proj(t, 1.5) : null;
+    if (b) {
+      const bx = b.x, by = b.y, r = 9 * dpr;
+      const from = proj(u, 1.2);
+      if (from) {
+        g.strokeStyle = acc; g.globalAlpha = 0.85; g.lineWidth = 1.6 * dpr; g.setLineDash([7 * dpr, 6 * dpr]);
+        g.beginPath(); g.moveTo(from.x, from.y); g.lineTo(bx, by); g.stroke(); g.setLineDash([]);
+      }
+      g.globalAlpha = 1;
+      g.fillStyle = TEAMS[t.team].ui; g.strokeStyle = acc; g.lineWidth = 2 * dpr;
+      g.beginPath(); g.moveTo(bx, by - r); g.lineTo(bx + r, by); g.lineTo(bx, by + r); g.lineTo(bx - r, by); g.closePath(); g.fill(); g.stroke();
+      const d = Math.round(Math.hypot(t.pos.x - u.pos.x, t.pos.z - u.pos.z));
+      g.font = `600 ${Math.round(12 * dpr)}px "Chakra Petch", sans-serif`; g.textAlign = 'center';
+      g.lineWidth = 3 * dpr; g.strokeStyle = 'rgba(16,19,22,0.9)'; g.fillStyle = '#e6e8e4';
+      g.strokeText(`${d}m`, bx, by - r - 6 * dpr); g.fillText(`${d}m`, bx, by - r - 6 * dpr);
+    }
+    if (a) {
+      const s = 8 * dpr;
+      g.fillStyle = acc; g.globalAlpha = 1;
+      g.beginPath(); g.moveTo(a.x - s, a.y - s); g.lineTo(a.x + s, a.y - s); g.lineTo(a.x, a.y + s * 0.6); g.closePath(); g.fill();
+    }
+  }
+
   show(on) { this.el.hidden = !on; if (!on) this.bigEl.hidden = true; }
 
   setup(battle) {
@@ -135,7 +212,8 @@ export class Hud {
     battle.points.forEach((p, i) => {
       const el = this.objEls?.[i];
       if (!el) return;
-      let b = (Math.atan2(p.pos.x - player.pos.x, -(p.pos.z - player.pos.z)) * 180) / Math.PI;
+      const o = this.sv || player.pos;
+      let b = (Math.atan2(p.pos.x - o.x, -(p.pos.z - o.z)) * 180) / Math.PI;
       b = ((b % 360) + 360) % 360;
       if (b - head > 180) b -= 360; else if (head - b > 180) b += 360;
       const left = `${b * PX}px`;
@@ -209,7 +287,7 @@ export class Hud {
 
     // points + tickets (a few times a second)
     this.radarT -= dt;
-    if (this.radarT > 0) return;
+    if (this.radarT > 0) { if (this.sv) { this.lastPlayer = player; this.lastBattle = battle; this.lastCam = cam; this.drawRadar(player, battle, cam); } return; }
     this.radarT = 0.12;
     const me = player.team;
     for (const p of battle.points) {
@@ -248,9 +326,13 @@ export class Hud {
     this.paintBig(player, battle, cam);
   }
 
+  // Free camera: the radar centres on what you are watching (the followed soldier, else the camera) and turns with the view.
+  // spec: { x, z, cx, cz, unit, target } or null
+  setView(sv) { this.sv = sv; }
+
   drawRadar(player, battle, cam) {
-    const over = cam.mode === 'over';
-    this.paintMap(this.rc, this.radar.width, 60, over ? cam.over.x : player.pos.x, over ? cam.over.z : player.pos.z, over ? 0 : cam.yaw, player, battle, cam, false);
+    const over = cam.mode === 'over', sv = this.sv;
+    this.paintMap(this.rc, this.radar.width, 60, sv ? sv.cx : over ? cam.over.x : player.pos.x, sv ? sv.cz : over ? cam.over.z : player.pos.z, over ? 0 : cam.yaw, player, battle, cam, false);
   }
 
   // the full battlefield, north up, with every point named (N or tap the radar)
@@ -303,6 +385,7 @@ export class Hud {
       if (Math.abs(x) > W * 0.75 || Math.abs(z) > W * 0.75) continue;
       const foe = u.team !== player.team;
       // enemies show only when somebody on your side has them in sight or they're shooting
+      if (foe && this.sv) { this.foe(c, x, z, k, false, rot); continue; }
       if (foe) { this.ghost(c, u, battle, X, Z, k, rot); continue; }
       else {
         c.fillStyle = TEAMS[u.team].ui;
@@ -313,6 +396,7 @@ export class Hud {
     for (const v of battle.vehicles) {
       if (!v.alive || v === player.vehicle) continue;
       const foe = v.team !== player.team;
+      if (foe && this.sv) { this.foe(c, X(v.pos.x), Z(v.pos.z), k * 1.6, false, rot); continue; }
       if (foe) { this.ghost(c, v, battle, X, Z, k * 1.6, rot); continue; }
       c.save();
       c.translate(X(v.pos.x), Z(v.pos.z));
@@ -323,9 +407,24 @@ export class Hud {
       c.fillRect(-1 * k, -7 * k, 2 * k, 6 * k);
       c.restore();
     }
-    // you
+    // the followed soldier: a ring, and a line to the one he is fighting
+    const sv = this.sv;
+    if (sv?.unit?.alive) {
+      const u = sv.unit, t = sv.target;
+      c.save();
+      c.strokeStyle = '#ff7a1a'; c.fillStyle = '#ff7a1a';
+      if (t?.alive) {
+        c.lineWidth = 1.5 * k; c.setLineDash([3 * k, 3 * k]);
+        c.beginPath(); c.moveTo(X(u.pos.x), Z(u.pos.z)); c.lineTo(X(t.pos.x), Z(t.pos.z)); c.stroke(); c.setLineDash([]);
+        c.beginPath(); c.arc(X(t.pos.x), Z(t.pos.z), 6.5 * k, 0, Math.PI * 2); c.stroke();
+      }
+      c.lineWidth = 2 * k;
+      c.beginPath(); c.arc(X(u.pos.x), Z(u.pos.z), 7 * k, 0, Math.PI * 2); c.stroke();
+      c.restore();
+    }
+    // you (or, in the free camera, where the camera is and which way it looks)
     c.save();
-    c.translate(X(player.pos.x), Z(player.pos.z));
+    c.translate(X(sv ? sv.x : player.pos.x), Z(sv ? sv.z : player.pos.z));
     if (full) c.rotate(-cam.yaw); else c.rotate(-rot);
     c.fillStyle = '#ff7a1a';
     c.beginPath();
