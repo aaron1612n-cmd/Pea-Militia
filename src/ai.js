@@ -976,6 +976,7 @@ export class Brain {
       if (d > 40) continue;
       let sc;
       if (!m.alive) { if (m.isPlayer || m.deadT > 10 || d > 30 || m.lost || m.corpseHp < 40) continue; sc = d - 8; }
+      else if (m.dying) continue; // a mortal wound is past bandaging
       else if (m.hp < 75 || m.bleed > 0.1 || m.down) sc = d + m.hp * 0.15 - (m.down ? 12 : 0);
       else continue;
       if (sc >= bs) continue;

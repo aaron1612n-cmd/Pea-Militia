@@ -168,6 +168,7 @@ function poseCore(s, out) {
   const g = gaitFor(s.speed ?? walk * 2.2);
   const w = walk;
   const ground = 1 - air;
+  const limp = Math.abs(s.limp || 0);
   const kneelStill = kneel * (1 - w); // one knee down; moving crouched is a walk with bent legs
   out.gait = g;
 
@@ -180,6 +181,7 @@ function poseCore(s, out) {
       x += mx * FO.along * w * 0.7; // side steps are shorter
       z += mz * FO.along * w;
       y += FO.lift * w * (1 - 0.45 * kneel);
+      if (limp && side === Math.sign(s.limp)) { z *= 1 - 0.4 * limp; y *= 1 - 0.55 * limp; } // the hurt leg takes a short, flat step
       rx = -FO.pitch * w * Math.max(0, mz);
       // the foot rolls about its heel at touchdown; at push-off it pivots about the ball of the foot (see footMat)
       if (rx < 0) y += 0.085 * Math.sin(-rx);
@@ -205,14 +207,14 @@ function poseCore(s, out) {
   // ---- body: breathes at rest, bobs and dips with the stride, leans into the run, sinks on landing
   const breathe = Math.sin(t * 1.7) * 0.006 * (1 - walk);
   const land = (s.land || 0) * 0.07;
-  const bobY = ground * w * hipBob(cyc, g) * (1 - 0.7 * kneel);
+  const bobY = ground * w * (hipBob(cyc, g) * (1 - 0.7 * kneel) - 0.03 * limp);
   const drop = kneel * U.KNEEL_DROP * (1 - 0.15 * w) + land - air * 0.02 * (s.rise || 0);
   const lean = g.lean * w * ground + 0.12 * kneel + (s.flinch || 0) * -0.1;
   const sway = Math.sin(cyc * Math.PI * 2) * (0.02 + 0.035 * g.run) * w * ground;
   // lean toward the move direction (pitch for forward/back, roll for sideways)
   const mzf = w > 0.05 ? (mz > 0 ? mz : mz * 0.3) : 1;
   const pitchLean = lean * mzf + 0.05 * air * (s.rise || 0);
-  const rollLean = -lean * (w > 0.05 ? mx : 0) * 0.7 + sway;
+  const rollLean = -lean * (w > 0.05 ? mx : 0) * 0.7 + sway + limp * w * ground * Math.sign(s.limp || 0) * 0.1 * (0.5 + 0.5 * Math.cos((cyc - (s.limp > 0 ? 0.5 : 0)) * Math.PI * 2));
   // the shoulders turn against the hips as the arms swing
   const yaw = -Math.sin(cyc * Math.PI * 2) * g.twist * w * ground * Math.max(0, mz);
   // the pelvis turns, tips and rolls against the chest: the lower spine takes up part of every lean and twist
