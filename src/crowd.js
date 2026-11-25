@@ -1,9 +1,10 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
-import { U, HOLD, setWeaponBounds, solveLegs, solveArms } from './rig.js';
+import { U, HOLD, setWeaponBounds, solveLegs, solveArms, solveTorso } from './rig.js';
 import { GEAR, MARKS, KIND_IDS, kindKey } from './gear.js';
 import { markMaterial, woundMarkMaterial, partMatrix } from './hitmarks.js';
-import { torsoGeo, headGeo, helmetGeo, HELMET_KINDS, bootGeo, handGeos, packGeo, LIMB, HEAD_COLORS } from './anatomy.js';
+import { torsoGeo, headGeo, helmetGeo, HELMET_KINDS, bootGeo, handGeos, packGeo, pelvisGeo, neckGeo, deltGeo, LIMB, HEAD_COLORS } from './anatomy.js';
+import { detail, instAttr } from './fabric.js';
 import { WEAPONS, weaponParts } from './weapons.js';
 import { TEAMS } from './factions.js';
 import { makeWoundMesh, makeDentBody, DENT_CAP, MAX_DENTS } from './wounds.js';
@@ -17,8 +18,12 @@ export const PART_GEO = {
   head: headGeo(),
   helmets: Object.fromEntries(HELMET_KINDS.map((k) => [k, helmetGeo(k)])),
   pack: packGeo(),
-  boot: bootGeo(),
-  ...(() => { const h = handGeos(); return { handL: h.left, handR: h.right, handG: h.leftGrip }; })(),
+  boot: bootGeo('foot'),
+  toe: bootGeo('toe'),
+  pelvis: pelvisGeo(),
+  neck: neckGeo(),
+  delt: deltGeo(),
+  ...(() => { const h = handGeos(); return { handL: h.left, handR: h.right, handG: h.leftGrip, openL: h.openL, openR: h.openR }; })(),
 };
 
 const MP = new THREE.Vector3(), MN = new THREE.Vector3(), MQ = new THREE.Quaternion(), MQ2 = new THREE.Quaternion(), MM = new THREE.Matrix4(), MS = new THREE.Vector3(), Z = new THREE.Vector3(0, 0, 1);
@@ -39,42 +44,57 @@ export class Crowd {
   constructor(scene, cap = 600) {
     this.cap = cap;
     this.scene = scene;
-    const mk = (geo, mat, n, colored) => {
+    // style: per-instance class and seed for the camouflage; sway: per-instance swing angles of loose kit
+    const mk = (geo, mat, n, colored, { style = false, sway = false } = {}) => {
+      if (style || sway) geo = geo.clone(); // the per-instance attributes live on the geometry, which two crowds must not share
       const m = new THREE.InstancedMesh(geo, mat, n);
       m.frustumCulled = false; // instances are spread over the whole map
       m.castShadow = true;
       m.receiveShadow = true;
       m.count = 0;
       if (colored) m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
+      if (style) geo.setAttribute('iStyle', instAttr(n));
+      if (sway) { geo.setAttribute('iSwA', instAttr(n, 4)); geo.setAttribute('iSwB', instAttr(n, 4)); geo.setAttribute('iSwC', instAttr(n, 2)); }
       scene.add(m);
       return m;
     };
-    this.body = mk(PART_GEO.body, std({ color: '#ffffff', roughness: 0.62, metalness: 0.05 }), cap, true);
-    this.head = mk(PART_GEO.head, std({ color: '#ffffff', roughness: 0.7, metalness: 0, vertexColors: true }), cap, true);
+    const mks = (g, m, n, c, o = {}) => mk(g, m, n, c, { style: true, ...o });
+    const cloth = (o) => detail(std({ color: '#ffffff', roughness: 0.85, metalness: 0.02, vertexColors: true }), { camo: true, bump: 0.55, ...o });
+    this.body = mks(PART_GEO.body, detail(std({ color: '#ffffff', roughness: 0.62, metalness: 0.05 }), { camo: true, dirt: [0.04, 0, 0.55], bump: 0.4 }), cap, true);
+    this.head = mk(PART_GEO.head, std({ color: '#ffffff', roughness: 0.7, metalness: 0, vertexColors: true }), cap, true, { style: false });
     // one helmet mesh per class (the headgear is how a class reads at a glance); each draws only its own soldiers
-    const helmMat = std({ color: '#ffffff', roughness: 0.5, metalness: 0.25, vertexColors: true });
+    const helmMat = detail(std({ color: '#ffffff', roughness: 0.5, metalness: 0.25, vertexColors: true }), { dirt: [0.08, 0, 0.1], wear: 0.3, bump: 0.3 });
     this.helmets = {}; this.hn = {};
-    for (const k of HELMET_KINDS) { this.helmets[k] = mk(PART_GEO.helmets[k], helmMat, cap, true); this.helmets[k].name = `crowd-helmet-${k}`; }
-    this.pack = mk(PART_GEO.pack, std({ color: '#ffffff', roughness: 0.8, metalness: 0.05 }), cap, true);
-    const fixed = std({ color: '#ffffff', roughness: 0.7, metalness: 0.05, vertexColors: true });
-    this.boot = mk(PART_GEO.boot, fixed, cap * 2, false);
-    this.handL = mk(PART_GEO.handL, fixed, cap, false);
-    this.handR = mk(PART_GEO.handR, fixed, cap, false);
-    this.handG = mk(PART_GEO.handG, fixed, cap, false); // support hand on a vertical foregrip
-    const cloth = std({ color: '#ffffff', roughness: 0.85, metalness: 0.02, vertexColors: true });
-    this.upperArm = mk(LIMB.upperArm, cloth, cap * 2, true);
-    this.foreArm = mk(LIMB.foreArm, cloth, cap * 2, true);
-    this.thigh = mk(LIMB.thigh, cloth, cap * 2, true);
-    this.shin = mk(LIMB.shin, cloth, cap * 2, true);
+    for (const k of HELMET_KINDS) { this.helmets[k] = mks(PART_GEO.helmets[k], helmMat, cap, true); this.helmets[k].name = `crowd-helmet-${k}`; }
+    this.pack = mks(PART_GEO.pack, cloth({ dirt: [0.1, 0, 0.5] }), cap, true);
+    const leather = () => detail(std({ color: '#ffffff', roughness: 0.7, metalness: 0.05, vertexColors: true }), { dirt: [0.12, 0, 0.5], bump: 0.35 });
+    this.boot = mks(PART_GEO.boot, detail(std({ color: '#ffffff', roughness: 0.7, metalness: 0.05, vertexColors: true }), { dirt: [0.3, 0, 0.7], bump: 0.5 }), cap * 2, false);
+    this.toe = mks(PART_GEO.toe, this.boot.material, cap * 2, false);
+    this.pelvis = mks(PART_GEO.pelvis, cloth({ dirt: [0.08, 0, 0.5] }), cap, true);
+    this.neck = mk(PART_GEO.neck, std({ color: '#ffffff', roughness: 0.8, metalness: 0, vertexColors: true }), cap, true, { style: false });
+    this.delt = mks(PART_GEO.delt, cloth({ dirt: [0.05, 0, 0] }), cap * 2, true);
+    const glove = leather();
+    // hands: cup (left, forend), grip (right, pistol grip), leftGrip (left, vertical foregrip), open (either, fingers spread)
+    this.hands = {};
+    for (const [id, key] of [['L', 'handL'], ['G', 'handG'], ['R', 'handR'], ['oL', 'openL'], ['oR', 'openR']]) {
+      this.hands[id] = mks(PART_GEO[key], glove, cap, false);
+      this.hands[id].name = `crowd-hands-${id}`;
+    }
+    this.handL = this.hands.L; this.handR = this.hands.R; this.handG = this.hands.G;
+    this.hn2 = {};
+    this.upperArm = mks(LIMB.upperArm, cloth({ dirt: [0.04, 0.3, 0] }), cap * 2, true);
+    this.foreArm = mks(LIMB.foreArm, cloth({ dirt: [0.08, 0.5, 0] }), cap * 2, true);
+    this.thigh = mks(LIMB.thigh, cloth({ dirt: [0.08, 0.55, 0] }), cap * 2, true);
+    this.shin = mks(LIMB.shin, cloth({ dirt: [0.18, 0.8, 0] }), cap * 2, true);
     // class kit (instance colour = army accent), fixed-colour marks, and the legs
-    const gearMat = std({ color: '#ffffff', roughness: 0.65, metalness: 0.1, vertexColors: true });
-    const markMat = std({ color: '#ffffff', roughness: 0.5, metalness: 0.05, vertexColors: true, emissive: '#ffffff', emissiveIntensity: 0.18 });
+    const gearMat = detail(std({ color: '#ffffff', roughness: 0.65, metalness: 0.1, vertexColors: true }), { sway: true, dirt: [0.05, 0, 0.45], wear: 0.3, bump: 0.45 });
+    const markMat = detail(std({ color: '#ffffff', roughness: 0.5, metalness: 0.05, vertexColors: true, emissive: '#ffffff', emissiveIntensity: 0.18 }), { sway: true, style: false, grain: 0, bump: 0 });
     this.gear = {}; this.marks = {}; this.gn = {}; this.mn = {};
     for (const k of KIND_IDS) {
-      this.gear[k] = mk(GEAR[k], gearMat, cap, true); this.gear[k].name = `crowd-gear-${k}`;
-      if (MARKS[k]) { this.marks[k] = mk(MARKS[k], markMat, cap, false); this.marks[k].name = `crowd-mark-${k}`; }
+      this.gear[k] = mks(GEAR[k], gearMat, cap, true, { sway: true }); this.gear[k].name = `crowd-gear-${k}`;
+      if (MARKS[k]) { this.marks[k] = mk(MARKS[k], markMat, cap, false, { sway: true }); this.marks[k].name = `crowd-mark-${k}`; }
     }
-    this.body.name = 'crowd-body'; this.head.name = 'crowd-head'; this.boot.name = 'crowd-boots'; this.handL.name = 'crowd-hands-left'; this.handR.name = 'crowd-hands-right'; this.handG.name = 'crowd-hands-grip';
+    this.body.name = 'crowd-body'; this.head.name = 'crowd-head'; this.boot.name = 'crowd-boots'; this.toe.name = 'crowd-toes'; this.pelvis.name = 'crowd-pelvis'; this.neck.name = 'crowd-neck'; this.delt.name = 'crowd-shoulders';
     // wound faces where limbs and heads were torn off, and ruined heads (see wreck.js)
     const wm = () => woundMaterial({ roughness: 0.5 });
     this.stump = mk(stumpGeo(), wm(), 240, true); this.stump.name = 'crowd-stumps'; this.ns = 0;
@@ -101,11 +121,20 @@ export class Crowd {
     scene.add(this.wound);
     this.nw = 0;
     this.dentBody = makeDentBody(DENT_CAP, this.body.material);
+    this.dentBody.geometry.setAttribute('iStyle', instAttr(DENT_CAP));
+    detail(this.dentBody.material, { camo: true, dirt: [0.04, 0, 0.55], bump: 0.4 });
     scene.add(this.dentBody);
     this.nd = 0;
-    this.n = 0; this.nf = 0; this.nh = 0; this.nhl = 0; this.nhg = 0; this.nhr = 0; this.nl = 0; this.na = 0;
+    this.n = 0; this.nf = 0; this.nh = 0; this.nl = 0; this.na = 0;
     this.wn = {};
     this.tmp = new THREE.Matrix4();
+  }
+
+  // class (0..5) and a per-soldier seed make the camouflage; a negative style is a distant soldier, drawn plain
+  style(mesh, i, v) { mesh.geometry.attributes.iStyle.setX(i, v); }
+  swayTo(mesh, i, sw) {
+    const g = mesh.geometry.attributes;
+    g.iSwA.setXYZW(i, sw[0], sw[1], sw[2], sw[3]); g.iSwB.setXYZW(i, sw[4], sw[5], sw[6], sw[7]); g.iSwC.setXY(i, sw[8], sw[9]);
   }
 
   // a torn wound face at the start of limb segment `seg` (pos at its root, face toward its far end), pushed `adv` along it
@@ -120,16 +149,21 @@ export class Crowd {
   }
 
   begin() {
-    this.n = this.nf = this.nh = this.nhl = this.nhg = this.nhr = this.nw = this.nl = this.na = this.nd = this.nm = this.nmw = this.ns = this.nwf = this.nwt = 0;
+    this.n = this.nf = this.nh = this.nw = this.nl = this.na = this.nd = this.nm = this.nmw = this.ns = this.nwf = this.nwt = 0;
     for (const id in this.weapons) this.wn[id] = 0;
     for (const k of KIND_IDS) this.gn[k] = this.mn[k] = 0;
     for (const k of HELMET_KINDS) this.hn[k] = 0;
+    for (const g in this.hands) this.hn2[g] = 0;
   }
 
   // world: the unit's world matrix; p: pose() output (unit-local); opts: { body: false } hides
   // the body, visor, pack and feet (first person)
   add(world, p, team, opts = {}) {
     const t = this.tmp;
+    const cls = Math.max(0, KIND_IDS.indexOf(kindKey(opts.kind)));
+    let sv = cls + ((opts.seed || 0) * 0.6180339 % 1) * 0.9;
+    if (opts.far) sv = -1 - sv;
+    const sw = p.sway;
     if (opts.body !== false && this.n < this.cap) {
       const i = this.n++;
       const bm = t.multiplyMatrices(world, p.body);
@@ -147,9 +181,11 @@ export class Crowd {
         for (let k = ws.length - 1; k >= 0 && k2 < MAX_DENTS; k--) if (ws[k].dent) { g.attributes[`aD${k2++}`].setXYZW(d, ws[k].x, ws[k].y, ws[k].z, ws[k].dent); }
         for (; k2 < MAX_DENTS; k2++) g.attributes[`aD${k2}`].setXYZW(d, 0, 0, 0, 0);
         this.body.setMatrixAt(i, ZERO);
+        this.style(this.dentBody, d, sv);
       } else {
         this.body.setMatrixAt(i, bm);
       }
+      this.style(this.body, i, sv);
       this.body.instanceColor.setXYZ(i, cr, cg, cb);
       if (ws) {
         const aC = this.wound.geometry.attributes.aC, aS = this.wound.geometry.attributes.aS, aN = this.wound.geometry.attributes.aN;
@@ -178,27 +214,36 @@ export class Crowd {
         this.head.instanceColor.setXYZ(i, sk.r * 1.6, sk.g * 1.6, sk.b * 1.6);
         const hk = HELMET_KINDS.includes(opts.kind) ? opts.kind : 'rifleman', hi = this.hn[hk]++;
         this.helmets[hk].setMatrixAt(hi, t.multiplyMatrices(world, p.head));
+        this.style(this.helmets[hk], hi, sv);
         const hc = opts.kind === 'medic' ? PALE : HELM_COL[team];
         this.helmets[hk].instanceColor.setXYZ(hi, hc.r, hc.g, hc.b);
       }
       this.pack.setMatrixAt(i, t.multiplyMatrices(world, p.pack));
       this.pack.instanceColor.setXYZ(i, PACK_COL[team].r, PACK_COL[team].g, PACK_COL[team].b);
+      this.style(this.pack, i, sv);
       const lost = opts.lost || 0;
       if (!opts.far) {
         const kk = kindKey(opts.kind), gi = this.gn[kk]++;
         this.gear[kk].setMatrixAt(gi, t.multiplyMatrices(world, p.body));
         const ac = UI_COL[team];
         this.gear[kk].instanceColor.setXYZ(gi, ac.r, ac.g, ac.b);
-        if (this.marks[kk]) this.marks[kk].setMatrixAt(this.mn[kk]++, t);
+        this.style(this.gear[kk], gi, sv); this.swayTo(this.gear[kk], gi, sw);
+        if (this.marks[kk]) { const mi = this.mn[kk]++; this.marks[kk].setMatrixAt(mi, t); this.swayTo(this.marks[kk], mi, sw); }
       }
       solveLegs(p);
       const tc = TROUSER[team];
+      // pelvis and neck: the joints between the chest, the hips and the head
+      this.pelvis.setMatrixAt(i, t.multiplyMatrices(world, p.pelvis));
+      this.pelvis.instanceColor.setXYZ(i, tc.r, tc.g, tc.b);
+      this.style(this.pelvis, i, sv);
+      if (!(hl & LOST.HEAD)) { this.neck.setMatrixAt(i, t.multiplyMatrices(world, p.neck)); this.neck.instanceColor.setXYZ(i, sk.r * 1.6, sk.g * 1.6, sk.b * 1.6); } else this.neck.setMatrixAt(i, ZERO);
       for (let k = 0; k < 2; k++) {
         if (lost & (LOST.LEG << k)) { this.addStump(world, p.legs[k][0], 0.056, tc, 0.03); continue; } // torn off at the hip: leg, shin and boot go together
         if (this.nl + 1 > this.cap * 2) continue;
         const j = this.nl++;
         this.thigh.setMatrixAt(j, t.multiplyMatrices(world, p.legs[k][0]));
         this.thigh.instanceColor.setXYZ(j, tc.r, tc.g, tc.b);
+        this.style(this.thigh, j, sv); this.style(this.shin, j, sv);
         if (lost & (LOST.SHIN << k)) { this.shin.setMatrixAt(j, ZERO); this.addStump(world, p.legs[k][1], 0.043, tc, 0.03); continue; } // torn off at the knee
         this.shin.setMatrixAt(j, t.multiplyMatrices(world, p.legs[k][1]));
         this.shin.instanceColor.setXYZ(j, tc.r, tc.g, tc.b);
@@ -206,6 +251,8 @@ export class Crowd {
       for (let k = 0; k < p.feet.length; k++) {
         if (lost & ((LOST.LEG | LOST.SHIN) << k)) continue;
         if (this.nf >= this.cap * 2) break;
+        this.style(this.boot, this.nf, sv); this.style(this.toe, this.nf, sv);
+        this.toe.setMatrixAt(this.nf, t.multiplyMatrices(world, p.toes[k]));
         this.boot.setMatrixAt(this.nf++, t.multiplyMatrices(world, p.feet[k]));
       }
     }
@@ -230,8 +277,13 @@ export class Crowd {
       const j = this.nh++;
       this.upperArm.setMatrixAt(j, t.multiplyMatrices(world, p.arms[k][0]));
       this.upperArm.instanceColor.setXYZ(j, sc.r, sc.g, sc.b);
+      this.delt.setMatrixAt(j, t.multiplyMatrices(world, p.delts[k])); this.delt.instanceColor.setXYZ(j, sc.r, sc.g, sc.b);
+      this.style(this.upperArm, j, sv); this.style(this.foreArm, j, sv); this.style(this.delt, j, sv);
       if (al & (LOST.FORE << k)) { this.foreArm.setMatrixAt(j, ZERO); this.addStump(world, p.arms[k][1], 0.031, sc, 0.024); continue; } // torn off at the elbow, hand and all
-      if (k === 0) { if (HOLD[opts.weapon]?.grips?.lk === 'grip') this.handG.setMatrixAt(this.nhg++, t.multiplyMatrices(world, h)); else this.handL.setMatrixAt(this.nhl++, t.multiplyMatrices(world, h)); } else this.handR.setMatrixAt(this.nhr++, t.multiplyMatrices(world, h));
+      // open fingers when the hand is free, otherwise the cup / grip / foregrip hand the gun asks for
+      const free = p.curl[k] < 0.5;
+      const hid = free ? (k === 0 ? 'oL' : 'oR') : k === 0 ? (HOLD[opts.weapon]?.grips?.lk === 'grip' ? 'G' : 'L') : 'R';
+      { const hm = this.hands[hid], n = this.hn2[hid]++; hm.setMatrixAt(n, t.multiplyMatrices(world, h)); this.style(hm, n, sv); }
       this.foreArm.setMatrixAt(j, t.multiplyMatrices(world, p.arms[k][1]));
       this.foreArm.instanceColor.setXYZ(j, sc.r, sc.g, sc.b);
     }
@@ -251,9 +303,14 @@ export class Crowd {
       m.count = n;
       m.instanceMatrix.needsUpdate = true;
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
+      const ga = m.geometry.attributes;
+      if (ga.iStyle) ga.iStyle.needsUpdate = true;
+      if (ga.iSwA) ga.iSwA.needsUpdate = ga.iSwB.needsUpdate = ga.iSwC.needsUpdate = true;
     };
     fin(this.body, this.n); fin(this.head, this.n); for (const k of HELMET_KINDS) fin(this.helmets[k], this.hn[k]); fin(this.pack, this.n);
-    fin(this.boot, this.nf); fin(this.handL, this.nhl); fin(this.handG, this.nhg); fin(this.handR, this.nhr); fin(this.upperArm, this.nh); fin(this.foreArm, this.nh);
+    fin(this.boot, this.nf); fin(this.toe, this.nf); fin(this.pelvis, this.n); fin(this.neck, this.n); fin(this.delt, this.nh);
+    for (const g in this.hands) fin(this.hands[g], this.hn2[g]);
+    fin(this.upperArm, this.nh); fin(this.foreArm, this.nh);
     fin(this.thigh, this.nl); fin(this.shin, this.nl);
     fin(this.mark, this.nm); fin(this.markW, this.nmw);
     fin(this.stump, this.ns); fin(this.wreckFace, this.nwf); fin(this.wreckTop, this.nwt);
