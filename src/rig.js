@@ -889,7 +889,16 @@ function legPole(pelvisQ, foot, side, pole) {
   _fz.set(foot.elements[8], 0, foot.elements[10]);
   const fy = _fz.lengthSq() > 1e-4 ? Math.atan2(_fz.x, _fz.z) : 0;
   _pole.set(0, 0, 1).applyQuaternion(pelvisQ);
-  const py = Math.atan2(_pole.x, _pole.z);
+  let vx = _pole.x, vz = _pole.z;
+  const hz = Math.hypot(vx, vz);
+  if (hz < 0.6) { // lying down the pelvis faces the ground, so its forward is nearly vertical and its heading is noise: take the head's direction as it fades
+    const w = smooth(0.15, 0.6, hz);
+    _fz.set(0, 1, 0).applyQuaternion(pelvisQ);
+    const hy = Math.hypot(_fz.x, _fz.z) || 1;
+    vx = (hz > 1e-4 ? (vx / hz) * w : 0) + (_fz.x / hy) * (1 - w);
+    vz = (hz > 1e-4 ? (vz / hz) * w : 0) + (_fz.z / hy) * (1 - w);
+  }
+  const py = Math.atan2(vx, vz);
   let dy = fy - py;
   dy = Math.atan2(Math.sin(dy), Math.cos(dy));
   const yaw = py + THREE.MathUtils.clamp(dy * KNEE_TURN, -KNEE_MAX_YAW, KNEE_MAX_YAW) + side * 0.07; // knees track just outside the toes
@@ -953,8 +962,9 @@ export function legPass(s, out) {
   // a planted sole rests exactly on the ground (flat to a slope); a swinging boot only has to stay out of it. This also holds
   // while going down or getting up, so a boot never sinks through the ground on the way.
   for (let i = 0; i < 2; i++) {
+    // (a swinging boot clears the real terrain it passes over; a planted one lies on the plane under it)
     const f = out.feet[i], gy = s.gnd ? s.gnd[i] : 0, gxs = s.slope ? s.slope[i][0] : 0, gzs = s.slope ? s.slope[i][1] : 0;
-    const lo = soleLow(f, gy, gxs, gzs, s.lod > 0 ? null : s, out.toeRel[i]), st = (out.st ? out.st[i] : 0) * (1 - smooth(0.02, 0.2, s.prone || 0));
+    const lo = soleLow(f, gy, gxs, gzs, s.lod > 0 || pass < 2 || (out.st && out.st[i] > 0.5) ? null : s, out.toeRel[i]), st = (out.st ? out.st[i] : 0) * (1 - smooth(0.02, 0.2, s.prone || 0));
     let dy = -lo * st;
     if (lo + dy < 0.0005) dy += 0.0005 - (lo + dy);
     f.elements[13] += dy;

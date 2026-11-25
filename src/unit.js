@@ -213,7 +213,7 @@ export class Unit {
       const c = Math.cos(this.facing), sn = Math.sin(this.facing);
       lx = h.dir.x * c - h.dir.z * sn; lz = h.dir.x * sn + h.dir.z * c;
       const l = Math.hypot(lx, lz) || 1; lx /= l; lz /= l;
-    } else { const a = Math.random() * 6.283; lx = Math.sin(a); lz = Math.cos(a); }
+    } else { const a = (this.t * 12.9898 + dmg * 78.233) % 6.283; lx = Math.sin(a); lz = Math.cos(a); } // (a made-up direction from the clock: the shared random stream stays untouched)
     this.hs.vx += lz * 6 * m; this.hs.vz -= lx * 6 * m;
   }
 
@@ -610,13 +610,12 @@ export class Unit {
       const lw = this.lastFoot || (this.lastFoot = [[wx, wz], [wx, wz]]), lf = lw[i];
       const nx = wx + THREE.MathUtils.clamp(wx - lf[0], -0.1, 0.1), nz = wz + THREE.MathUtils.clamp(wz - lf[1], -0.1, 0.1);
       lf[0] = wx; lf[1] = wz; wx = nx; wz = nz;
-      // the ground's gradient in the soldier's own frame (x across, z ahead), from four samples about the boot
-      const dd = 0.1, ax = c * dd, az = -sn * dd, bx = sn * dd, bz = c * dd;
+      // the ground's gradient in the soldier's own frame (x across, z ahead), from forward differences about the boot
+      const dd = 0.12, ax = c * dd, az = -sn * dd, bx = sn * dd, bz = c * dd;
       const h = wr.groundAt(wx, wz, this.pos.y + 0.2);
-      const hxp = wr.groundAt(wx + ax, wz + az, this.pos.y + 0.2), hxm = wr.groundAt(wx - ax, wz - az, this.pos.y + 0.2);
-      const hzp = wr.groundAt(wx + bx, wz + bz, this.pos.y + 0.2), hzm = wr.groundAt(wx - bx, wz - bz, this.pos.y + 0.2);
       g[i] = THREE.MathUtils.clamp(h - this.pos.y, -0.3, 0.3);
-      sl[i][0] = THREE.MathUtils.clamp((hxp - hxm) / (2 * dd), -0.7, 0.7); sl[i][1] = THREE.MathUtils.clamp((hzp - hzm) / (2 * dd), -0.7, 0.7);
+      sl[i][0] = THREE.MathUtils.clamp((wr.groundAt(wx + ax, wz + az, this.pos.y + 0.2) - h) / dd, -0.7, 0.7);
+      sl[i][1] = THREE.MathUtils.clamp((wr.groundAt(wx + bx, wz + bz, this.pos.y + 0.2) - h) / dd, -0.7, 0.7);
     }
     s.gnd = g; s.slope = sl;
   }
