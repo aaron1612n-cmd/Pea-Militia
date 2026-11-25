@@ -28,6 +28,37 @@ export function markTexture() {
     for (let i = 0; i < 6; i++) { const a = rnd() * TAU, r0 = S * 0.18, r1 = S * (0.26 + rnd() * 0.14); g.beginPath(); g.moveTo(h + Math.cos(a) * r0, h + Math.sin(a) * r0); g.lineTo(h + Math.cos(a) * r1, h + Math.sin(a) * r1); g.stroke(); }
   }));
 }
+// a hit on cloth, webbing or a limb: frayed fibres round a wet dark-red hole with a blood halo. No metal, no black.
+let _wtex = null;
+export function woundMarkTexture() {
+  return (_wtex ||= canvasTex(128, (g, S) => {
+    const h = S / 2, rnd = Math.random;
+    const gr = g.createRadialGradient(h, h, S * 0.05, h, h, h * 0.98);
+    gr.addColorStop(0, 'rgba(92,10,10,0.9)'); gr.addColorStop(0.45, 'rgba(78,10,10,0.55)'); gr.addColorStop(1, 'rgba(70,10,10,0)');
+    g.fillStyle = gr; g.beginPath(); g.arc(h, h, h * 0.98, 0, TAU); g.fill();
+    // frayed threads, pulled out of the weave
+    g.lineCap = 'round';
+    for (let i = 0; i < 16; i++) {
+      const a = rnd() * TAU, r0 = S * 0.12, r1 = S * (0.2 + rnd() * 0.16);
+      g.strokeStyle = i % 3 ? 'rgba(52,56,48,0.85)' : 'rgba(96,30,24,0.8)'; g.lineWidth = 1 + rnd() * 1.6;
+      g.beginPath(); g.moveTo(h + Math.cos(a) * r0, h + Math.sin(a) * r0); g.lineTo(h + Math.cos(a + (rnd() - 0.5) * 0.4) * r1, h + Math.sin(a + (rnd() - 0.5) * 0.4) * r1); g.stroke();
+    }
+    // the tear: a ragged ring of torn cloth over wet flesh
+    g.fillStyle = '#3d1210'; g.beginPath();
+    for (let i = 0; i <= 18; i++) { const a = (i / 18) * TAU, r = S * (0.14 + rnd() * 0.05); g.lineTo(h + Math.cos(a) * r, h + Math.sin(a) * r); }
+    g.closePath(); g.fill();
+    g.fillStyle = '#6e0d0d'; g.beginPath();
+    for (let i = 0; i <= 14; i++) { const a = (i / 14) * TAU, r = S * (0.09 + rnd() * 0.035); g.lineTo(h + Math.cos(a) * r, h + Math.sin(a) * r); }
+    g.closePath(); g.fill();
+    g.fillStyle = '#2b0505'; g.beginPath();
+    for (let i = 0; i <= 12; i++) { const a = (i / 12) * TAU, r = S * (0.045 + rnd() * 0.02); g.lineTo(h + Math.cos(a) * r, h + Math.sin(a) * r); }
+    g.closePath(); g.fill();
+    for (let i = 0; i < 9; i++) { const a = rnd() * TAU, d = S * (0.2 + rnd() * 0.2), r = 1 + rnd() * 2.6; g.fillStyle = 'rgba(100,12,12,0.9)'; g.beginPath(); g.arc(h + Math.cos(a) * d, h + Math.sin(a) * d, r, 0, TAU); g.fill(); }
+  }));
+}
+export function woundMarkMaterial() {
+  return new THREE.MeshStandardMaterial({ map: woundMarkTexture(), alphaTest: 0.25, roughness: 0.55, metalness: 0, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
+}
 export function markMaterial() {
   return new THREE.MeshStandardMaterial({ map: markTexture(), alphaTest: 0.3, roughness: 0.55, metalness: 0.45, polygonOffset: true, polygonOffsetFactor: -3, polygonOffsetUnits: -3 });
 }
@@ -67,7 +98,7 @@ export function markUnit(u, point, dir, zone, kind = 'bullet', size = 0.05) {
     cand(id, new THREE.Vector3(n.x * r, n.y * r, z), n, Math.hypot(l - r, q.z - z) + (zone === 'torso' ? 0.05 : 0));
   }
   if (!best) return;
-  list.push({ id: best.id, p: best.pt, n: best.n, s: size * (0.85 + Math.random() * 0.4), r: Math.random() * TAU });
+  list.push({ id: best.id, w: best.id !== 1, p: best.pt, n: best.n, s: size * (0.85 + Math.random() * 0.4), r: Math.random() * TAU });
   while (list.length > MAX_MARKS) list.shift();
 }
 

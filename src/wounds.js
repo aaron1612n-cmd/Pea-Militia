@@ -31,7 +31,7 @@ function atlas() {
     blob(cx, cy, T * 0.14, 0.3, '#4a0707');
     // 1: bullet hole, black pit, torn rim, wet halo
     cx = T + T / 2; cy = T / 2;
-    blob(cx, cy, T * 0.33, 0.25, '#6b0e0e'); spokes(cx, cy, 8, T * 0.24, T * 0.4, 2.5, '#6b0e0e'); blob(cx, cy, T * 0.2, 0.2, '#2c0505'); blob(cx, cy, T * 0.12, 0.18, '#050101');
+    blob(cx, cy, T * 0.33, 0.25, '#6b0e0e'); spokes(cx, cy, 8, T * 0.24, T * 0.4, 2.5, '#6b0e0e'); blob(cx, cy, T * 0.2, 0.2, '#4a0909'); blob(cx, cy, T * 0.12, 0.18, '#2e0505');
     // 2: bleeding run: a narrow wet streak that swells toward the tip
     cx = T / 2; cy = T + T / 2;
     g.fillStyle = '#7a1010'; g.beginPath(); g.moveTo(cx - 5, T + 2); g.lineTo(cx + 5, T + 2); g.bezierCurveTo(cx + 6, T + T * 0.7, cx + 11, T + T * 0.82, cx + 9, T + T * 0.92);
@@ -40,7 +40,7 @@ function atlas() {
     // 3: exit wound: bigger ragged crater with torn petals, flung drops and a dark core
     cx = T + T / 2; cy = T + T / 2;
     blob(cx, cy, T * 0.34, 0.4, '#6e0f0f'); spokes(cx, cy, 14, T * 0.3, T * 0.48, 4.5, '#6e0f0f'); drops(cx, cy, 16, T * 0.3, T * 0.48, 1.5, 4.5, '#7a1010');
-    blob(cx, cy, T * 0.22, 0.35, '#3a0606'); blob(cx, cy, T * 0.13, 0.3, '#080101');
+    blob(cx, cy, T * 0.22, 0.35, '#520a0a'); blob(cx, cy, T * 0.13, 0.3, '#300505');
     // 4: torn-open chest. Frayed cloth rim, bruised skin edge, wet dark cavity, broken ribs and pink-grey viscera
     cx = 2 * T + T / 2; cy = T / 2;
     blob(cx, cy, T * 0.47, 0.22, 'rgba(84,22,16,0.55)');                                 // blood-soaked cloth around it
@@ -81,7 +81,7 @@ float dentDisp(vec3 p, vec4 d) {
 let _atlas = null;
 function wmat() {
   _atlas = _atlas || atlas();
-  const m = new THREE.MeshStandardMaterial({ map: _atlas, alphaTest: 0.35, roughness: 0.22, metalness: 0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
+  const m = new THREE.MeshStandardMaterial({ map: _atlas, alphaTest: 0.35, roughness: 0.5, metalness: 0, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 });
   m.onBeforeCompile = (sh) => {
     sh.vertexShader = sh.vertexShader
       .replace('#include <common>', `#include <common>

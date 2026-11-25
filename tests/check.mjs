@@ -473,7 +473,7 @@ try {
     out.cap = { gibs: G.gibMesh.count, decals: G.decalCount, max: [G.gibMesh.instanceMatrix.count, G.sets.reduce((a, d) => a + d.n, 0)] };
     // decals shrink away
     G.clear(); G.splat(2, 2, 1); for (let k = 0; k < 400; k++) G.update(0.25);
-    out.faded = G.splats.every((d) => d.age.every((a) => a > 1e8));
+    out.faded = G.splats.every((d) => d.slots.every((x) => !x));
     out.stored = localStorage.getItem('sm.gore');
     G.setLevel(2); G.clear(); b.clearUnits();
     return out;

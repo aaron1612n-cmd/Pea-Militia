@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { height, normalAt } from './terrain.js';
 import { Gore } from './gore.js';
+import { StainSet } from './decals.js';
 
 // Particles as soft round sprites: one additive system (fire, sparks, plasma, flashes) and one
 // normal-blended system (smoke, steam, dust, pea juice). Plus pooled tracer streaks.
@@ -99,7 +100,7 @@ const _zero = new THREE.Matrix4().makeScale(0, 0, 0);
 const _cm = new THREE.Matrix4(), _cs = new THREE.Vector3(), _cq = new THREE.Quaternion();
 const _ccache = new Map();
 const col = (h) => { let c = _ccache.get(h); if (!c) _ccache.set(h, c = new THREE.Color(h)); return c; };
-const Y = new THREE.Vector3(0, 1, 0);
+const Y = new THREE.Vector3(0, 1, 0), UP_ = Y;
 const Z = new THREE.Vector3(0, 0, 1);
 const TRACER_SPEED = 240; // m/s, slowed down so the eye can follow it
 const TRACER_LEN = 3.2;
@@ -285,10 +286,10 @@ export class Effects {
     }
     this.ri = 0;
     // marks left on the field: bullet scuffs and blast scorches (ring buffers of instances)
-    this.holes = decalMesh(scene, 1800, holeTexture(), 0.9);
-    this.scorch = decalMesh(scene, 60, scorchTexture(), 0.92);
-    this.craters = decalMesh(scene, 48, craterTexture(), 1);
-    this.craters.renderOrder = 0;
+    // (wrapped onto the terrain or the prop they hit, removed with the prop; see decals.js)
+    this.holes = new StainSet(scene, 1200, { plain: holeTexture(), G: 2, rough: 0.9, hold: Infinity, off: 0.014 });
+    this.scorch = new StainSet(scene, 60, { plain: scorchTexture(), G: 6, rough: 0.92, hold: Infinity, off: 0.035 });
+    this.craters = new StainSet(scene, 48, { plain: craterTexture(), G: 8, rough: 1, hold: Infinity, order: 0, off: 0.03 });
     // shell fragments and clods left lying around blast sites
     const sg = new THREE.IcosahedronGeometry(0.07, 0).scale(1.6, 0.5, 1);
     this.shrap = new THREE.InstancedMesh(sg, new THREE.MeshStandardMaterial({ color: '#4a4640', roughness: 0.8, metalness: 0.4, flatShading: true }), 240);
@@ -312,6 +313,7 @@ export class Effects {
     this.add.update(dt);
     this.norm.update(dt);
     this.gore.update(dt);
+    this.holes.update(dt); this.scorch.update(dt); this.craters.update(dt);
     this.updateMotes(dt);
     this.updateCasings(dt);
     for (const t of this.tracers) {
@@ -402,10 +404,13 @@ export class Effects {
   }
 
   // scuff on a surface the bullet hit (only flat-ish ground and tops keep a mark)
-  mark(pos, normal, size = 0.16) {
-    if (!normal || normal.y < 0.7) return;
-    stamp(this.holes, pos, normal, size * (0.8 + Math.random() * 0.5));
+  mark(pos, normal, size = 0.16, prop = null) {
+    if (!normal || (!prop && normal.y < 0.7)) return;
+    this.holes.addOn(pos, normal, size * (0.8 + Math.random() * 0.5), null, 0, prop);
   }
+
+  // forget every mark left on the field (a new battle, new terrain)
+  clearMarks() { this.holes.clear(); this.scorch.clear(); this.craters.clear(); }
 
   rnd(s = 1) { return (Math.random() * 2 - 1) * s; }
   dir(s = 1) { return new THREE.Vector3(this.rnd(), this.rnd(), this.rnd()).normalize().multiplyScalar(s * Math.random()); }
@@ -524,9 +529,9 @@ export class Effects {
     }
   }
 
-  impact(pos, normal, kind = 'dust') {
+  impact(pos, normal, kind = 'dust', prop = null) {
     const base = normal || new THREE.Vector3(0, 1, 0);
-    if (kind === 'metalhole' && normal) { stamp(this.holes, pos, normal, 0.12 + Math.random() * 0.08); kind = 'metal'; }
+    if (kind === 'metalhole' && normal) { this.holes.addOn(pos, normal, 0.12 + Math.random() * 0.08, null, 0, prop); kind = 'metal'; }
     if (kind === 'metal') {
       for (let i = 0; i < 6; i++) this.add.emit({ pos, vel: base.clone().multiplyScalar(2).add(this.dir(3)), life: 0.25, size: [0.03, 0.01], color: [PAL.spark, PAL.flash2], grav: 9, drag: 1 });
       return;
@@ -573,9 +578,9 @@ export class Effects {
       const a = Math.random() * Math.PI * 2, dd = Math.random() * r * 0.9;
       this.norm.emit({ pos: new THREE.Vector3(pos.x + Math.cos(a) * dd, gy + 0.3, pos.z + Math.sin(a) * dd), vel: new THREE.Vector3(Math.cos(a) * 1.6 * k, 0.5 + Math.random() * 0.5, Math.sin(a) * 1.6 * k), life: 5 + Math.random() * 2.5, size: [1.1 * k, 4.4 * k], color: [PAL.dust1, PAL.dust], alpha: [0.26, 0], drag: 1.1, grav: -0.05, floor: false });
     }
-    if (pos.y < gy + 1.2) stamp(this.scorch, new THREE.Vector3(pos.x, Math.max(gy, pos.y - 0.4), pos.z), normalAt(pos.x, pos.z), r * (1.1 + Math.random() * 0.3));
+    if (pos.y < gy + 1.2) this.scorch.addOn(new THREE.Vector3(pos.x, gy, pos.z), UP_, r * (1.1 + Math.random() * 0.3));
     if (r >= 1.6 && pos.y < gy + 1.2) {
-      stamp(this.craters, new THREE.Vector3(pos.x, Math.max(gy, pos.y - 0.4), pos.z), normalAt(pos.x, pos.z), r * 2.3);
+      this.craters.addOn(new THREE.Vector3(pos.x, gy, pos.z), UP_, r * 2.3);
       const sh = this.shrap, n = Math.min(10, Math.round(r * 3));
       for (let i = 0; i < n; i++) {
         const a = Math.random() * Math.PI * 2, d = r * (0.6 + Math.random() * 1.6);
@@ -595,9 +600,9 @@ export class Effects {
   }
 
   // what a round does to each material: splinters from wood, sand spilling, stone chips and dust, sparks on steel
-  impactMat(pos, normal, kind, color, k = 1) {
+  impactMat(pos, normal, kind, color, k = 1, prop = null) {
     const base = normal || Y;
-    if (kind === 'metal') { this.impact(pos, normal, k < 1 ? 'metal' : 'metalhole'); return; }
+    if (kind === 'metal') { this.impact(pos, normal, k < 1 ? 'metal' : 'metalhole', prop); return; }
     if (kind === 'dust') { this.impact(pos, normal, 'dust'); return; }
     const c = col(color || (kind === 'sand' ? '#a89a72' : kind === 'wood' ? '#7a5a38' : '#8d877a'));
     if (kind === 'wood') {
@@ -608,7 +613,7 @@ export class Effects {
       for (let i = 0; i < Math.ceil(7 * k); i++) this.norm.emit({ pos, vel: base.clone().multiplyScalar(1.6).add(this.dir(1.8)), life: 0.6 + Math.random() * 0.4, size: [0.05, 0.22], color: [c, c], alpha: [0.8, 0], grav: 4, drag: 2 });
       this.norm.emit({ pos, vel: base.clone().multiplyScalar(0.8), life: 0.9, size: [0.1, 0.5], color: [c, PAL.dust1], alpha: [0.4, 0], drag: 2.5 });
     } else {
-      if (k >= 1) this.mark(pos, normal, 0.2);
+      if (k >= 1) this.mark(pos, normal, 0.2, prop);
       for (let i = 0; i < Math.ceil(5 * k); i++) this.norm.emit({ pos, vel: base.clone().multiplyScalar(3).add(this.dir(3)), life: 0.55, size: [0.04, 0.03], color: [c, c], alpha: [1, 0.8], grav: 11, drag: 0.5 });
       for (let i = 0; i < 3; i++) this.norm.emit({ pos, vel: base.clone().multiplyScalar(1.5).add(this.dir(0.8)), life: 0.7, size: [0.06, 0.4], color: [PAL.dust, PAL.dust1], alpha: [0.55, 0], drag: 2.5 });
       for (let i = 0; i < 2; i++) this.add.emit({ pos, vel: base.clone().multiplyScalar(2).add(this.dir(3)), life: 0.16, size: [0.03, 0.01], color: [PAL.spark, PAL.flash2], grav: 8 });
@@ -632,7 +637,7 @@ export class Effects {
   // a pool of burning fuel: flames, then black smoke
   fuelFire(pos) {
     const gy = height(pos.x, pos.z), at = new THREE.Vector3(pos.x, gy, pos.z);
-    stamp(this.scorch, at, normalAt(pos.x, pos.z), 3.4);
+    this.scorch.addOn(at, UP_, 3.4);
     this.emitters.push({ t: 0, life: 7, rate: 22, acc: 0, fn: (e, fx) => {
       const p = at.clone().add(new THREE.Vector3(fx.rnd(1.1), 0.1, fx.rnd(1.1)));
       fx.add.emit({ pos: p, vel: new THREE.Vector3(fx.rnd(0.2), 1.3 + Math.random() * 0.8, fx.rnd(0.2)), life: 0.5, size: [0.45, 0.1], color: [PAL.fire0, PAL.fire1], alpha: [0.9, 0], floor: false });
