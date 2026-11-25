@@ -1,7 +1,8 @@
 import * as THREE from 'three';
 import { U, pose, makePose, HOLD } from './rig.js';
 import { Sway } from './secondary.js';
-import { strideLength } from './gait.js';
+import { Planter } from './planter.js';
+import { strideLength, dirScale } from './clips.js';
 import { WEAPONS, makeWeapon } from './weapons.js';
 import { wrap } from './physics.js';
 import { Ragdoll } from './ragdoll.js';
@@ -17,6 +18,8 @@ const JUMP_V = 4.8;
 // of truth; weapon, stance and suppression modifiers only ever slow a soldier from here.
 export const MAX_SPEED = WALK * SPRINT * 1.75; // fastest class (assault) mid-dash
 
+// getting down and up passes through one knee: the legs fold and the hips drop before the chest goes forward
+const kneelBump = (p) => THREE.MathUtils.smoothstep(p, 0.02, 0.22) * (1 - THREE.MathUtils.smoothstep(p, 0.3, 0.6));
 let nextId = 1;
 const WALL_O = new THREE.Vector3(), WALL_D = new THREE.Vector3();
 
@@ -86,6 +89,11 @@ export class Unit {
     this.ads = 0;
     this.ctrl = { wx: 0, wz: 0, jump: false, fire: false, aimAt: null, kneel: false, speed: 1, sprint: false, turnRate: Infinity };
     this.poseOut = makePose();
+    this.planter = new Planter();
+    this.tendK = 0; this.dragK = 0; this.drgK = 0; this.tendT = 0; this.dragT = 0; this.draggedT = 0; this.tendTarget = null; // tending a casualty, hauling one, being hauled
+    this.hs = { x: 0, z: 0, vx: 0, vz: 0 }; // how the torso is rocked by hits (rad, rad/s): pitch and roll
+    this.gl = [0, 0, 0, 0]; this.glv = [0, 0, 0, 0]; this.lastAim = 0; this.lastAimP = 0; // the gun's lag behind a turning body: yaw, pitch, x, y
+    this.animLod = 0; // 0 near the camera .. 2 far: how much of the animation is worth computing
     this.poseState = {};
     this.world = new THREE.Matrix4();
     this.box = { x: 0, z: 0, yaw: 0, hx: U.W / 2, hz: U.D / 2, h: U.TOP, y0: 0 };
@@ -164,6 +172,7 @@ export class Unit {
     this.hp -= dealt;
     this.lastHurt = this.t;
     this.flinch = Math.min(1, this.flinch + dmg / 40);
+    this.hitKick(dmg, zone, kind);
     if (zone === 'torso' && kind !== 'fire' && dmg > 20) this.clutch = 1; // a hand goes to the wound
     // Rounds taken in a burst add up: nobody stays on his feet after a handful in a few seconds.
     if (kind !== 'fire') { this.trauma += dealt; this.hitN++; this.traumaT = 3; }
@@ -194,6 +203,18 @@ export class Unit {
     }
     if (this.onHurt) this.onHurt(dmg, from, kind);
     if (this.hp <= 0) this.die(from, world);
+  }
+
+  // a round shoves the torso the way it was travelling (body frame): back when hit from the front, over to the side when hit from one
+  hitKick(dmg, zone, kind) {
+    const h = this.lastHit, m = THREE.MathUtils.clamp(dmg / 45, 0.25, 1.2) * (zone === 'head' ? 1.2 : zone === 'leg' ? 0.6 : 1);
+    let lx = 0, lz = 0;
+    if (h?.dir && h.t === this.t) {
+      const c = Math.cos(this.facing), sn = Math.sin(this.facing);
+      lx = h.dir.x * c - h.dir.z * sn; lz = h.dir.x * sn + h.dir.z * c;
+      const l = Math.hypot(lx, lz) || 1; lx /= l; lz /= l;
+    } else { const a = Math.random() * 6.283; lx = Math.sin(a); lz = Math.cos(a); }
+    this.hs.vx += lz * 6 * m; this.hs.vz -= lx * 6 * m;
   }
 
   survivable(dealt, zone, kind) {
@@ -286,6 +307,7 @@ export class Unit {
   // ---- per-frame ----
   update(dt, world) {
     this.t += dt;
+    this.wref = world;
     if (!this.alive) return this.updateDead(dt, world);
     this.rag = null;
     const c = this.ctrl;
@@ -368,6 +390,8 @@ export class Unit {
 
     // aim: AI turns at a human pace, the player snaps to the crosshair
     const aiming = !!c.aimAt;
+    this.tendT -= dt; this.dragT -= dt; this.draggedT -= dt;
+    if (!this.isPlayer && c.faceYaw !== undefined && this.dragT <= 0 && this.draggedT <= 0) c.faceYaw = undefined;
     if (aiming) {
       const sx = this.pos.x, sz = this.pos.z, sy = this.eye().y - 0.1;
       const yaw = Math.atan2(c.aimAt.x - sx, c.aimAt.z - sz);
@@ -403,7 +427,7 @@ export class Unit {
     this.proneK = (this.proneK || 0) + (prone - (this.proneK || 0)) * (1 - Math.exp(-5 * dt));
     const lean = !sprint && this.proneK < 0.3 ? THREE.MathUtils.clamp(c.lean || 0, -1, 1) : 0;
     this.leanK = (this.leanK || 0) + (lean - (this.leanK || 0)) * (1 - Math.exp(-10 * dt));
-    const kneel = (c.kneel || rising || this.dying) && !sprint && !prone ? 1 : 0;
+    const kneel = (c.kneel || rising || this.dying || this.bandageT > 0 || this.tendT > 0) && !sprint && !prone ? 1 : 0;
     this.kneelK += (kneel - this.kneelK) * (1 - Math.exp(-9 * dt));
     const speed = WALK * this.speedK * this.mod.speed * (c.speed ?? 1) * (def.move || 1) * (sprint ? SPRINT : 1) * (1 - 0.6 * this.kneelK) * (1 - 0.72 * this.proneK) * (1 - 0.5 * Math.abs(this.leanK)) * (1 - 0.25 * this.suppression) * (1 - 0.28 * this.ads) * (this.reloadT > 0 ? 0.82 : 1) * (1 - 0.12 * this.recoilBuild) * (1 - 0.55 * this.leg) * (this.down ? 0.28 : 1) * (this.stagger > 0 ? 0.45 : 1) * (this.dying ? 0.55 : 1) * (this.shock > 0 && !this.isPlayer ? 0.2 : 1) * (this.bandageT > 0 ? 0.2 : 1);
     this.sprinting = sprint;
@@ -571,23 +595,64 @@ export class Unit {
     this.animate(dt);
   }
 
+  // ground height and slope under each boot (from where the last pose put it), for the feet to rest on
+  groundFeet(s) {
+    const wr = this.wref, fx = this.poseOut.fx;
+    if (!wr || this.animLod > 0 || !this.grounded || !this.alive) { s.gnd = null; s.slope = null; return; }
+    const g = this.gndBuf || (this.gndBuf = [0, 0]), sl = this.slopeBuf || (this.slopeBuf = [[0, 0], [0, 0]]);
+    const c = Math.cos(this.facing), sn = Math.sin(this.facing);
+    for (let i = 0; i < 2; i++) {
+      const x = fx[i * 3], z = fx[i * 3 + 1], y = fx[i * 3 + 2];
+      const wx = this.pos.x + x * c + z * sn, wz = this.pos.z - x * sn + z * c;
+      const yaw = this.facing + y, fxn = Math.sin(yaw) * 0.12, fzn = Math.cos(yaw) * 0.12;
+      const h = wr.groundAt(wx, wz, this.pos.y + 0.2), hf = wr.groundAt(wx + fxn, wz + fzn, this.pos.y + 0.2), hb = wr.groundAt(wx - fxn, wz - fzn, this.pos.y + 0.2);
+      g[i] = THREE.MathUtils.clamp(h - this.pos.y, -0.3, 0.3);
+      sl[i][0] = THREE.MathUtils.clamp(Math.atan2(hb - hf, 0.24), -0.6, 0.6); sl[i][1] = 0;
+    }
+    s.gnd = g; s.slope = sl;
+  }
+
+  // spring-damped follow: hit rocking and the gun's lag are both second-order, so they overshoot and settle
+  springs(dt) {
+    const h = this.hs, n = Math.min(dt, 0.05);
+    h.vx += (-150 * h.x - 15 * h.vx) * n; h.vz += (-150 * h.z - 15 * h.vz) * n;
+    h.x = THREE.MathUtils.clamp(h.x + h.vx * n, -0.5, 0.5); h.z = THREE.MathUtils.clamp(h.z + h.vz * n, -0.5, 0.5);
+    const turn = THREE.MathUtils.clamp(wrap(this.aimYaw - this.lastAim) / Math.max(dt, 1e-3), -8, 8);
+    const pr = THREE.MathUtils.clamp((this.aimPitch - this.lastAimP) / Math.max(dt, 1e-3), -6, 6);
+    this.lastAim = this.aimYaw; this.lastAimP = this.aimPitch;
+    const tgt = [-turn * 0.022, -pr * 0.03, -turn * 0.004, -Math.abs(turn) * 0.0015 - this.landK * (this.landT < 0.25 ? 0.015 : 0)];
+    for (let i = 0; i < 4; i++) {
+      this.glv[i] += (-120 * (this.gl[i] - tgt[i]) - 13 * this.glv[i]) * n;
+      this.gl[i] += this.glv[i] * n;
+    }
+  }
+
   animate(dt) {
+    this.springs(dt);
     const speed = Math.hypot(this.vel.x, this.vel.z);
     // gait speed: the ground speed, eased so the stride doesn't jitter with every velocity wobble
     this.gspeed = (this.gspeed ?? speed) + (speed - (this.gspeed ?? speed)) * (1 - Math.exp(-14 * dt));
     const gs = this.gspeed;
     this.walk += ((this.grounded && this.alive ? THREE.MathUtils.smoothstep(gs, 0.08, 0.5) : 0) - this.walk) * (1 - Math.exp(-10 * dt));
     if (speed > 0.05) {
-      // move direction in the body's frame, for feet and lean
+      // move direction in the body's frame, for feet and lean: an angle, so a change of direction swings round
+      // (a straight blend of two directions would shrink to nothing halfway) and a start from rest takes the new one at once
       const c = Math.cos(this.facing), s = Math.sin(this.facing);
-      const lx = (this.vel.x * c - this.vel.z * s) / speed, lz = (this.vel.x * s + this.vel.z * c) / speed;
-      this.mx += (lx - this.mx) * (1 - Math.exp(-12 * dt));
-      this.mz += (lz - this.mz) * (1 - Math.exp(-12 * dt));
-    }
+      const ang = Math.atan2(this.vel.x * c - this.vel.z * s, this.vel.x * s + this.vel.z * c);
+      if (this.mAng === undefined || (this.mStill || 0) > 0.12) this.mAng = ang;
+      else this.mAng += wrap(ang - this.mAng) * (1 - Math.exp(-12 * dt));
+      this.mStill = 0;
+      this.mx = Math.sin(this.mAng); this.mz = Math.cos(this.mAng);
+    } else this.mStill = (this.mStill || 0) + dt;
+    // the first step from a standstill leads with one foot: start the cycle where that foot is mid-stance (planted
+    // at home) and the other is about to swing, alternating the lead foot, so the feet don't skate into the stride
+    if (gs < 0.05) this.started = false;
+    else if (this.wasStanding && !this.started && gs > 0.12 && this.grounded) { this.cycle = this.leadLeft ? 0.16 + 0.5 : 0.16; this.leadLeft = !this.leadLeft; this.started = true; }
     if (this.grounded) {
       // the stride advances by distance covered, so a planted foot moves back exactly as fast as the soldier moves on
-      this.cycle = (this.cycle + speed * dt / strideLength(gs)) % 1;
-      this.stride = strideLength(gs);
+      const L = strideLength(gs) * dirScale(this.mx, this.mz);
+      this.cycle = (this.cycle + speed * dt / L) % 1;
+      this.stride = L;
     }
     this.freeK = (this.freeK || 0) + ((this.sprinting ? 1 : 0) - (this.freeK || 0)) * (1 - Math.exp(-9 * dt));
     this.air += ((this.grounded ? 0 : 1) - this.air) * (1 - Math.exp(-(this.grounded ? 22 : 14) * dt));
@@ -597,7 +662,7 @@ export class Unit {
     const s = this.poseState;
     s.t = this.t; s.walk = this.walk; s.cycle = this.cycle; s.stride = this.stride ?? 0.3; s.speed = this.gspeed || 0; s.free = this.freeK; s.down = this.down;
     s.mx = this.mx; s.mz = this.mz; s.air = this.air; s.rise = THREE.MathUtils.clamp(this.vel.y / JUMP_V, -1, 1);
-    s.land = land; s.kneel = this.kneelK; s.aimPitch = THREE.MathUtils.clamp(this.aimPitch, -0.9, 0.9);
+    s.land = land; s.kneel = Math.max(this.kneelK, this.alive ? kneelBump(this.proneK || 0) : 0); s.aimPitch = THREE.MathUtils.clamp(this.aimPitch, -0.9, 0.9);
     s.twist = this.twist; s.ready = Math.min(this.ready, 1 - this.wallK * 0.85); s.recoil = this.recoil;
     s.reload = this.reloadT > 0 ? 1 - this.reloadT / this.reloadDur : -1;
     s.rack = s.reload > 0.72 && this.reloadEmpty && this.weapon.def.rack ? Math.sin(((s.reload - 0.72) / 0.28) * Math.PI) : 0;
@@ -606,10 +671,38 @@ export class Unit {
     s.lean = this.alive ? this.leanK || 0 : 0; s.prone = this.alive ? this.proneK || 0 : 0;
     s.dead = this.alive ? -1 : Math.min(1, this.deadT / 0.7);
     s.weapon = this.weapon.id;
+    const a = 1 - Math.exp(-8 * dt), al = this.alive;
+    this.tendK += (((al && (this.tendT > 0 || this.bandageT > 0) && this.dragT <= 0) ? 1 : 0) - this.tendK) * a;
+    this.dragK += (((al && this.dragT > 0) ? 1 : 0) - this.dragK) * a;
+    this.drgK += (((al && this.draggedT > 0) ? 1 : 0) - this.drgK) * a;
+    s.tend = this.tendK; s.drag = this.dragK; s.drg = this.drgK;
+    if (this.tendK > 0.01) {
+      const tt = this.tendT > 0 ? this.tendTarget : null, ca = Math.cos(this.facing), sa = Math.sin(this.facing);
+      let lx = -this.limpSide * 0.12, ly = 0.3, lz = 0.16;
+      if (tt) {
+        const dx = tt.pos.x - this.pos.x, dz = tt.pos.z - this.pos.z;
+        lx = dx * ca - dz * sa; lz = dx * sa + dz * ca; ly = 0.12;
+        const l = Math.hypot(lx, lz), mx = 0.7; if (l > mx) { lx *= mx / l; lz *= mx / l; }
+      }
+      (s.tendAt || (s.tendAt = [0, 0, 0]))[0] = lx; s.tendAt[1] = ly; s.tendAt[2] = lz;
+    }
+    s.wx = this.pos.x; s.wz = this.pos.z; s.wf = this.facing; s.dt = dt;
+    s.hx = this.hs.x; s.hz = this.hs.z; s.gl = this.gl; s.stag = this.alive ? this.stagger : 0;
+    if (s.stag > 0) s.ready = Math.min(s.ready, 1 - 0.45 * Math.min(1, s.stag));
     if (this.rag && !this.alive) {
       // the ragdoll writes world-space parts; sink into the ground before removal
       this.world.identity();
       this.rag.write(this.poseOut, this.deadT > 10 ? (this.deadT - 10) * 0.2 : 0);
+      return;
+    }
+    // feet: planted while standing (turning on the spot takes steps), on the terrain they stand on
+    const standing = this.grounded && this.alive && this.walk < 0.35 && gs < 0.3 && this.kneelK < 0.3 && (this.proneK || 0) < 0.3 && this.air < 0.15;
+    s.pf = this.planter.update(dt, this.pos, this.facing, standing, this.poseOut.fx); this.wasStanding = standing; this.poseOut.pfk = s.pf.k.toFixed(2);
+    this.groundFeet(s);
+    s.lod = this.animLod;
+    // far soldiers pose every other frame (the world matrix below still moves them every frame)
+    if (this.animLod >= 2 && this.alive && ((this.animTick = (this.animTick || 0) + 1) & 1)) {
+      this.world.makeRotationY(this.facing).setPosition(this.pos.x, this.pos.y, this.pos.z);
       return;
     }
     pose(s, this.poseOut);

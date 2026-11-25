@@ -900,6 +900,7 @@ function drawUnits() {
         continue;
       }
       const dd = u.pos.distanceToSquared(cp);
+      u.animLod = dd > LOD_FAR * LOD_FAR ? 2 : dd > LOD_MID * LOD_MID ? 1 : 0;
       crowd.add(u.world, u.poseOut, u.team, { weapon: u.weapon.id, seed: u.id, wound: u.wound, lost: u.lost, wounds: u.wounds, marks: u.marks, kind: u.kind, far: dd > LOD_FAR * LOD_FAR, lite: dd > LOD_MID * LOD_MID, far2: dd > LOD_FAR2 * LOD_FAR2 });
     }
     if (pass === 2) crowd.snap();

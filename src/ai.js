@@ -1001,14 +1001,18 @@ export class Brain {
       else {
         const dx = dg.to.x - u.pos.x, dz = dg.to.z - u.pos.z;
         c.wx = dx / dd; c.wz = dz / dd; c.speed = 0.5; c.sprint = false; c.aimAt = null; c.fire = false; c.kneel = false;
-        t.pos.x = u.pos.x - (dx / dd) * 1.1; t.pos.z = u.pos.z - (dz / dd) * 1.1; t.pos.y = Math.max(t.pos.y, height(t.pos.x, t.pos.z));
+        t.pos.x = u.pos.x - (dx / dd) * 0.85; t.pos.z = u.pos.z - (dz / dd) * 0.85; t.pos.y = Math.max(t.pos.y, height(t.pos.x, t.pos.z));
         t.vel.set(0, 0, 0);
+        // the medic backs away facing the casualty, hands on the harness; the casualty lies on the back, head toward the medic
+        c.faceYaw = Math.atan2(-dx / dd, -dz / dd); t.ctrl.faceYaw = c.faceYaw;
+        u.dragT = 0.3; t.draggedT = 0.3;
         this.dragging = true;
         return true;
       }
     }
     if (d > 2.4) { this.reviveT = 0; return false; }
     c.aimAt = null; c.fire = false; c.kneel = true;
+    u.tendTarget = t; u.tendT = 0.3;
     if (m.kind === 'heal' && t.down && this.dragged !== t && this.exposed(t)) { this.startDrag(t); return true; }
     if (m.kind === 'heal') {
       // bandage: kneel beside them and wrap the wound, which stops the bleeding
