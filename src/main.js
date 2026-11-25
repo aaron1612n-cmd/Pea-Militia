@@ -300,6 +300,7 @@ function startBattle(s) {
     const d = pos.distanceTo(player.pos);
     audio.blast(d, r);
     sup = Math.min(1, sup + Math.max(0, 1 - d / (r * 6)) * 0.9);
+    if (!reduced) cam.shake = Math.max(cam.shake, Math.min(1, Math.max(0, 1 - d / (r * 7)) * 1.3));
   };
   battle.onHitMarker = (kill) => { hud.hit(kill); if (kill) audio.play('ping', null, 0.4); };
   battle.onPlayerHurt = (dmg) => { hud.hurt(dmg); bloodScreen(Math.ceil(dmg / 15), 0.5); cam.shake = Math.min(1, cam.shake + dmg / 60); };

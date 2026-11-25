@@ -95,6 +95,10 @@ const PAL = {
   metal: C('#c9c3b5'),
   dust1: C('#a7a194'), chip: C('#5d5a53'), mote: C('#d9d2c2'),
 };
+const _zero = new THREE.Matrix4().makeScale(0, 0, 0);
+const _cm = new THREE.Matrix4(), _cs = new THREE.Vector3(), _cq = new THREE.Quaternion();
+const _ccache = new Map();
+const col = (h) => { let c = _ccache.get(h); if (!c) _ccache.set(h, c = new THREE.Color(h)); return c; };
 const Y = new THREE.Vector3(0, 1, 0);
 const Z = new THREE.Vector3(0, 0, 1);
 const TRACER_SPEED = 240; // m/s, slowed down so the eye can follow it
@@ -226,6 +230,25 @@ export class Effects {
     }
     this.ti = 0;
     this.v = new THREE.Vector3();
+    this.t1 = new THREE.Vector3(); this.t2 = new THREE.Vector3();
+    // streaks that ride along with live bullets (only the glowing rounds take one)
+    this.bt = []; this.btFree = [];
+    for (let i = 0; i < 80; i++) {
+      const m = new THREE.Mesh(tg, this.tracerMat);
+      m.visible = false; m.frustumCulled = false; m.renderOrder = 4; m.userData.w = 0.02;
+      scene.add(m);
+      this.bt.push(m); this.btFree.push(m);
+    }
+    // spent brass: one instanced mesh, simple bounce physics, fades out after a few seconds
+    this.casMax = 140;
+    const cg = new THREE.CylinderGeometry(1, 0.82, 1, 6);
+    this.cas = new THREE.InstancedMesh(cg, new THREE.MeshStandardMaterial({ color: '#c9a24a', metalness: 0.85, roughness: 0.32 }), this.casMax);
+    this.cas.frustumCulled = false; this.cas.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    scene.add(this.cas);
+    this.casL = [];
+    for (let i = 0; i < this.casMax; i++) { this.casL.push({ on: false, p: new THREE.Vector3(), v: new THREE.Vector3(), w: new THREE.Vector3(), q: new THREE.Quaternion(), len: 0.07, r: 0.008, wait: 0, age: 0, rest: false, n: 0 }); this.cas.setMatrixAt(i, _zero); }
+    this.casI = 0; this.casLive = 0;
+    this.onTink = null;
     // muzzle flash cards: two crossed star-shaped quads along the barrel
     this.flashTex = flashTexture();
     const fg = new THREE.PlaneGeometry(1, 1);
@@ -290,6 +313,7 @@ export class Effects {
     this.norm.update(dt);
     this.gore.update(dt);
     this.updateMotes(dt);
+    this.updateCasings(dt);
     for (const t of this.tracers) {
       if (!t.m.visible) continue;
       t.t += dt;
@@ -386,18 +410,118 @@ export class Effects {
   rnd(s = 1) { return (Math.random() * 2 - 1) * s; }
   dir(s = 1) { return new THREE.Vector3(this.rnd(), this.rnd(), this.rnd()).normalize().multiplyScalar(s * Math.random()); }
 
-  muzzle(pos, dir, big = 1) {
+  // Muzzle flash: a star-shaped fireball sized by weapon, a ring of gas puffing out sideways,
+  // a forward jet of powder smoke, unburnt sparks, and dust kicked up when the gun is near the ground.
+  // A hot barrel smokes more and wisps dark.
+  muzzle(pos, dir, big = 1, id = '', heat = 0) {
     const f = this.flashes[this.fi++ % this.flashes.length];
+    const d = this.t1.copy(dir).normalize();
     f.m.position.copy(pos);
-    f.m.quaternion.setFromUnitVectors(Z, this.v.copy(dir).normalize());
+    f.m.quaternion.setFromUnitVectors(Z, d);
     f.m.rotateZ(Math.random() * Math.PI);
-    const s = (0.22 + Math.random() * 0.12) * big;
-    f.m.scale.set(s, s, s * 1.8);
-    f.t = 0; f.life = 0.045; f.m.visible = true;
+    const s = (0.2 + Math.random() * 0.12) * big, long = id === 'mg' ? 2.4 : id === 'smg' ? 1.5 : 2;
+    f.m.scale.set(s, s, s * long);
+    f.t = 0; f.life = id === 'smg' ? 0.035 : 0.05; f.m.visible = true;
     this.pulse(pos, 2.2 * big, 0.06, 7);
-    for (let i = 0; i < 3; i++) this.add.emit({ pos, vel: dir.clone().multiplyScalar(2 + i * 2).add(this.dir(0.6)), life: 0.05 + 0.02 * i, size: [0.14 * big, 0.04], color: [PAL.flash, PAL.flash2], alpha: [1, 0.2], floor: false });
-    for (let i = 0; i < 2; i++) this.add.emit({ pos, vel: dir.clone().multiplyScalar(6).add(this.dir(3)), life: 0.12, size: [0.025, 0.01], color: [PAL.spark, PAL.flash2], grav: 4, floor: false });
-    this.norm.emit({ pos, vel: dir.clone().multiplyScalar(0.9).add(new THREE.Vector3(0, 0.35, 0)), life: 0.9, size: [0.06 * big, 0.45 * big], color: [PAL.smoke1, PAL.smoke1], alpha: [0.3, 0], drag: 2, grav: -0.3 });
+    for (let i = 0; i < 3; i++) this.add.emit({ pos, vel: d.clone().multiplyScalar(2 + i * 2).add(this.dir(0.6)), life: 0.05 + 0.02 * i, size: [0.14 * big, 0.04], color: [PAL.flash, PAL.flash2], alpha: [1, 0.2], floor: false });
+    for (let i = 0; i < 3; i++) this.add.emit({ pos, vel: d.clone().multiplyScalar(7).add(this.dir(3.5)), life: 0.12, size: [0.025, 0.01], color: [PAL.spark, PAL.flash2], grav: 4, floor: false });
+    // gas ring: a puff of smoke thrown out sideways
+    const a = this.t2.crossVectors(d, Y);
+    if (a.lengthSq() < 0.01) a.set(1, 0, 0);
+    a.normalize();
+    const b = new THREE.Vector3().crossVectors(d, a);
+    for (let i = 0; i < 5; i++) {
+      const th = (i / 5) * Math.PI * 2 + Math.random() * 0.5;
+      this.norm.emit({ pos, vel: a.clone().multiplyScalar(Math.cos(th) * 1.5).addScaledVector(b, Math.sin(th) * 1.5).addScaledVector(d, 0.6), life: 0.45 + Math.random() * 0.3, size: [0.04 * big, 0.26 * big], color: [PAL.smoke1, PAL.smoke1], alpha: [0.26, 0], drag: 3.2, grav: -0.2, floor: false });
+    }
+    // forward powder smoke that hangs a moment
+    this.norm.emit({ pos, vel: d.clone().multiplyScalar(1.1).add(new THREE.Vector3(0, 0.4, 0)), life: 1.0, size: [0.06 * big, 0.5 * big], color: [PAL.smoke1, PAL.smoke1], alpha: [0.3, 0], drag: 2, grav: -0.3, floor: false });
+    if (heat > 0.4) {
+      const n = Math.ceil(heat * 3);
+      for (let i = 0; i < n; i++) this.norm.emit({ pos: pos.clone().addScaledVector(d, -0.1), vel: new THREE.Vector3(this.rnd(0.15), 0.7 + Math.random() * 0.5, this.rnd(0.15)), life: 1.4 + heat, size: [0.05, 0.3 + heat * 0.25], color: [PAL.smoke0, PAL.smoke1], alpha: [0.22 + heat * 0.15, 0], drag: 1.1, grav: -0.35, floor: false });
+    }
+    const gy = height(pos.x, pos.z);
+    if (pos.y - gy < 0.9) {
+      const at = new THREE.Vector3(pos.x + d.x * 1.3, gy + 0.05, pos.z + d.z * 1.3);
+      for (let i = 0; i < 3; i++) this.norm.emit({ pos: at, vel: new THREE.Vector3(d.x * 2 + this.rnd(1.2), 0.5, d.z * 2 + this.rnd(1.2)), life: 0.7, size: [0.08, 0.4], color: [PAL.dust, PAL.dust1], alpha: [0.4, 0], drag: 2.4 });
+    }
+  }
+
+  // --- tracers that follow a live bullet ---
+  takeTracer(w = 0.014) { const m = this.btFree.pop(); if (m) m.userData.w = w * 1.4; return m || null; }
+  freeTracer(m) { if (!m) return; m.visible = false; this.btFree.push(m); }
+  placeTracer(m, pos, vel) {
+    const sp = vel.length();
+    if (sp < 1) return;
+    const len = Math.min(2.4, Math.max(0.8, sp * 0.009)), w = m.userData.w;
+    m.position.copy(pos);
+    m.quaternion.setFromUnitVectors(Y, this.v.copy(vel).divideScalar(sp));
+    m.scale.set(w, len, w);
+    m.visible = true;
+  }
+
+  // --- spent brass ---
+  casing(pos, dir, kind = 'rifle', back = 0.3, delay = 0) {
+    const c = this.casL[this.casI++ % this.casMax];
+    if (!c.on) this.casLive++;
+    const d = this.t1.copy(dir).normalize();
+    const r = this.t2.crossVectors(d, Y);
+    if (r.lengthSq() < 0.01) r.set(1, 0, 0);
+    r.normalize();
+    c.p.copy(pos).addScaledVector(d, -back).addScaledVector(r, 0.07); c.p.y += 0.05;
+    c.v.copy(r).multiplyScalar(1.8 + Math.random() * 1.6).addScaledVector(Y, 1.5 + Math.random() * 1.3).addScaledVector(d, -0.5 + Math.random() * 0.7);
+    c.w.set(this.rnd(22), this.rnd(22), this.rnd(22));
+    c.q.setFromEuler(new THREE.Euler(Math.random() * 6.3, Math.random() * 6.3, Math.random() * 6.3));
+    c.len = kind === 'pistol' ? 0.05 : 0.082; c.r = kind === 'pistol' ? 0.0075 : 0.0095;
+    c.wait = delay; c.age = 0; c.rest = false; c.n = 0; c.on = true;
+  }
+
+  updateCasings(dt) {
+    if (!this.casLive) return;
+    let live = 0;
+    for (let i = 0; i < this.casMax; i++) {
+      const c = this.casL[i];
+      if (!c.on) continue;
+      if (c.wait > 0) { c.wait -= dt; live++; this.cas.setMatrixAt(i, _zero); continue; }
+      c.age += dt;
+      if (c.age > 10) { c.on = false; this.cas.setMatrixAt(i, _zero); continue; }
+      live++;
+      if (!c.rest) {
+        c.v.y -= 9.8 * dt;
+        c.p.addScaledVector(c.v, dt);
+        const sp = c.w.length();
+        if (sp > 1e-3) { _cq.setFromAxisAngle(this.t1.copy(c.w).divideScalar(sp), sp * dt); c.q.premultiply(_cq); }
+        const gy = height(c.p.x, c.p.z) + 0.01;
+        if (c.p.y < gy && c.v.y < 0) {
+          c.p.y = gy;
+          if (c.n++ < 2 && Math.abs(c.v.y) > 0.5 && this.cam && this.cam.position.distanceToSquared(c.p) < 14 * 14) this.onTink?.(c.p);
+          c.v.y *= -0.38; c.v.x *= 0.62; c.v.z *= 0.62; c.w.multiplyScalar(0.55);
+          if (c.v.lengthSq() < 0.12) { c.rest = true; c.q.setFromEuler(new THREE.Euler(Math.PI / 2, Math.random() * 6.3, 0, 'YXZ')); c.p.y = gy + c.r; }
+        }
+      }
+      const k = c.age > 9 ? 10 - c.age : 1;
+      this.cas.setMatrixAt(i, _cm.compose(c.p, c.q, _cs.set(c.r * k, c.len * k, c.r * k)));
+    }
+    this.casLive = live;
+    this.cas.instanceMatrix.needsUpdate = true;
+  }
+
+  // a shockwave shoves smoke, dust and loose brass outward
+  blastWave(pos, r) {
+    const R = r * 3.6, R2 = R * R, power = 12 * Math.sqrt(r / 3);
+    for (const sys of [this.norm, this.add]) for (const q of sys.p) {
+      const dx = q.x - pos.x, dy = q.y - pos.y, dz = q.z - pos.z, d2 = dx * dx + dy * dy + dz * dz;
+      if (d2 > R2 || d2 < 0.01) continue;
+      const d = Math.sqrt(d2), k = Math.pow(1 - d / R, 2) * power / d;
+      q.vx += dx * k; q.vy += dy * k * 0.6; q.vz += dz * k;
+    }
+    for (const c of this.casL) {
+      if (!c.on) continue;
+      const dx = c.p.x - pos.x, dz = c.p.z - pos.z, d = Math.hypot(dx, dz);
+      if (d > R || d < 0.05) continue;
+      const k = Math.pow(1 - d / R, 2) * power * 0.5 / d;
+      c.v.set(c.v.x + dx * k, 2 + k * 2, c.v.z + dz * k); c.rest = false; c.n = 0; c.w.set(this.rnd(25), this.rnd(25), this.rnd(25));
+    }
   }
 
   impact(pos, normal, kind = 'dust') {
@@ -424,6 +548,7 @@ export class Effects {
   explosion(pos, r = 3) {
     const k = r / 3;
     const gy = height(pos.x, pos.z);
+    this.blastWave(pos, r);
     this.pulse(pos.clone().setY(pos.y + 0.6), 40 * k, 0.35, 18 * k, '#ff9a48');
     // blinding core, then a rolling fireball
     for (let i = 0; i < 6; i++) this.add.emit({ pos: pos.clone().add(this.dir(0.3 * k)), vel: this.dir(1.5 * k), life: 0.12, size: [1.8 * k, 2.6 * k], color: [PAL.flash, PAL.fire0], alpha: [1, 0], drag: 6, floor: false });
@@ -439,7 +564,15 @@ export class Effects {
     for (let i = 0; i < 14; i++) this.norm.emit({ pos, vel: this.dir(7 * k).add(new THREE.Vector3(0, 4, 0)), life: 1.3, size: [0.07, 0.06], color: [PAL.chip, PAL.chip], alpha: [1, 0.7], grav: 12, drag: 0.4 });
     const ring = this.rings[this.ri++ % this.rings.length];
     ring.m.position.set(pos.x, Math.max(gy, pos.y - 0.4) + 0.05, pos.z);
-    ring.t = 0; ring.r = r; ring.m.visible = true;
+    ring.t = 0; ring.r = r; ring.life = 0.45; ring.m.visible = true;
+    // a slower, wider pressure front behind the first, and a long-hanging dust haze
+    const ring2 = this.rings[this.ri++ % this.rings.length];
+    ring2.m.position.copy(ring.m.position);
+    ring2.t = 0; ring2.r = r * 1.6; ring2.life = 0.8; ring2.m.visible = true;
+    for (let i = 0; i < 12; i++) {
+      const a = Math.random() * Math.PI * 2, dd = Math.random() * r * 0.9;
+      this.norm.emit({ pos: new THREE.Vector3(pos.x + Math.cos(a) * dd, gy + 0.3, pos.z + Math.sin(a) * dd), vel: new THREE.Vector3(Math.cos(a) * 1.6 * k, 0.5 + Math.random() * 0.5, Math.sin(a) * 1.6 * k), life: 5 + Math.random() * 2.5, size: [1.1 * k, 4.4 * k], color: [PAL.dust1, PAL.dust], alpha: [0.26, 0], drag: 1.1, grav: -0.05, floor: false });
+    }
     if (pos.y < gy + 1.2) stamp(this.scorch, new THREE.Vector3(pos.x, Math.max(gy, pos.y - 0.4), pos.z), normalAt(pos.x, pos.z), r * (1.1 + Math.random() * 0.3));
     if (r >= 1.6 && pos.y < gy + 1.2) {
       stamp(this.craters, new THREE.Vector3(pos.x, Math.max(gy, pos.y - 0.4), pos.z), normalAt(pos.x, pos.z), r * 2.3);
@@ -458,6 +591,52 @@ export class Effects {
     this.emitters.push({ t: 0, life: 4 + k * 2, rate: 7, acc: 0, fn: (e, fx) => {
       fx.norm.emit({ pos: at.clone().add(fx.dir(0.5 * k)), vel: new THREE.Vector3(fx.rnd(0.2) + 0.2, 1.1 + Math.random() * 0.6, fx.rnd(0.2)), life: 3 + Math.random() * 1.5, size: [0.5 * k, 2.4 * k], color: [PAL.smoke0, PAL.smoke1], alpha: [0.4 * (1 - e.t / e.life), 0], drag: 0.6, grav: -0.1, floor: false });
       if (e.t < 1.2 && Math.random() < 0.6) fx.add.emit({ pos: at.clone().add(fx.dir(0.4 * k)).setY(gy + (at.y - gy) * 0.4 + 0.1), vel: new THREE.Vector3(0, 0.8, 0), life: 0.4, size: [0.4 * k, 0.1], color: [PAL.fire0, PAL.fire1], alpha: [0.8, 0], floor: false });
+    } });
+  }
+
+  // what a round does to each material: splinters from wood, sand spilling, stone chips and dust, sparks on steel
+  impactMat(pos, normal, kind, color, k = 1) {
+    const base = normal || Y;
+    if (kind === 'metal') { this.impact(pos, normal, k < 1 ? 'metal' : 'metalhole'); return; }
+    if (kind === 'dust') { this.impact(pos, normal, 'dust'); return; }
+    const c = col(color || (kind === 'sand' ? '#a89a72' : kind === 'wood' ? '#7a5a38' : '#8d877a'));
+    if (kind === 'wood') {
+      const lt = col('#c9a878');
+      for (let i = 0; i < Math.ceil(7 * k); i++) this.norm.emit({ pos, vel: base.clone().multiplyScalar(2.5).add(this.dir(3.2)), life: 0.5, size: [0.045, 0.035], color: [i % 2 ? lt : c, c], alpha: [1, 0.7], grav: 10, drag: 0.5 });
+      for (let i = 0; i < 2; i++) this.norm.emit({ pos, vel: base.clone().multiplyScalar(1.2).add(this.dir(0.7)), life: 0.6, size: [0.05, 0.3], color: [lt, PAL.dust1], alpha: [0.5, 0], drag: 2.5 });
+    } else if (kind === 'sand') {
+      for (let i = 0; i < Math.ceil(7 * k); i++) this.norm.emit({ pos, vel: base.clone().multiplyScalar(1.6).add(this.dir(1.8)), life: 0.6 + Math.random() * 0.4, size: [0.05, 0.22], color: [c, c], alpha: [0.8, 0], grav: 4, drag: 2 });
+      this.norm.emit({ pos, vel: base.clone().multiplyScalar(0.8), life: 0.9, size: [0.1, 0.5], color: [c, PAL.dust1], alpha: [0.4, 0], drag: 2.5 });
+    } else {
+      if (k >= 1) this.mark(pos, normal, 0.2);
+      for (let i = 0; i < Math.ceil(5 * k); i++) this.norm.emit({ pos, vel: base.clone().multiplyScalar(3).add(this.dir(3)), life: 0.55, size: [0.04, 0.03], color: [c, c], alpha: [1, 0.8], grav: 11, drag: 0.5 });
+      for (let i = 0; i < 3; i++) this.norm.emit({ pos, vel: base.clone().multiplyScalar(1.5).add(this.dir(0.8)), life: 0.7, size: [0.06, 0.4], color: [PAL.dust, PAL.dust1], alpha: [0.55, 0], drag: 2.5 });
+      for (let i = 0; i < 2; i++) this.add.emit({ pos, vel: base.clone().multiplyScalar(2).add(this.dir(3)), life: 0.16, size: [0.03, 0.01], color: [PAL.spark, PAL.flash2], grav: 8 });
+    }
+  }
+
+  // a round skipping off a surface: a streak of sparks along its new path
+  ricochet(pos, dir, style, color) {
+    for (let i = 0; i < 7; i++) this.add.emit({ pos, vel: dir.clone().multiplyScalar(7 + Math.random() * 10).add(this.dir(2.5)), life: 0.2 + Math.random() * 0.1, size: [0.03, 0.01], color: [PAL.spark, PAL.flash2], grav: 5, drag: 0.8 });
+    this.add.emit({ pos, life: 0.05, size: [0.2, 0.05], color: [PAL.flash, PAL.flash2], alpha: [0.9, 0], floor: false });
+    this.impactMat(pos, Y, style === 'metal' ? 'dust' : style, color, 0.6);
+  }
+
+  // a fast fragment: a short hot streak along its path
+  fragTrail(from, d, t) {
+    const life = Math.min(0.16, t / 80);
+    if (life < 0.02) return;
+    for (let i = 0; i < 2; i++) this.add.emit({ pos: this.t1.copy(from).addScaledVector(d, 0.6 + i), vel: d.clone().multiplyScalar(60 + Math.random() * 30), life, size: [0.05, 0.015], color: [PAL.flash, PAL.fire1], alpha: [0.9, 0.3], floor: false });
+  }
+
+  // a pool of burning fuel: flames, then black smoke
+  fuelFire(pos) {
+    const gy = height(pos.x, pos.z), at = new THREE.Vector3(pos.x, gy, pos.z);
+    stamp(this.scorch, at, normalAt(pos.x, pos.z), 3.4);
+    this.emitters.push({ t: 0, life: 7, rate: 22, acc: 0, fn: (e, fx) => {
+      const p = at.clone().add(new THREE.Vector3(fx.rnd(1.1), 0.1, fx.rnd(1.1)));
+      fx.add.emit({ pos: p, vel: new THREE.Vector3(fx.rnd(0.2), 1.3 + Math.random() * 0.8, fx.rnd(0.2)), life: 0.5, size: [0.45, 0.1], color: [PAL.fire0, PAL.fire1], alpha: [0.9, 0], floor: false });
+      if (Math.random() < 0.45) fx.norm.emit({ pos: p.setY(gy + 1), vel: new THREE.Vector3(fx.rnd(0.3), 1.4, fx.rnd(0.3)), life: 2.2, size: [0.4, 1.7], color: [PAL.smoke0, PAL.smoke0], alpha: [0.5 * (1 - e.t / e.life), 0], drag: 0.7, grav: -0.2, floor: false });
     } });
   }
 
