@@ -49,15 +49,15 @@ export const ANIM = {
 // the chest, MG slung on the hip, coil gun across the body, mortar on the shoulder.
 const QV = Math.PI / 2;
 export const GRIPS = {
-  rifle: { x: 0.11, pz: 0.24, rh: [-0.036, -0.012], lh: [0.0, 0.3, 0, 0, 0], mag: [-0.03, 0.085, 0, 0, 0],
+  rifle: { x: 0.16, pz: 0.2, rh: [-0.036, -0.012], lh: [0.0, 0.3, 0, 0, 0], mag: [-0.03, 0.085, 0, 0, 0],
     walk: [0, 0, -0.04, 0], run: [-0.02, 0.02, -0.16, 0.1], bob: 0.5 },
-  smg: { x: 0.11, pz: 0.24, rh: [-0.036, -0.004], lh: [-0.044, 0.282, 0, 0, 0], lk: 'grip', mag: [-0.095, 0.1, 0, 0, 0],
+  smg: { x: 0.16, pz: 0.2, rh: [-0.036, -0.004], lh: [-0.044, 0.282, 0, 0, 0], lk: 'grip', mag: [-0.095, 0.1, 0, 0, 0],
     walk: [0.01, 0, 0.06, 0], run: [0.03, 0.0, 0.2, 0.12], bob: 0.4 },
-  mg: { x: 0.1, pz: 0.23, rh: [-0.036, -0.012], lh: [-0.075, 0.35, 0, 0, 0], mag: [-0.1, 0.12, 0, 0, 0],
+  mg: { x: 0.15, pz: 0.19, rh: [-0.036, -0.012], lh: [-0.075, 0.35, 0, 0, 0], mag: [-0.1, 0.12, 0, 0, 0],
     walk: [-0.01, 0, -0.1, 0], run: [-0.03, 0.01, -0.22, 0.14], bob: 1.1 },
-  plasma: { x: 0.11, pz: 0.26, rh: [-0.036, -0.012], lh: [-0.034, 0.12, 0, 0, 0], mag: [-0.1, 0.12, 0, 0, 0],
+  plasma: { x: 0.16, pz: 0.16, rh: [-0.036, -0.012], lh: [-0.034, 0.12, 0, 0, 0], mag: [-0.1, 0.12, 0, 0, 0],
     walk: [0, 0, 0.0, -0.05], run: [0.01, 0, 0.12, -0.1], bob: 0.5 },
-  launcher: { x: 0.08, pz: 0.2, rh: [-0.03, 0.0], lh: [-0.04, 0.12, 0, 0, 0], mag: [0.15, 0.1, 0, 0, 0],
+  launcher: { x: 0.16, pz: 0.16, rh: [-0.03, 0.0], lh: [-0.04, 0.12, 0, 0, 0], mag: [0.15, 0.1, 0, 0, 0],
     walk: [0.02, 0, 0.2, 0], run: [0.05, 0.02, 0.45, 0.1], bob: 0.9 },
   grenade: null,
 };
@@ -368,7 +368,19 @@ export function pose(s, out = makePose()) {
   postures(s, out);
   crawl(s, out);
   clutch(s, out);
+  groundFeet(s, out);
   return out;
+}
+// Lying down (or fallen), the boots turn toes-down; lift each one until its lowest point (toe tip, heel, welt) rests on the ground
+const FOOT_LOW = [[0, 0.012, 0.152], [0, 0.0, 0.14], [0.04, 0.0, 0.1], [-0.04, 0.0, 0.1], [0, 0.0, -0.09], [0.035, 0.0, -0.08], [-0.035, 0.0, -0.08]].map((q) => new THREE.Vector3(...q));
+function groundFeet(s, out) {
+  const k = (s.dead ?? -1) >= 0 ? smooth(0, 0.3, s.dead) : smooth(0.3, 0.9, s.prone || 0);
+  if (k <= 0) return;
+  for (const f of out.feet) {
+    let lo = Infinity;
+    for (const q of FOOT_LOW) lo = Math.min(lo, V3.copy(q).applyMatrix4(f).y);
+    if (lo < 0.004) f.elements[13] += (0.004 - lo) * k;
+  }
 }
 
 // The gun rides with the chest as the body leans into a run, so the two never swing into each other.

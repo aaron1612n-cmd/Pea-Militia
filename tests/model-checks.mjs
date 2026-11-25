@@ -43,7 +43,8 @@ export const modelChecks = () => {
     return { name, open, vol };
   };
   for (const [k, g] of Object.entries(PART_GEO)) out.closed.push(closed(g, k));
-  out.closed = out.closed.filter((c) => c.open > 0 || c.vol <= 0);
+  // worn kit is made of patches grown on the body and sunk into it, open at the back by design; gear-attach.mjs checks it is joined to the body
+  out.closed = out.closed.filter((c) => (c.open > 0 || c.vol <= 0) && !/^gear-/.test(c.name));
   // the head and helmet must be the right way out and hold together as meshes (no stray vertices)
   for (const [k, g] of [['head', HEAD]]) {
     const c = closed(g, k);
@@ -55,7 +56,7 @@ export const modelChecks = () => {
     for (let i = 0; i < p.count; i += step) pts.push(new THREE.Vector3().fromBufferAttribute(p, i));
     return pts;
   };
-  const S = { boot: sample(crowd.boot.geometry), body: sample(crowd.body.geometry, 400), pack: sample(crowd.pack.geometry), head: sample(crowd.head.geometry), helmet: sample(crowd.helmets.rifleman.geometry), hand: sample(crowd.handL.geometry) };
+  const S = { boot: sample(crowd.boot.geometry), toe: sample(crowd.toe.geometry), body: sample(crowd.body.geometry, 400), pack: sample(crowd.pack.geometry), head: sample(crowd.head.geometry), helmet: sample(crowd.helmets.rifleman.geometry), hand: sample(crowd.handL.geometry) };
   const bodyInv = new THREE.Matrix4();
   const v = new THREE.Vector3();
   // inside the torso block (rounded), a little smaller so touching surfaces don't count
@@ -72,9 +73,16 @@ export const modelChecks = () => {
   const wverts = {};
   for (const [id, list] of Object.entries(crowd.weapons)) {
     const pts = [];
-    for (const m of list) pts.push(...sample(m.geometry, 220));
+    for (const m of list) pts.push(...sample(m.geometry, 1500)); // dense enough that a hand on a smooth tube finds a vertex near it
     wverts[id] = pts;
   }
+  // gun surfaces (a hand on a long smooth tube is nowhere near a vertex, so measure to the triangles)
+  const wtris = {}, tri = new THREE.Triangle(), cp = new THREE.Vector3();
+  for (const [id, list] of Object.entries(crowd.weapons)) {
+    wtris[id] = [];
+    for (const m of list) { const p = m.geometry.attributes.position; for (let i = 0; i + 2 < p.count; i += 3) wtris[id].push(new THREE.Triangle(new THREE.Vector3().fromBufferAttribute(p, i), new THREE.Vector3().fromBufferAttribute(p, i + 1), new THREE.Vector3().fromBufferAttribute(p, i + 2))); }
+  }
+  const gunDist = (id, pt, m) => { const l = pt.clone().applyMatrix4(new THREE.Matrix4().copy(m).invert()); let best = Infinity; for (const t of wtris[id]) { t.closestPointToPoint(l, cp); best = Math.min(best, cp.distanceToSquared(l)); } return Math.sqrt(best); };
   const phases = [];
   const W = Object.keys(HOLD);
   for (const t of [0, 0.9, 1.8, 2.7]) phases.push({ name: `idle ${t}`, t, ready: 0.55 });
@@ -108,11 +116,12 @@ export const modelChecks = () => {
       const s = { t: 0, weapon: w, ...ph };
       pose(s, pz);
       bodyInv.copy(pz.body).invert();
+      solveLegs(pz); // the toe boxes follow the feet
       const dead = (ph.dead ?? -1) >= 0;
       const r = { name: `${ph.name} [${s.weapon}]`, minY: Infinity, clips: [], loose: [], air: !!ph.air || !!ph.run };
       // boots on the ground, never below it, never inside the body
       for (let i = 0; i < 2; i++) {
-        r.minY = Math.min(r.minY, minY(S.boot, pz.feet[i]));
+        r.minY = Math.min(r.minY, minY(S.boot, pz.feet[i]), ph.prone && !dead ? minY(S.toe, pz.toes[i]) : Infinity); // lying down, the toes are what touch the ground
         for (const p of world(S.boot, pz.feet[i])) if (insideBody(p, 0.03)) { r.clips.push(`boot${i} in body`); break; }
       }
       // the body, head, helmet and pack never sink into the ground
@@ -132,8 +141,7 @@ export const modelChecks = () => {
         if (gd > (s.weapon === 'grenade' ? 0.1 : 0.06)) r.loose.push(`grip ${gd.toFixed(3)}`);
         if (s.weapon !== 'grenade' && ph.reload === undefined && !ph.free && !ph.down) {
           const h0 = new THREE.Vector3().setFromMatrixPosition(pz.hands[0]);
-          let best = Infinity;
-          for (const p of wverts[s.weapon]) best = Math.min(best, h0.distanceTo(v.copy(p).applyMatrix4(m)));
+          const best = gunDist(s.weapon, h0, m);
           if (best > 0.05) r.loose.push(`support hand ${best.toFixed(3)} off the gun`);
         }
         if (s.ready === 1 && !ph.reload && !ph.prone && !ph.lean && s.weapon !== 'grenade' && Math.abs(ph.twist || 0) < 0.1) {
@@ -161,7 +169,7 @@ export const modelChecks = () => {
         if (!dead && len > (U.LEG[0] + U.LEG[1] + 0.04) * 1.35) r.loose.push(`leg${i} stretched ${len.toFixed(2)}`);
         const side = i === 0 ? 1 : -1;
         const sh = new THREE.Vector3(side * U.SH_X, U.SH_Y, -0.005).applyMatrix4(pz.body);
-        const hd = new THREE.Vector3().setFromMatrixPosition(pz.hands[i]);
+        const hd = new THREE.Vector3(...U.WRIST).applyMatrix4(pz.hands[i]); // the forearm ends at the wrist, under the glove cuff
         const alen = joints(pz.arms[i], sh, hd, `arm${i}`);
         if (!dead && alen > (U.ARM[0] + U.ARM[1] + 0.04) * 1.45) r.loose.push(`arm${i} stretched ${alen.toFixed(2)}`);
       }
