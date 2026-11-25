@@ -153,6 +153,7 @@ export function makePose() {
     legs: [[new THREE.Matrix4(), new THREE.Matrix4()], [new THREE.Matrix4(), new THREE.Matrix4()]],
     arms: [[new THREE.Matrix4(), new THREE.Matrix4()], [new THREE.Matrix4(), new THREE.Matrix4()]],
     weapon: new THREE.Matrix4(), muzzle: new THREE.Vector3(), showWeapon: true, height: U.TOP,
+    mvReload: -1, mvRack: 0, mvRecoil: 0,
   };
 }
 
@@ -171,6 +172,7 @@ function poseCore(s, out) {
   const limp = Math.abs(s.limp || 0);
   const kneelStill = kneel * (1 - w); // one knee down; moving crouched is a walk with bent legs
   out.gait = g;
+  out.mvReload = s.reload ?? -1; out.mvRack = s.rack || 0; out.mvRecoil = s.recoil || 0; // drives the gun's moving parts (magazine, bolt)
 
   // ---- feet: planted while they carry the body, lifted and swung through between strikes
   if (dead < 0) {

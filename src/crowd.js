@@ -5,7 +5,7 @@ import { GEAR, MARKS, KIND_IDS, kindKey } from './gear.js';
 import { markMaterial, woundMarkMaterial, partMatrix } from './hitmarks.js';
 import { torsoGeo, headGeo, helmetGeo, HELMET_KINDS, bootGeo, handGeos, packGeo, pelvisGeo, neckGeo, deltGeo, LIMB, HEAD_COLORS } from './anatomy.js';
 import { detail, instAttr } from './fabric.js';
-import { WEAPONS, weaponParts } from './weapons.js';
+import { WEAPONS, weaponParts, weaponSlotMatrix } from './weapons.js';
 import { TEAMS } from './factions.js';
 import { makeWoundMesh, makeDentBody, DENT_CAP, MAX_DENTS } from './wounds.js';
 import { stumpGeo, wreckHead, woundMaterial, LOST } from './wreck.js';
@@ -28,6 +28,7 @@ export const PART_GEO = {
 
 const MP = new THREE.Vector3(), MN = new THREE.Vector3(), MQ = new THREE.Quaternion(), MQ2 = new THREE.Quaternion(), MM = new THREE.Matrix4(), MS = new THREE.Vector3(), Z = new THREE.Vector3(0, 0, 1);
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
+const SLOT_M = new THREE.Matrix4(), SLOT_T = new THREE.Matrix4();
 const UI_COL = TEAMS.map((t) => new THREE.Color(t.ui).lerp(new THREE.Color('#ffffff'), 0.35)); // worn kit: a light army tint over its own colours
 const HELM_COL = TEAMS.map((t) => new THREE.Color(t.ui).multiplyScalar(0.72));
 const PALE = new THREE.Color('#d9d6cb');
@@ -115,10 +116,11 @@ export class Crowd {
       const { parts, muzzle, box, sight } = weaponParts(id);
       setWeaponBounds(id, box, muzzle, sight);
       const sc = new THREE.Matrix4().makeScale(U.WEAPON_SCALE, U.WEAPON_SCALE, U.WEAPON_SCALE);
-      this.weapons[id] = parts.map(({ geometry, material }) => {
+      this.weapons[id] = parts.map(({ geometry, material, slot }) => {
         const g = geometry.clone().applyMatrix4(sc);
         const m = mk(g, material, cap, false);
-        m.name = `crowd-${id}`;
+        m.name = `crowd-${id}${slot ? '-' + slot : ''}`;
+        m.userData.slot = slot; // a moving part: its matrix is the gun's plus the slot's offset (magazine, bolt)
         return m;
       });
     }
@@ -299,7 +301,13 @@ export class Crowd {
       const k = this.wn[opts.weapon];
       if (list && k < list[0].instanceMatrix.count) {
         t.multiplyMatrices(world, p.weapon);
-        for (const m of list) m.setMatrixAt(k, t);
+        for (const m of list) {
+          const sl = m.userData.slot;
+          if (!sl) { m.setMatrixAt(k, t); continue; }
+          weaponSlotMatrix(opts.weapon, sl, p.mvReload ?? -1, p.mvRack || 0, p.mvRecoil || 0, SLOT_M);
+          SLOT_M.elements[12] *= U.WEAPON_SCALE; SLOT_M.elements[13] *= U.WEAPON_SCALE; SLOT_M.elements[14] *= U.WEAPON_SCALE;
+          m.setMatrixAt(k, SLOT_T.multiplyMatrices(t, SLOT_M));
+        }
         this.wn[opts.weapon] = k + 1;
       }
     }

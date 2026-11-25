@@ -40,8 +40,18 @@ function clean(g) {
 
 // Collects (geometry, material, transform) pieces and bakes them into one mesh per material.
 export class Kit {
-  constructor() { this.parts = new Map(); }
+  constructor() { this.parts = new Map(); this.slots = {}; }
+  // pieces added inside fn are a moving part (a magazine, a bolt): baked as their own meshes, tagged with the slot name
+  // (mat: draw the whole slot in one material, so a moving part costs one draw call, not one per finish)
+  slot(name, fn, mat = null) {
+    const main = this.parts;
+    this.parts = this.slots[name] ||= new Map();
+    this.force = mat;
+    try { fn(); } finally { this.parts = main; this.force = null; }
+    return this;
+  }
   add(geo, mat, { pos, rot, scale } = {}) {
+    if (this.force) mat = this.force;
     const g = clean(geo);
     const m = new THREE.Matrix4().compose(
       new THREE.Vector3(...(pos || [0, 0, 0])),
@@ -56,7 +66,7 @@ export class Kit {
   build(name = 'kit', shadows = true) {
     const group = new THREE.Group();
     group.name = name;
-    for (const [mat, list] of this.parts) {
+    for (const [mat, list] of [...this.parts, ...Object.values(this.slots).flatMap((m) => [...m])]) {
       const mesh = new THREE.Mesh(mergeGeometries(list, false), mat);
       mesh.castShadow = shadows;
       mesh.receiveShadow = true;
@@ -66,15 +76,18 @@ export class Kit {
   }
   // geometry-only bake (for caching): [{ geometry, material }]
   bake() {
-    return [...this.parts].map(([material, list]) => ({ geometry: mergeGeometries(list, false), material }));
+    const out = [...this.parts].map(([material, list]) => ({ geometry: mergeGeometries(list, false), material }));
+    for (const [slot, m] of Object.entries(this.slots)) for (const [material, list] of m) out.push({ geometry: mergeGeometries(list, false), material, slot });
+    return out;
   }
 }
 
 export function instance(baked, name = 'model', shadows = true) {
   const g = new THREE.Group();
   g.name = name;
-  for (const { geometry, material } of baked) {
+  for (const { geometry, material, slot } of baked) {
     const m = new THREE.Mesh(geometry, material);
+    if (slot) m.userData.slot = slot;
     m.castShadow = shadows;
     m.receiveShadow = true;
     g.add(m);

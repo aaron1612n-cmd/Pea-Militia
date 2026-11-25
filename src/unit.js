@@ -600,6 +600,7 @@ export class Unit {
     s.land = land; s.kneel = this.kneelK; s.aimPitch = THREE.MathUtils.clamp(this.aimPitch, -0.9, 0.9);
     s.twist = this.twist; s.ready = Math.min(this.ready, 1 - this.wallK * 0.85); s.recoil = this.recoil;
     s.reload = this.reloadT > 0 ? 1 - this.reloadT / this.reloadDur : -1;
+    s.rack = s.reload > 0.72 && this.reloadEmpty && this.weapon.def.rack ? Math.sin(((s.reload - 0.72) / 0.28) * Math.PI) : 0;
     s.throw = this.throwT > 0 ? 1 - this.throwT / 0.6 : -1;
     s.limp = this.leg * this.limpSide; s.flinch = this.flinch; s.dying = Math.max(this.dyK, this.clutch * 0.7); s.ads = this.ads; s.fp = this.fp || 0; s.sprint = this.sprinting;
     s.lean = this.alive ? this.leanK || 0 : 0; s.prone = this.alive ? this.proneK || 0 : 0;
