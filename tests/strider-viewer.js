@@ -27,9 +27,9 @@ const camera = new THREE.PerspectiveCamera(32, W / H, 0.1, 100);
 const ANG = { front: 0, q3: Math.PI / 4, side: Math.PI / 2, back: Math.PI, q3b: -3 * Math.PI / 4, left: -Math.PI / 2, top: 0 };
 
 let v = null;
-window.make = (team = 0) => {
+window.make = (team = 0, kind = 'walker') => {
   if (v) scene.remove(v.group);
-  v = new Vehicle('walker', team, 0, 0, 0);
+  v = new Vehicle(kind, team, 0, 0, 0);
   scene.add(v.group);
   window.v = v;
   return true;
@@ -50,8 +50,15 @@ window.pose = ({ tYaw = 0, tPitch = 0, alive = true } = {}) => {
   v.syncModel(0.016);
   return true;
 };
+// hurt: hit points as a fraction; lod: 0 near, 1 far; both apply to whatever machine is standing
+window.hurt = (f = 1) => { v.hp = v.maxHp * f; v.tier = f < 0.34 ? 2 : f < 0.67 ? 1 : 0; v.parts.setDamage?.(v.tier); v.syncModel(0.016); return true; };
+window.lod = (l) => { v.setLod(l); return true; };
 window.shot = ({ view = 'q3', zoom = 'full', target = null, dist = null } = {}) => {
-  const [cx, cy, cz, d] = target ? [...target, dist] : (zoom === 'full' ? [0, 2.7, 0, 17] : zoom === 'body' ? [0, 4.2, 0, 8.5] : zoom === 'leg' ? [1.2, 2, 0, 8] : [0, 2.7, 0, 17]);
+  const tank = v.kind === 'tank';
+  const ZOOMS = tank
+    ? { full: [0, 1.3, 0, 19], body: [0, 1.4, -0.5, 11], turret: [0, 2.3, 0, 7.5], gear: [1.4, 0.6, 0, 7], front: [0, 1.4, 2.8, 8], rear: [0, 1.6, -2.8, 8], gun: [0, 2.2, 2.5, 9] }
+    : { full: [0, 2.7, 0, 17], body: [0, 4.2, 0, 8.5], leg: [1.2, 2, 0, 8], head: [0, 5.2, 0, 7] };
+  const [cx, cy, cz, d] = target ? [...target, dist] : (ZOOMS[zoom] || ZOOMS.full);
   const a = ANG[view] ?? 0;
   const px = v.pos.x, pz = v.pos.z;
   const off = view === 'top' ? [0, d, 0.01] : [Math.sin(a + v.yaw) * d, d * 0.12 + 0.3, Math.cos(a + v.yaw) * d];

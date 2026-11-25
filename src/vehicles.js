@@ -1,347 +1,23 @@
 import * as THREE from 'three';
-import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
-import { MAT, profile, roundRect, turned, turnedY, rod, ring, bolt, pipe, block } from './models.js';
-import { ellipsoid } from './geo.js';
-import { TEAMS } from './factions.js';
 import { height } from './terrain.js';
 import { pushCircle } from './physics.js';
 import { HALF } from './world.js';
-import { detail } from './fabric.js';
+import { VEHICLES, CKit, WRECK, clamp } from './vkit.js';
+import { STRIDER } from './strider.js';
+import './tank.js';
 
-// Vehicles: heavy, believable machines for the big field. Each is one body on the ground with
-// a hull box for hits and collisions, a turret and gun that turn on their own, and seats for
-// crew. Drawn with a few merged, vertex-coloured meshes so a strider costs about six draw calls.
-// World yaw convention matches soldiers: forward is (sin yaw, cos yaw).
+// Vehicles: heavy, believable machines for the big field. Each is one body on the ground with a hull box for
+// hits and collisions, a turret and gun that turn on their own, and seats for crew. The models live next to
+// their own animation (strider.js, tank.js) and are drawn as ONE skinned mesh each (see vkit.js), so a machine
+// costs about three draw calls whatever its part count. World yaw convention matches soldiers: forward is
+// (sin yaw, cos yaw).
+export { VEHICLES, CKit };
+const WL = STRIDER;
 
-export const VEHICLES = {};
-
-VEHICLES.walker = {
-  name: 'Strider', drive: 'legged', seats: 1,
-  hx: 1.5, hz: 1.5, h: 2.9, lift: 2.7, eyeH: 5.15, // hit box starts above the legs
-  hp: 700, armor: { bullet: 0.07, blast: 0.55, plasma: 0.6, flame: 0.15 },
-  maxSpeed: 6.2, maxRev: 2.6, accel: 2.8, brake: 7, turn: 1.0, maxSlope: 0.95, tilt: 0.3,
-  mass: 40, camDist: 12, camHeight: 5.2, camUp: 7.8, camSide: 1.6, cockpit: [0, 5.15, 0.35], cockpitKind: 'walker', steamAt: [-0.6, 5.7, -1.1], step: 1.3, crush: true, crushH: 2.2, runover: 0,
-  hint: 'WASD walk · click shoots · right-click mortar · X leaves',
-  turret: { rate: 1.5, pitchRate: 1.2, pitchMin: -0.45, pitchMax: 0.5, pivot: [0, 4.55, 0] },
-  weapons: [
-    { id: 'autocannon', name: 'Autocannon', ai: 'light', kind: 'hitscan', damage: 30, interval: 0.12, spread: 0.022, sound: 'mg', mag: Infinity, reserve: Infinity, range: 110, tracer: '#ffc070', burst: [8, 14], vehicleGun: true },
-    { id: 'mortar', name: 'Steam mortar', ai: 'heavy', kind: 'projectile', proj: 'shell', lob: 1.05, damage: 170, radius: 5.2, speed: 40, gravity: 16, interval: 3.4, spread: 0.02, sound: 'cannon', mag: Infinity, reserve: Infinity, range: 150, minRange: 22, burst: [1, 1], vehicleGun: true },
-  ],
-};
-
-const C = {
-  steel: '#3b3e3d', dark: '#26292a', iron: '#4a4a45', brass: '#9c7a3c', copper: '#8a5236', rubber: '#1d1d1c',
-  canvas: '#7d7559', wood: '#6a4a2f',
-};
-
-// ---- vertex-coloured kit: every part is merged into one geometry
-export class CKit {
-  constructor(name = '') { this.list = []; this.name = name; }
-  add(geo, color, { pos = [0, 0, 0], rot = [0, 0, 0], scale = 1 } = {}) {
-    const g = geo.index ? geo.toNonIndexed() : geo.clone();
-    for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
-    if (!g.attributes.normal) g.computeVertexNormals();
-    g.applyMatrix4(new THREE.Matrix4().compose(
-      new THREE.Vector3(...pos), new THREE.Quaternion().setFromEuler(new THREE.Euler(...rot)),
-      new THREE.Vector3(...(Array.isArray(scale) ? scale : [scale, scale, scale])),
-    ));
-    const c = new THREE.Color(color), n = g.attributes.position.count, col = new Float32Array(n * 3);
-    for (let i = 0; i < n; i++) { col[i * 3] = c.r; col[i * 3 + 1] = c.g; col[i * 3 + 2] = c.b; }
-    g.setAttribute('color', new THREE.BufferAttribute(col, 3));
-    this.list.push(g);
-    CKit.log?.push({ kit: this, g }); // the strider check lists every piece a kit is built from
-    return this;
-  }
-  bake() { return this.list.length ? mergeGeometries(this.list, false) : new THREE.BufferGeometry(); }
-}
-
-// plating: chipped paint, dirt toward the ground and a pitted surface, in metre-sized features (see fabric.js)
-const BODY = detail(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.3 }), { style: false, grain: 0, dirt: [0.04, 0, 0.35], wear: 0.35, bump: 0.5, scale: 0.16 });
-const WRECK = new THREE.MeshStandardMaterial({ vertexColors: true, color: '#3c3835', roughness: 0.95, metalness: 0.1 });
-const cyl = (r, len, seg = 14) => new THREE.CylinderGeometry(r, r, len, seg);
-
-const modelCache = new Map();
-
-const _up = new THREE.Vector3(0, 1, 0), _q2 = new THREE.Quaternion(), _m = new THREE.Matrix4(), _q = new THREE.Quaternion(), _e = new THREE.Euler(), _s = new THREE.Vector3(), _p = new THREE.Vector3(), _b = [0, 0, 0];
-
-// ---------------- the strider ----------------
-// A two-legged steam walker, built the way it would have to be to stand: a pelvis cradle on a hip axle
-// that runs out through both leg hubs, an armoured tub on the cradle with the boilers on a shelf behind,
-// and a rotating head on a ring on the roof. The head is the cockpit (canopy glass in front, the pilot's
-// eye behind it) and carries the weapons on bolted-on hardpoints, one at each cheek: an autocannon in a
-// ball mount on the right, a steam mortar on a trunnion yoke on the left. Each leg is a clevis frame: two
-// plates on the hip hub, the shin between them on a knee pin, a ram behind the knee, and an ankle pin
-// through the foot's cheek plates. Every part sits on, or pins into, the part that carries it.
-const WL = { hip: 3.15, x: 1.2, L1: 1.75, L2: 1.85, ankle: 0.36 };
-// the thigh's edges in (z, y) at depth d below the hip (the frame tapers toward the knee)
-const thighFront = (d) => 0.4 - 0.1 * (d / WL.L1), thighRear = (d) => -0.36 + 0.12 * (d / WL.L1);
-const shinRear = (d) => -0.24 + 0.08 * (d / WL.L2), shinFront = (d) => 0.26 - 0.1 * (d / WL.L2);
-const THIGH_LUG = [0, -0.55, thighRear(0.55) - 0.09 - 0.02], SHIN_LUG = [0, -0.95, shinRear(0.95) - 0.12];
-const GUN_AT = [0.92, 0.45, 0.84], MORTAR_AT = [-0.92, 0.8, -0.15], MORTAR_TILT = -1.05;
-
-function striderParts(team) {
-  const T = TEAMS[team] || TEAMS[0];
-  const paint = T.body, trim = T.trim;
-  const hull = new CKit('hull'), turret = new CKit('head'), gunK = new CKit('gun'), glow = [];
-  const dome = (kit, r, pos, rot, col = C.steel) => kit.add(new THREE.SphereGeometry(r, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2), col, { pos, rot });
-  const row = (kit, a, b, n, rot, r = 0.028, col = C.steel) => { for (let i = 0; i < n; i++) { const t = n === 1 ? 0.5 : i / (n - 1); dome(kit, r, [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t], rot, col); } };
-  // ---- pelvis: a cradle on the hip axle, a flange round the axle on each side
-  hull.add(block(2.0, 0.6, 1.3, 0.1, 0.04), C.steel);
-  hull.add(cyl(0.22, 2.3, 18), C.iron, { rot: [0, 0, Math.PI / 2] }); // the hip axle: out through both leg hubs
-  for (const s of [-1, 1]) {
-    hull.add(cyl(0.4, 0.2, 20), C.iron, { pos: [s * 0.88, 0, 0], rot: [0, 0, Math.PI / 2] });
-    hull.add(ring(0.36, 0.03, 20), C.brass, { pos: [s * 0.98, 0, 0], rot: [0, Math.PI / 2, 0] });
-  }
-  // ---- the tub: the armoured body on the cradle
-  hull.add(profile([[-1.05, 0.22], [1.0, 0.22], [1.2, 0.55], [1.1, 1.0], [0.6, 1.35], [-0.9, 1.4], [-1.15, 1.0], [-1.15, 0.5]], 1.9, 0.07, 2), paint);
-  hull.add(profile([[-1.05, 0.62], [1.18, 0.66], [1.1, 0.76], [-1.1, 0.74]], 1.96, 0.02, 1), trim); // belt
-  hull.add(cyl(0.78, 0.14, 26), C.steel, { pos: [0, 1.4, 0] }); // the roof ring the head turns on
-  hull.add(ring(0.74, 0.03, 26), C.brass, { pos: [0, 1.47, 0], rot: [Math.PI / 2, 0, 0] });
-  // side details, all flush on the tub's flanks: panel seams, vent slats, a tool box
-  for (const s of [-1, 1]) {
-    for (const z of [-0.5, 0.45]) hull.add(block(0.03, 0.8, 0.03, 0.005, 0.003), C.dark, { pos: [s * 0.955, 0.85, z] });
-    for (let i = 0; i < 4; i++) hull.add(block(0.03, 0.04, 0.34, 0.008, 0.004), C.dark, { pos: [s * 0.955, 1.0 + i * 0.07, 0.0] });
-    hull.add(block(0.14, 0.34, 0.6, 0.03, 0.012), C.canvas, { pos: [s * 1.0, 0.45, -0.6] });
-    row(hull, [s * 0.95, 0.5, 0.65], [s * 0.95, 0.5, 1.0], 4, [0, 0, -s * Math.PI / 2]);
-  }
-  // ---- engine: twin boilers on a shelf off the back of the tub, a manifold across them and the stacks
-  hull.add(block(1.7, 0.12, 0.8, 0.03, 0.015), C.iron, { pos: [0, 0.34, -1.2] });
-  for (const s of [-1, 1]) {
-    hull.add(cyl(0.34, 1.3, 18), C.brass, { pos: [s * 0.55, 1.05, -1.05] });
-    for (const y of [0.55, 1.05, 1.5]) hull.add(ring(0.345, 0.025, 18), C.copper, { pos: [s * 0.55, y, -1.05], rot: [Math.PI / 2, 0, 0] });
-    hull.add(turnedY([[0.0, 0], [0.34, 0], [0.2, 0.18], [0.0, 0.2]], 14), C.brass, { pos: [s * 0.55, 1.7, -1.05] });
-    hull.add(pipe([[s * 0.55, 1.85, -1.05], [s * 0.55, 2.2, -1.05], [s * 0.6, 2.5, -1.1]], 0.08, 8, 8), C.iron); // stack
-    hull.add(cyl(0.1, 0.1, 10), C.dark, { pos: [s * 0.6, 2.5, -1.1] }); // stack mouth
-  }
-  hull.add(pipe([[-0.55, 1.0, -0.76], [0, 1.1, -0.72], [0.55, 1.0, -0.76]], 0.05, 10, 6), C.copper); // manifold across the boilers
-  hull.add(pipe([[0, 1.1, -0.72], [0, 1.2, -0.3], [0, 1.4, 0]], 0.04, 10, 6), C.copper); // steam line up to the head's ring
-  // ladder on the back of the tub between the boilers
-  for (const s of [-1, 1]) hull.add(block(0.05, 0.9, 0.04, 0.01, 0.006), C.steel, { pos: [s * 0.18, 0.88, -1.17] });
-  for (let i = 0; i < 6; i++) hull.add(block(0.36, 0.03, 0.03, 0.006, 0.003), C.steel, { pos: [0, 0.5 + i * 0.15, -1.17] });
-  // ---- the head: base drum, a shell with a raked canopy, a back bin, a sensor mast
-  turret.add(cyl(0.72, 0.2, 26), C.steel, { pos: [0, 0.08, 0] });
-  turret.add(profile([[-0.7, 0.1], [0.75, 0.1], [0.95, 0.4], [0.8, 0.82], [0.3, 1.02], [-0.5, 0.95], [-0.75, 0.55]], 1.3, 0.05, 2), paint);
-  turret.add(profile([[-0.7, 0.34], [0.9, 0.34], [0.92, 0.42], [-0.72, 0.42]], 1.36, 0.015, 1), trim); // stripe round the head
-  // canopy: two raked panes, a centre post, a brow and a sill, all on the sloped front
-  const lean = -Math.atan2(0.15, 0.42), nrm = [0, Math.sin(-lean), Math.cos(lean)];
-  const onFront = (y, off = 0.0) => [0.875 + (y - 0.61) * (-0.15 / 0.42) + nrm[2] * off, y, 0];
-  for (const x of [-0.31, 0.31]) {
-    const c = onFront(0.61, 0.02);
-    turret.add(block(0.52, 0.36, 0.05, 0.01, 0.006), '#2c4947', { pos: [x, c[1] + nrm[1] * 0.02, c[0] + 0.0], rot: [lean, 0, 0] });
-  }
-  turret.add(block(0.06, 0.44, 0.07, 0.01, 0.005), C.dark, { pos: [0, 0.61 + nrm[1] * 0.02, 0.875 + 0.02], rot: [lean, 0, 0] });
-  turret.add(block(1.24, 0.08, 0.09, 0.015, 0.008), C.dark, { pos: [0, 0.83, 0.79], rot: [lean, 0, 0] }); // brow
-  turret.add(block(1.24, 0.07, 0.09, 0.015, 0.008), C.dark, { pos: [0, 0.4, 0.93], rot: [lean, 0, 0] }); // sill
-  turret.add(block(0.5, 0.04, 0.5, 0.03, 0.01), C.dark, { pos: [-0.2, 1.0, -0.12] }); // roof hatch
-  turret.add(block(1.1, 0.5, 0.3, 0.05, 0.02), C.iron, { pos: [0, 0.5, -0.8] }); // ammunition bin on the back
-  // headlamps in pods under the canopy, a sensor head on a mast, a whip antenna
-  for (const s of [-1, 1]) {
-    turret.add(cyl(0.1, 0.18, 12), C.dark, { pos: [s * 0.45, 0.24, 0.9], rot: [Math.PI / 2, 0, 0] });
-    glow.push([cyl(0.075, 0.03, 10), [s * 0.45, 0.24, 1.0], [Math.PI / 2, 0, 0]]);
-  }
-  turret.add(cyl(0.045, 0.4, 8), C.dark, { pos: [0.42, 1.15, -0.2] });
-  turret.add(cyl(0.1, 0.24, 12), C.iron, { pos: [0.42, 1.36, -0.2], rot: [Math.PI / 2, 0, 0] });
-  glow.push([cyl(0.07, 0.03, 10), [0.42, 1.36, -0.07], [Math.PI / 2, 0, 0]]);
-  turret.add(rod(0.012, 0, 1.2, 6), C.dark, { pos: [-0.45, 0.95, -0.5], rot: [-Math.PI / 2 - 0.18, 0, 0.1] });
-  // ---- right hardpoint: a housing bolted to the cheek, the autocannon's ball mount on its face
-  turret.add(block(0.56, 0.5, 0.7, 0.05, 0.02), C.iron, { pos: [GUN_AT[0], GUN_AT[1], GUN_AT[2] - 0.4] });
-  turret.add(ring(0.25, 0.04, 16), C.brass, { pos: [GUN_AT[0], GUN_AT[1], GUN_AT[2] - 0.1] });
-  row(turret, [GUN_AT[0] - 0.2, GUN_AT[1] + 0.27, GUN_AT[2] - 0.45], [GUN_AT[0] + 0.2, GUN_AT[1] + 0.27, GUN_AT[2] - 0.45], 4, [0, 0, 0]);
-  // ---- left hardpoint: a base on the cheek, two yoke plates, the mortar tube pinned between them
-  turret.add(block(0.56, 0.36, 0.7, 0.05, 0.02), C.iron, { pos: [MORTAR_AT[0], 0.35, MORTAR_AT[2]] });
-  for (const s of [-1, 1]) turret.add(block(0.06, 0.5, 0.5, 0.03, 0.012), paint, { pos: [MORTAR_AT[0] + s * 0.25, 0.7, MORTAR_AT[2]] });
-  turret.add(cyl(0.07, 0.66, 10), C.steel, { pos: [...MORTAR_AT], rot: [0, 0, Math.PI / 2] }); // trunnion pin
-  const tubeAt = { pos: [...MORTAR_AT], rot: [MORTAR_TILT, 0, 0] };
-  turret.add(rod(0.19, -0.35, 1.1, 16), C.dark, tubeAt);
-  turret.add(turned([[0.19, 1.0], [0.25, 1.0], [0.25, 1.1], [0.19, 1.1]], 16), C.iron, tubeAt); // muzzle collar
-  for (const z of [0.3, 0.6]) turret.add(ring(0.195, 0.025, 16), C.brass, { pos: [MORTAR_AT[0], MORTAR_AT[1] + z * Math.sin(-MORTAR_TILT), MORTAR_AT[2] + z * Math.cos(MORTAR_TILT)], rot: [MORTAR_TILT, 0, 0] });
-  // ---- the autocannon (origin: the ball): shroud, barrel, brake, ammunition drum on the outboard side
-  gunK.add(new THREE.SphereGeometry(0.21, 14, 10), C.steel);
-  gunK.add(turned([[0.12, 0.1], [0.15, 0.15], [0.15, 1.5], [0.12, 1.55]], 14), C.steel);
-  gunK.add(rod(0.07, 0.1, 2.3, 12), C.dark);
-  gunK.add(turned([[0.0001, 2.2], [0.1, 2.2], [0.1, 2.42], [0.06, 2.42]], 12), C.iron);
-  gunK.add(cyl(0.2, 0.3, 14), C.iron, { pos: [0.3, -0.02, -0.02], rot: [0, 0, Math.PI / 2] });
-  return { hull, turret, gunK, glow };
-}
-
-function striderLeg(team) {
-  const T = TEAMS[team] || TEAMS[0];
-  const paint = T.body, trim = T.trim;
-  const { L1, L2 } = WL;
-  const thigh = new CKit('thigh'), shin = new CKit('shin'), foot = new CKit('foot'), toes = new CKit('toes'), ramTube = new CKit('ram tube'), ramRod = new CKit('ram rod');
-  const dome = (kit, r, pos, rot, col = C.steel) => kit.add(new THREE.SphereGeometry(r, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2), col, { pos, rot });
-  // ---- thigh: a hub on the hip axle, two frame plates, spacers between them, a front shield, the ram lug behind
-  thigh.add(cyl(0.3, 0.6, 18), C.iron, { rot: [0, 0, Math.PI / 2] });
-  for (const s of [-1, 1]) {
-    thigh.add(cyl(0.34, 0.05, 18), C.brass, { pos: [s * 0.3, 0, 0], rot: [0, 0, Math.PI / 2] });
-    for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2; dome(thigh, 0.025, [s * 0.325, Math.cos(a) * 0.27, Math.sin(a) * 0.27], [0, 0, -s * Math.PI / 2]); }
-    thigh.add(profile([[thighRear(0), 0.0], [thighFront(0), 0.0], [thighFront(L1), -L1], [thighRear(L1), -L1]], 0.08, 0.02, 1), paint, { pos: [s * 0.19, 0, 0] });
-  }
-  for (const d of [0.5, 1.0, 1.45]) thigh.add(block(0.36, 0.14, 0.1, 0.02, 0.01), C.steel, { pos: [0, -d, thighFront(d) - 0.03] }); // spacers on the front edge
-  thigh.add(block(0.5, L1 * 0.62, 0.06, 0.02, 0.01), C.iron, { pos: [0, -L1 * 0.52, thighFront(L1 * 0.52) + 0.01], rot: [0.057, 0, 0] }); // front shield
-  for (const y of [-0.6, -0.95, -1.3]) thigh.add(block(0.52, 0.03, 0.065, 0.01, 0.005), C.dark, { pos: [0, y, thighFront(-y) + 0.01], rot: [0.057, 0, 0] });
-  thigh.add(block(0.4, 0.24, 0.14, 0.02, 0.01), C.iron, { pos: [0, THIGH_LUG[1], thighRear(0.55) - 0.02] }); // rear cross-spacer with the ram lug on it
-  thigh.add(block(0.4, 0.3, 0.06, 0.02, 0.01), trim, { pos: [0, -0.2, thighRear(0.2) - 0.02] }); // rear marking plate
-  // knee: the pin and its caps, through the plates
-  thigh.add(cyl(0.2, 0.56, 16), C.iron, { pos: [0, -L1, 0], rot: [0, 0, Math.PI / 2] });
-  for (const s of [-1, 1]) { thigh.add(cyl(0.24, 0.04, 16), C.brass, { pos: [s * 0.28, -L1, 0], rot: [0, 0, Math.PI / 2] }); dome(thigh, 0.05, [s * 0.31, -L1, 0], [0, 0, -s * Math.PI / 2]); }
-  // ---- shin: one box-section member between the thigh plates, boss at the knee, boss at the ankle
-  shin.add(cyl(0.17, 0.3, 16), C.iron, { rot: [0, 0, Math.PI / 2] });
-  shin.add(profile([[shinRear(0), 0.0], [shinFront(0), 0.0], [shinFront(L2), -L2], [shinRear(L2), -L2]], 0.3, 0.03, 2), paint);
-  shin.add(block(0.4, L2 * 0.6, 0.05, 0.02, 0.01), C.iron, { pos: [0, -L2 * 0.5, shinFront(L2 * 0.5) + 0.0], rot: [0.054, 0, 0] }); // greave
-  for (const y of [-0.5, -0.85, -1.2]) shin.add(block(0.42, 0.025, 0.06, 0.008, 0.004), C.dark, { pos: [0, y, shinFront(-y) + 0.0], rot: [0.054, 0, 0] });
-  shin.add(block(0.2, 0.34, 0.14, 0.02, 0.01), C.iron, { pos: [0, SHIN_LUG[1], shinRear(0.95) - 0.05] }); // ram lug on the back
-  shin.add(cyl(0.2, 0.4, 16), C.iron, { pos: [0, -L2, 0], rot: [0, 0, Math.PI / 2] });
-  // hydraulic ram: a sleeve from the thigh lug and a polished rod from the shin lug, aimed at each other (unit length along +z)
-  ramTube.add(turned([[0.0001, 0], [0.11, 0], [0.11, 0.92], [0.09, 0.96], [0.0001, 0.96]], 12), C.dark);
-  for (const z of [0.15, 0.75]) ramTube.add(ring(0.113, 0.018, 12), C.brass, { pos: [0, 0, z] });
-  ramTube.add(turned([[0.055, 0.9], [0.13, 0.9], [0.13, 1.0], [0.055, 1.0]], 12), C.iron);
-  ramRod.add(turned([[0.0001, 0], [0.055, 0], [0.055, 0.98], [0.0001, 0.98]], 10), '#b9bcbc');
-  ramRod.add(turned([[0.0001, 0], [0.1, 0], [0.1, 0.1], [0.0001, 0.1]], 10), C.iron);
-  // ---- foot: a broad pad with a tread, two cheek plates holding the ankle pin, a heel guard
-  foot.add(profile([[-0.55, 0.0], [0.58, 0.0], [0.6, 0.1], [0.5, 0.22], [-0.5, 0.22]], 0.76, 0.04, 2), C.iron);
-  for (let i = 0; i < 5; i++) foot.add(block(0.76, 0.03, 0.05, 0.008, 0.004), C.rubber, { pos: [0, 0.015, -0.4 + i * 0.2] });
-  for (const s of [-1, 1]) foot.add(profile([[-0.32, 0.2], [0.32, 0.2], [0.22, 0.58], [-0.22, 0.58]], 0.06, 0.015, 1), paint, { pos: [s * 0.23, 0, 0] });
-  foot.add(cyl(0.07, 0.62, 10), C.steel, { pos: [0, WL.ankle, 0], rot: [0, 0, Math.PI / 2] }); // ankle pin
-  for (const s of [-1, 1]) dome(foot, 0.07, [s * 0.31, WL.ankle, 0], [0, 0, -s * Math.PI / 2], C.brass);
-  foot.add(block(0.5, 0.1, 0.3, 0.02, 0.01), C.dark, { pos: [0, 0.14, -0.5] }); // heel guard
-  foot.add(block(0.5, 0.04, 0.34, 0.02, 0.01), paint, { pos: [0, 0.23, 0.3] }); // top plate
-  // ---- toes: three claws on a hinge bar; origin at the hinge (0, 0, 0), toes reach +z
-  toes.add(cyl(0.09, 0.78, 10), C.steel, { pos: [0, 0.1, 0], rot: [0, 0, Math.PI / 2] });
-  for (const x of [-0.26, 0, 0.26]) {
-    toes.add(profile([[0.0, 0.0], [0.54, 0.0], [0.64, 0.07], [0.1, 0.17]], 0.2, 0.02, 1), C.dark, { pos: [x, 0, 0] });
-    toes.add(block(0.06, 0.05, 0.38, 0.01, 0.005), C.iron, { pos: [x, 0.17, 0.28], rot: [-0.18, 0, 0] });
-    toes.add(profile([[0.52, 0.0], [0.7, 0.02], [0.66, 0.09], [0.54, 0.09]], 0.14, 0.01, 1), C.steel, { pos: [x, 0, 0] }); // claw tip
-  }
-  return { thigh, shin, foot, toes, ramTube, ramRod };
-}
-
-const _ik = { A0: new THREE.Vector3(), R1: new THREE.Vector3(), R2: new THREE.Vector3(), Z: new THREE.Vector3(0, 0, 1), Q: new THREE.Quaternion(), H: new THREE.Vector3(), A: new THREE.Vector3(), K: new THREE.Vector3(), d: new THREE.Vector3(), pole: new THREE.Vector3(), inv: new THREE.Matrix4(), dn: new THREE.Vector3(0, -1, 0), tmp: new THREE.Vector3() };
-const smooth = (u) => u * u * (3 - 2 * u);
-
-function buildStriderModel(team) {
-  const key = `walker${team}`;
-  if (!modelCache.has(key)) {
-    const p = striderParts(team), lg = striderLeg(team);
-    const gk = new CKit(); for (const [g, pos, rot] of p.glow) gk.add(g, '#ffe9a8', { pos, rot });
-    modelCache.set(key, { hull: p.hull.bake(), turret: p.turret.bake(), gun: p.gunK.bake(), glow: gk.bake(), thigh: lg.thigh.bake(), shin: lg.shin.bake(), foot: lg.foot.bake(), toes: lg.toes.bake(), ramTube: lg.ramTube.bake(), ramRod: lg.ramRod.bake() });
-  }
-  const m = modelCache.get(key), def = VEHICLES.walker;
-  const root = new THREE.Group();
-  root.name = 'vehicle-walker';
-  const mesh = (g, mat = BODY, shadow = true) => { const o = new THREE.Mesh(g, mat); o.castShadow = shadow; o.receiveShadow = true; return o; }; // frustum culled per part: a walker off to the side costs nothing
-  const bodyG = new THREE.Group();
-  const hull = mesh(m.hull);
-  const lamps = mesh(m.glow, new THREE.MeshStandardMaterial({ color: '#ffe9a8', emissive: '#ffd27a', emissiveIntensity: 1.3 }), false);
-  bodyG.add(hull, lamps);
-  const turretPivot = new THREE.Group(); turretPivot.position.set(...def.turret.pivot);
-  const tMesh = mesh(m.turret);
-  const gun = new THREE.Group(); gun.position.set(...GUN_AT);
-  const gMesh = mesh(m.gun);
-  const muzzle = new THREE.Object3D(); muzzle.position.set(0, 0, 2.45);
-  const mortarMuzzle = new THREE.Object3D(); mortarMuzzle.position.set(MORTAR_AT[0], MORTAR_AT[1] + 1.12 * Math.sin(-MORTAR_TILT), MORTAR_AT[2] + 1.12 * Math.cos(MORTAR_TILT));
-  gun.add(gMesh, muzzle);
-  turretPivot.add(tMesh, gun, mortarMuzzle);
-  const meshes = [hull, tMesh, gMesh];
-  const legs = [-1, 1].map((side) => {
-    const th = mesh(m.thigh), sh = mesh(m.shin), ft = mesh(m.foot), toe = mesh(m.toes), rt = mesh(m.ramTube), rr = mesh(m.ramRod);
-    toe.position.set(0, 0, 0.58); ft.add(toe); // the toes hinge on the front of the pad
-    root.add(th, sh, ft, rt, rr); meshes.push(th, sh, ft, toe, rt, rr);
-    return { side, th, sh, ft, toe, rt, rr, fp: new THREE.Vector3(), from: new THREE.Vector3(), to: new THREE.Vector3(), stepping: false, u: 0, dur: 0.45, init: false };
-  });
-  root.add(bodyG, turretPivot);
-  const parts = { root, turretPivot, gun, gunZ: GUN_AT[2], recoilK: 0.0, muzzles: [muzzle, mortarMuzzle], meshes, legs, lastT: -1, hy: WL.hip };
-  parts.animate = (v) => striderAnimate(v, parts, bodyG);
-  return parts;
-}
-VEHICLES.walker.build = buildStriderModel;
-
-// foot planting: each foot stays where it landed until the body walks it out of range, then swings to a new spot
-function striderAnimate(v, P, bodyG) {
-  const { L1, L2 } = WL;
-  const dt = P.lastT < 0 ? 0 : clamp(v.t - P.lastT, 0, 0.1);
-  P.lastT = v.t;
-  const alive = v.alive, sp = Math.abs(v.speed);
-  const s = Math.sin(v.yaw), c = Math.cos(v.yaw);
-  const lead = clamp(v.speed * 0.4, -1.3, 1.6);
-  v.footfalls ||= [];
-  const [A, B] = P.legs;
-  let avg = 0;
-  for (const leg of P.legs) {
-    const other = leg === A ? B : A;
-    const hx = alive ? leg.side * 1.15 : leg.side * 1.9, hz = alive ? lead : (leg.side < 0 ? 0.5 : -0.5);
-    const hxw = v.pos.x + c * hx + s * hz, hzw = v.pos.z - s * hx + c * hz;
-    const fp = leg.fp;
-    if (!leg.init || Math.hypot(fp.x - hxw, fp.z - hzw) > 7) { fp.set(hxw, height(hxw, hzw), hzw); leg.init = true; leg.stepping = false; }
-    const dist = Math.hypot(fp.x - hxw, fp.z - hzw);
-    const thr = 0.85 + sp * 0.09;
-    if (alive && !leg.stepping && dist > thr && (!other.stepping || dist > thr * 2)) {
-      leg.stepping = true; leg.u = 0; leg.from.copy(fp);
-      const dx = hxw - fp.x, dz = hzw - fp.z, dl = Math.hypot(dx, dz) || 1, over = Math.min(0.7, 0.2 + sp * 0.1);
-      leg.to.set(hxw + dx / dl * over, 0, hzw + dz / dl * over); leg.to.y = height(leg.to.x, leg.to.z);
-      leg.dur = clamp(0.55 - sp * 0.04, 0.3, 0.55);
-    }
-    if (leg.stepping) {
-      leg.u = Math.min(1, leg.u + dt / leg.dur);
-      const e = smooth(leg.u);
-      fp.lerpVectors(leg.from, leg.to, e);
-      const gy = height(fp.x, fp.z);
-      fp.y = Math.max(gy, THREE.MathUtils.lerp(leg.from.y, leg.to.y, e)) + Math.sin(Math.PI * leg.u) * (0.35 + sp * 0.07);
-      if (leg.u >= 1) { leg.stepping = false; fp.y = height(fp.x, fp.z); v.footfalls.push([fp.x, fp.z]); }
-    } else fp.y = height(fp.x, fp.z);
-    avg += fp.y;
-  }
-  avg /= 2;
-  // the hull rides above its feet: lower when a foot is planted deep, sagging when wrecked
-  const wantHy = alive ? WL.hip + clamp(avg - v.pos.y, -0.7, 0.7) - (A.stepping || B.stepping ? 0.12 : 0) : WL.hip * 0.62;
-  P.hy += (wantHy - P.hy) * (alive ? Math.min(1, dt * 10) : Math.min(1, dt * 1.6));
-  if (dt === 0) P.hy = wantHy;
-  bodyG.position.y = P.hy;
-  bodyG.rotation.z = alive ? (A.stepping ? -0.025 : B.stepping ? 0.025 : 0) : 0.14;
-  bodyG.rotation.x = alive ? 0 : 0.08;
-  if (v.parts.turretPivot) v.parts.turretPivot.position.y += P.hy - WL.hip;
-  // two-bone IK from hip to ankle, knee bent forward
-  v.group.updateMatrixWorld(true);
-  _ik.inv.copy(v.group.matrixWorld).invert();
-  for (const leg of P.legs) {
-    _ik.H.set(leg.side * WL.x, P.hy, 0);
-    // the foot pitches through the step: toes down as it lifts off (hinging on the ball), toes up as it lands
-    // (hinging on the heel); the ankle follows the pitched foot
-    const want = leg.stepping ? (leg.u < 0.3 ? 0.5 * (1 - leg.u / 0.3) : leg.u > 0.8 ? -0.32 * ((leg.u - 0.8) / 0.2) : -0.1 * Math.sin((leg.u - 0.3) / 0.5 * Math.PI)) : 0;
-    leg.pitch = dt === 0 ? want : (leg.pitch || 0) + (want - (leg.pitch || 0)) * Math.min(1, dt * 16);
-    const th0 = leg.pitch, cs = Math.cos(th0), sn = Math.sin(th0), pz = th0 > 0 ? 0.58 : -0.5;
-    _ik.A0.copy(leg.fp).applyMatrix4(_ik.inv); // the sole under the ankle, at rest
-    // origin of the pitched foot: the pivot stays put (Rx(th) * (0, 0, pz) = (0, -pz sn, pz cs))
-    _ik.A.set(_ik.A0.x, _ik.A0.y + pz * sn, _ik.A0.z + pz * (1 - cs));
-    leg.ft.position.copy(_ik.A);
-    leg.ft.quaternion.setFromAxisAngle(_ik.R1.set(1, 0, 0), th0);
-    leg.toe.rotation.x = th0 > 0 ? -th0 * 0.92 : -th0 * 0.5;
-    _ik.A.add(_ik.R2.set(0, WL.ankle, 0).applyQuaternion(leg.ft.quaternion));
-    _ik.d.subVectors(_ik.A, _ik.H);
-    let d = _ik.d.length(); const maxD = L1 + L2 - 0.03;
-    _ik.d.multiplyScalar(1 / (d || 1));
-    if (d > maxD) { d = maxD; _ik.A.copy(_ik.H).addScaledVector(_ik.d, d); leg.ft.position.copy(_ik.A).sub(_ik.R2.set(0, WL.ankle, 0).applyQuaternion(leg.ft.quaternion)); }
-    d = Math.max(d, 0.5);
-    const a = (L1 * L1 - L2 * L2 + d * d) / (2 * d), h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
-    _ik.pole.set(0, 0, 1); _ik.pole.addScaledVector(_ik.d, -_ik.d.z).normalize();
-    _ik.K.copy(_ik.H).addScaledVector(_ik.d, a).addScaledVector(_ik.pole, h);
-    leg.th.position.copy(_ik.H);
-    leg.th.quaternion.setFromUnitVectors(_ik.dn, _ik.tmp.subVectors(_ik.K, _ik.H).normalize());
-    leg.sh.position.copy(_ik.K);
-    leg.sh.quaternion.setFromUnitVectors(_ik.dn, _ik.tmp.subVectors(_ik.A, _ik.K).normalize());
-    // the ram runs from the lug on the thigh to the lug on the shin: sleeve and rod aimed at each other, telescoping with the knee
-    _ik.R1.set(...THIGH_LUG).applyQuaternion(leg.th.quaternion).add(leg.th.position);
-    _ik.R2.set(...SHIN_LUG).applyQuaternion(leg.sh.quaternion).add(leg.sh.position);
-    _ik.d.subVectors(_ik.R2, _ik.R1);
-    const rd = Math.max(0.2, _ik.d.length()); _ik.d.multiplyScalar(1 / rd);
-    leg.rt.position.copy(_ik.R1); leg.rt.quaternion.setFromUnitVectors(_ik.Z, _ik.d); leg.rt.scale.set(1, 1, rd * 0.62);
-    leg.rr.position.copy(_ik.R2); leg.rr.quaternion.setFromUnitVectors(_ik.Z, _ik.d.negate()); leg.rr.scale.set(1, 1, rd * 0.5);
-  }
-}
+const _p = new THREE.Vector3(), _s = new THREE.Vector3();
 
 let vehicleId = 1;
 const wrapA = (a) => Math.atan2(Math.sin(a), Math.cos(a));
-const clamp = THREE.MathUtils.clamp;
 
 // ---------------- the vehicle ----------------
 export class Vehicle {
@@ -363,6 +39,7 @@ export class Vehicle {
     this.t = Math.random() * 10;
     this.lastShot = -99;
     this.kills = 0;
+    this.lod = 0; this.tier = 0;
     this.kneelK = 0;
     this.suppression = 0;
     this.seats = Array.from({ length: def.seats }, () => null); // Unit or null
@@ -409,18 +86,22 @@ export class Vehicle {
   setCockpit(on) {
     if (!!this.cockpitOn === on) return;
     this.cockpitOn = on;
-    const gun = this.parts.gun;
-    this.group.traverse((o) => {
-      if (!o.isMesh) return;
-      for (let p = o; p; p = p.parent) if (p === gun) return;
-      o.visible = !on;
-    });
+    this.parts.setCockpit?.(on);
+    for (const m of this.marks || []) m.visible = !on; // bullet marks ride the joints, not the body mesh
+  }
+  // 0 near, 1 far geometry, 2 far geometry and no shadow: set by the renderer from the camera's distance
+  setLod(level) {
+    if (level === this.lod) return;
+    this.lod = level;
+    this.parts.setLod?.(level);
   }
   // where the driver's eyes are, in the world
   cockpitEye(out = new THREE.Vector3()) {
     const l = this.def.cockpit;
-    out.set(l[0], l[1] + (this.parts.hy !== undefined ? this.parts.hy - WL.hip : 0), l[2]);
     this.group.updateMatrixWorld(true);
+    // a seat that rides the turret (a tank's commander) turns with it
+    if (this.parts.eyeObj) return this.parts.eyeObj.getWorldPosition(out);
+    out.set(l[0], l[1] + (this.parts.hy !== undefined ? this.parts.hy - WL.hip : 0), l[2]);
     return this.group.localToWorld(out);
   }
   hudWeapon() {
@@ -493,8 +174,10 @@ export class Vehicle {
     battle.onVehicleDestroyed?.(this, from);
     this.engine?.stop(); this.engine = null;
     for (const m of this.parts.meshes) m.material = WRECK;
-    // the turret is blown askew
+    this.parts.setDamage?.(2); this.tier = 2;
+    // the turret is blown askew (or, on a tank, clean off)
     this.wreckTurret = { yaw: (Math.random() - 0.5) * 0.9, lift: 0.25 };
+    this.parts.onDestroy?.(this);
     this.cool = [0, 0];
   }
 
@@ -505,13 +188,16 @@ export class Vehicle {
     this.recoil = Math.max(0, this.recoil - dt * 1.6);
     if (!this.alive) { this.updateWreck(dt, battle); return; }
     this.suppression = 0;
+    const tier = this.hp01 < 0.34 ? 2 : this.hp01 < 0.67 ? 1 : 0;
+    if (tier !== this.tier) { this.tier = tier; this.parts.setDamage?.(tier); }
     const d = this.def, c = this.ctrl;
     const driven = this.seats[0] || this.crew.length;
     const thr = driven ? clamp(c.throttle, -1, 1) : 0, str = driven ? clamp(c.steer, -1, 1) : 0;
     // ---- drive
     const fwd = _p.set(Math.sin(this.yaw), 0, Math.cos(this.yaw));
     const slope = (height(this.pos.x + fwd.x, this.pos.z + fwd.z) - height(this.pos.x - fwd.x, this.pos.z - fwd.z)) / 2; // rise per metre ahead
-    const goal = thr > 0 ? thr * d.maxSpeed : thr * d.maxRev;
+    const hurt = this.tier > 1 && d.drive === 'tracked' ? 0.65 : 1; // a wounded engine
+    const goal = thr > 0 ? thr * d.maxSpeed * hurt : thr * d.maxRev * hurt;
     let a = d.accel;
     if (c.brake || (goal === 0 && Math.abs(this.speed) > 0.01)) a = d.brake;
     else if (goal * this.speed < 0) a = d.brake;
@@ -522,7 +208,9 @@ export class Vehicle {
     let g = goal * (1 - clamp(climb, 0, maxUp) / maxUp * 0.7);
     if (climb > maxUp) g = Math.sign(goal) * Math.min(Math.abs(g), 0.4);
     const dv = g - this.speed;
+    const sp0 = this.speed;
     this.speed += clamp(dv, -a * dt, a * dt);
+    this.accel = dt > 0 ? (this.speed - sp0) / dt : 0;
     this.speed -= grade * 9.8 * dt * 0.25 * (Math.abs(this.speed) > 0.05 || c.brake ? 1 : 0.4); // roll with the hill
     if (c.brake && Math.abs(this.speed) < 0.1) this.speed = 0;
     // steering: tracks pivot on the spot, slower when hurtling
@@ -597,7 +285,7 @@ export class Vehicle {
     // other vehicles
     for (const o of battle.vehicles) {
       if (o === this || !o.alive && o.deadT > 60) continue;
-      const dx = o.pos.x - this.pos.x, dz = o.pos.z - this.pos.z, min = (this.def.hx + o.def.hx) * 1.25 + 0.6, dist = Math.hypot(dx, dz);
+      const dx = o.pos.x - this.pos.x, dz = o.pos.z - this.pos.z, min = ((this.def.rad || this.def.hx) + (o.def.rad || o.def.hx)) * 1.25 + 0.6, dist = Math.hypot(dx, dz);
       if (dist < min && dist > 0.01) {
         const k = (min - dist) * (o.alive ? 0.5 : 1);
         this.pos.x -= dx / dist * k; this.pos.z -= dz / dist * k;
@@ -720,31 +408,46 @@ export class Vehicle {
     const big = w.vehicleGun && w.proj === 'shell';
     battle.fx.muzzle(m, dir, big ? 2.6 : 1);
     if (big) {
-      battle.fx.steam(m, dir.clone().multiplyScalar(3), 5, 0.9);
-      battle.fx.smoke(m, dir.clone().multiplyScalar(4), 1.1, 0.4);
-      battle.fx.dust(this.pos.clone().setY(this.pos.y + 0.2), 3, 0.6);
+      // a steam gun vents steam; a diesel tank's cannon throws a fireball of smoke and kicks up the dust under the barrel
+      if (w.smoky) { battle.fx.smoke(m, dir.clone().multiplyScalar(5), 2.2, 1); battle.fx.smoke(m, dir.clone().multiplyScalar(2).setY(1.2), 1.6, 0.6); battle.fx.dust(m.clone().setY(this.pos.y + 0.2), 8, 1.4); }
+      else { battle.fx.steam(m, dir.clone().multiplyScalar(3), 5, 0.9); battle.fx.smoke(m, dir.clone().multiplyScalar(4), 1.1, 0.4); battle.fx.dust(this.pos.clone().setY(this.pos.y + 0.2), 3, 0.6); }
       this.recoil = 1; this.rock = 1;
-    } else this.recoil = Math.min(1, this.recoil + 0.25);
+    } else if (!w.noRecoil) this.recoil = Math.min(1, this.recoil + 0.25);
     battle.audio.play(w.sound, m, who?.isPlayer ? 0.8 : 1);
     battle.heard(who, m);
     this.lastShot = this.t;
   }
 
   effects(dt, battle) {
-    const fx = battle.fx;
+    const fx = battle.fx, d = this.def;
     const moving = Math.abs(this.speed) > 0.5;
     this._steamT = (this._steamT || 0) - dt;
     if (this._steamT <= 0) {
       this._steamT = moving ? 0.12 : 0.35;
-      const p = _p.set(...this.def.steamAt).applyMatrix4(this.group.matrixWorld);
-      fx.steam(p, new THREE.Vector3(0, 1.4 + Math.abs(this.speed) * 0.1, 0), 1, 0.45);
+      if (d.engine === 'diesel') {
+        // exhaust: a thin grey wisp at idle, a thick black cloud when the throttle is open
+        const load = clamp(Math.abs(this.ctrl.throttle) + Math.abs(this.yawRate) * 0.6, 0, 1);
+        for (const at of d.exhaustAt) {
+          const p = _p.set(...at).applyMatrix4(this.group.matrixWorld);
+          fx.smoke(p, new THREE.Vector3(0, 1.3 + load * 1.2, 0), 0.5 + load * 0.7, load > 0.3 ? 1 : 0);
+        }
+      } else {
+        const p = _p.set(...d.steamAt).applyMatrix4(this.group.matrixWorld);
+        fx.steam(p, new THREE.Vector3(0, 1.4 + Math.abs(this.speed) * 0.1, 0), 1, 0.45);
+      }
     }
     if (moving && Math.random() < dt * 14) {
       const s = Math.sign(Math.random() - 0.5), c = Math.cos(this.yaw), sn = Math.sin(this.yaw);
-      fx.dust(new THREE.Vector3(this.pos.x + c * s * 1.0 - sn * Math.sign(this.speed) * 2.2, this.pos.y + 0.1, this.pos.z - sn * s * 1.0 - c * Math.sign(this.speed) * 2.2), 1, 0.5);
+      const off = d.dustX ?? 1.0, back = d.dustBack ?? 2.2;
+      fx.dust(new THREE.Vector3(this.pos.x + c * s * off - sn * Math.sign(this.speed) * back, this.pos.y + 0.1, this.pos.z - sn * s * off - c * Math.sign(this.speed) * back), 1, d.drive === 'tracked' ? 0.8 : 0.5);
     }
     if (this.hp01 < 0.45 && Math.random() < dt * (1 - this.hp01) * 10) fx.smoke(this.center().setY(this.pos.y + 1.3), new THREE.Vector3(0, 2.2, 0), 1.2, 1);
     if (this.hp01 < 0.2 && Math.random() < dt * 8) fx.burn(this.center().setY(this.pos.y + 1.4));
+    // badly hurt: a ruptured line vents steam, or a fuel line trails smoke, from fixed points on the body
+    if (this.tier > 1 && d.leaks && Math.random() < dt * 9) {
+      const at = d.leaks[(Math.random() * d.leaks.length) | 0], p = _p.set(...at).applyMatrix4(this.group.matrixWorld);
+      if (d.engine === 'diesel') fx.smoke(p, new THREE.Vector3(0, 1.8, 0), 0.8, 1); else fx.steam(p, new THREE.Vector3(0, 2.4, 0), 2, 0.55);
+    }
   }
 
   updateWreck(dt, battle) {
@@ -758,7 +461,7 @@ export class Vehicle {
 
   updateEngine(battle) {
     if (!this.alive) return;
-    if (!this.engine && battle.audio?.ctx) this.engine = battle.audio.engine('walker');
+    if (!this.engine && battle.audio?.ctx) this.engine = battle.audio.engine(this.def.engine || 'steam');
     this.engine?.set(Math.min(1, Math.abs(this.speed) / this.def.maxSpeed + Math.abs(this.yawRate) * 0.3 + (this.ctrl.throttle ? 0.15 : 0)), this.pos);
   }
 
@@ -776,7 +479,7 @@ export class Vehicle {
         P.gun.rotation.x = -this.tPitch;
         P.gun.position.z = P.gunZ - this.recoil * P.recoilK;
         P.turretPivot.position.y = piv[1];
-      } else if (this.wreckTurret) {
+      } else if (this.wreckTurret && !P.ownWreck) {
         P.turretPivot.rotation.y = this.tYaw + this.wreckTurret.yaw;
         P.turretPivot.rotation.z = 0.25;
         P.gun.rotation.x = 0.3;

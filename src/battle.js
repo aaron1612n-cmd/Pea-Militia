@@ -1001,9 +1001,9 @@ export class Battle {
   }
   spawnTeamVehicle(t, crew = true, slot = 0, kind = 'walker') {
     const f = Math.atan2(-t.base.x, -t.base.z);
-    // pads in a row either side of the base: walkers in a row
-    const k = { walker: 14 }[kind] ?? 14;
-    const side = Math.cos(f) * (slot ? -1 : 1), sz = -Math.sin(f) * (slot ? -1 : 1);
+    // pads in a row either side of the base: slots 0 and 1 are the near pair, 2 and 3 the next pair out
+    const k = 14 + 14 * (slot >> 1), dir = slot & 1 ? -1 : 1;
+    const side = Math.cos(f) * dir, sz = -Math.sin(f) * dir;
     const at = { x: t.base.x + side * k + Math.sin(f) * 6, z: t.base.z + sz * k + Math.cos(f) * 6 };
     const v = this.addVehicle(kind, t.id, at.x, at.z, f, { crew });
     v.fromBase = true; v.slot = slot;

@@ -106,13 +106,20 @@ export function markUnit(u, point, dir, zone, kind = 'bullet', size = 0.05) {
 const _rc = new THREE.Raycaster(), _geo = new THREE.PlaneGeometry(1, 1), _mat = markMaterial();
 const _z = new THREE.Vector3(0, 0, 1), _nq = new THREE.Quaternion(), _rq = new THREE.Quaternion();
 export function markVehicle(v, from, dir, size = 0.18) {
-  if (!v.group || !v.parts?.meshes) return null;
+  const targets = v.parts?.hitMeshes || v.parts?.meshes;
+  if (!v.group || !targets) return null;
   v.group.updateMatrixWorld(true);
   _rc.set(from, dir); _rc.far = 400;
-  const h = _rc.intersectObjects(v.parts.meshes, false)[0];
+  const h = _rc.intersectObjects(targets, false)[0];
   if (!h?.face) return null;
-  const obj = h.object;
+  // a skinned body is one mesh: the mark rides the joint that carries the triangle it hit (a thigh, the turret)
+  let obj = h.object;
   const n = h.face.normal.clone().transformDirection(obj.matrixWorld);
+  if (obj.isSkinnedMesh) {
+    const si = obj.geometry.attributes.skinIndex, sw = obj.geometry.attributes.skinWeight;
+    const vi = [h.face.a, h.face.b, h.face.c].reduce((best, i) => (sw.getX(i) > sw.getX(best) ? i : best), h.face.a);
+    obj = obj.skeleton.bones[si.getX(vi)];
+  }
   const m = new THREE.Mesh(_geo, _mat);
   m.position.copy(obj.worldToLocal(h.point.clone().addScaledVector(n, 0.012)));
   // orient in world, then bring into the mesh's frame
