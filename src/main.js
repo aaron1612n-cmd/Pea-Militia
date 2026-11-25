@@ -453,8 +453,16 @@ $('endMenu').addEventListener('click', openMenu);
 $('pauseBtn').addEventListener('click', () => pause(true));
 $('sbxBtn').addEventListener('click', () => sandbox.toggle());
 $('freeBtn').addEventListener('click', () => toggleFree());
+// compact HUD: U or the eye button hides the extras; the follow bar fades after 4 s without input
+function setLite(on) { document.documentElement.dataset.lite = on ? '1' : '0'; try { localStorage.setItem('hudLite', on ? '1' : '0'); } catch {} }
+try { setLite(localStorage.getItem('hudLite') === '1'); } catch {}
+$('hudBtn').addEventListener('click', () => setLite(document.documentElement.dataset.lite !== '1'));
+let idleTimer = 0;
+const wake = () => { document.documentElement.dataset.idle = '0'; clearTimeout(idleTimer); idleTimer = setTimeout(() => { document.documentElement.dataset.idle = '1'; }, 4000); };
+for (const ev of ['pointerdown', 'pointermove', 'keydown', 'touchstart']) addEventListener(ev, wake, { passive: true });
+wake();
 $('palMore').addEventListener('click', () => sandbox.more());
-for (const id of ['pauseBtn', 'sbxBtn', 'freeBtn']) $(id).addEventListener('pointerdown', (e) => e.stopPropagation());
+for (const id of ['pauseBtn', 'sbxBtn', 'freeBtn', 'hudBtn']) $(id).addEventListener('pointerdown', (e) => e.stopPropagation());
 
 // losing the mouse lock mid-battle (Esc) pauses, unless the palette took it
 input.onLockRequest = () => { window.__lockAsked = (window.__lockAsked || 0) + 1; };
@@ -486,6 +494,7 @@ for (const [el, fn] of [[aimBtn, () => { adsToggle = !adsToggle; aimBtn.setAttri
 
 addEventListener('keydown', (e) => {
   if (e.code === 'KeyM') audio.setMuted(!audio.muted);
+  if (e.code === 'KeyU') setLite(document.documentElement.dataset.lite !== '1');
   if (e.code === 'KeyH' && state === 'play') startTutorial();
   if (e.code === 'Escape' && state === 'pause') pause(false);
   if (e.code === 'KeyP' && (state === 'play' || state === 'pause')) pause(state === 'play');

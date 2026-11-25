@@ -61,8 +61,8 @@ export class Hud {
       if (d > 45 || d < 2) continue;
       V.set(u.pos.x, u.pos.y + 1.45, u.pos.z).project(camera);
       if (V.z > 1 || Math.abs(V.x) > 1 || Math.abs(V.y) > 1) continue;
-      const x = (V.x * 0.5 + 0.5) * W, y = (-V.y * 0.5 + 0.5) * H, s = (4 + 3 * (1 - d / 45)) * dpr;
-      g.globalAlpha = 0.85 * (1 - d / 55) * (u.squad === player.squad ? 1 : 0.7);
+      const x = (V.x * 0.5 + 0.5) * W, y = (-V.y * 0.5 + 0.5) * H, s = (1.5 + 3 * Math.max(0, 1 - d / 45) ** 1.5) * dpr;
+      g.globalAlpha = Math.max(0.3, 0.85 * (1 - d / 55)) * (u.squad === player.squad ? 1 : 0.7);
       g.beginPath(); g.moveTo(x - s, y - s); g.lineTo(x + s, y - s); g.lineTo(x, y + s * 0.4); g.closePath(); g.fill();
     }
     for (const v of battle.vehicles) {
@@ -71,7 +71,7 @@ export class Hud {
       if (d > 90 || d < 4) continue;
       V.set(v.pos.x, v.pos.y + 3.2, v.pos.z).project(camera);
       if (V.z > 1 || Math.abs(V.x) > 1 || Math.abs(V.y) > 1) continue;
-      const x = (V.x * 0.5 + 0.5) * W, y = (-V.y * 0.5 + 0.5) * H, s = 9 * dpr;
+      const x = (V.x * 0.5 + 0.5) * W, y = (-V.y * 0.5 + 0.5) * H, s = (3 + 3 * Math.max(0, 1 - d / 90)) * dpr;
       g.globalAlpha = 0.9;
       g.beginPath(); g.moveTo(x - s, y - s); g.lineTo(x + s, y - s); g.lineTo(x, y + s * 0.6); g.closePath(); g.fill();
     }
@@ -84,7 +84,7 @@ export class Hud {
       if (V.z > 1 || Math.abs(V.x) > 1 || Math.abs(V.y) > 1) continue;
       // fog of war: a tag only shows while you can actually see the target, never through cover
       if (!battle.los(player.eye(EYE), e.center(TGT))) continue;
-      const x = (V.x * 0.5 + 0.5) * W, y = (-V.y * 0.5 + 0.5) * H, s = 7 * dpr;
+      const x = (V.x * 0.5 + 0.5) * W, y = (-V.y * 0.5 + 0.5) * H, s = 5 * dpr;
       g.globalAlpha = Math.min(1, (e.markedUntil - battle.time) / 2, 1 - (battle.time - e.seenAt) / 0.6);
       g.fillStyle = '#ff7a1a'; g.strokeStyle = '#101316'; g.lineWidth = 1.5 * dpr;
       g.beginPath(); g.moveTo(x, y - s); g.lineTo(x + s, y); g.lineTo(x, y + s); g.lineTo(x - s, y); g.closePath(); g.fill(); g.stroke();
@@ -119,7 +119,7 @@ export class Hud {
       const p = proj(u, 1.5);
       if (!p) continue;
       pts.push({ u, x: p.x, y: p.y, d });
-      const s = (3.5 + 4 * Math.max(0, 1 - d / 70)) * dpr;
+      const s = (1.5 + 3 * Math.max(0, 1 - d / 70) ** 1.5) * dpr;
       g.globalAlpha = Math.max(0.25, 0.9 * (1 - d / 160));
       g.fillStyle = TEAMS[u.team].ui;
       g.strokeStyle = '#101316'; g.lineWidth = 1.2 * dpr;
@@ -135,7 +135,7 @@ export class Hud {
         this.hover = hit;
         const p = pts.find((q) => q.u === hit);
         g.strokeStyle = acc; g.lineWidth = 2 * dpr;
-        const r = 13 * dpr;
+        const r = 9 * dpr;
         g.beginPath(); g.arc(p.x, p.y, r, 0, Math.PI * 2); g.stroke();
         g.font = `600 ${Math.round(12 * dpr)}px "Chakra Petch", sans-serif`; g.textAlign = 'center';
         const txt = `${KINDS[hit.kind]?.name || 'Soldier'} · ${TEAMS[hit.team].short}`;
@@ -163,7 +163,7 @@ export class Hud {
       g.strokeText(`${d}m`, bx, by - r - 6 * dpr); g.fillText(`${d}m`, bx, by - r - 6 * dpr);
     }
     if (a) {
-      const s = 8 * dpr;
+      const s = 5 * dpr;
       g.fillStyle = acc; g.globalAlpha = 1;
       g.beginPath(); g.moveTo(a.x - s, a.y - s); g.lineTo(a.x + s, a.y - s); g.lineTo(a.x, a.y + s * 0.6); g.closePath(); g.fill();
     }
