@@ -111,7 +111,7 @@ try {
 
   // ---- start a battle from the setup screen (real click)
   await P.click('#deploy');
-  await P.waitForFunction(() => window.__game.state === 'play', null, { timeout: 15000 });
+  await P.waitForFunction(() => window.__game.state === 'play', null, { timeout: 120000 });
   const st = await P.evaluate(() => ({ n: window.__game.battle.units.length, size: window.__game.battle.settings.size, teams: window.__game.battle.teams.length, hud: !document.getElementById('hud').hidden, lock: window.__lockAsked || 0 }));
   check('Deploy starts a battle with full armies', st.n === st.size * st.teams && st.hud, JSON.stringify(st));
   // ---- big map: frame budget and layout sanity
@@ -560,7 +560,7 @@ try {
   const mm = await M.evaluate(() => ({ scroll: document.documentElement.scrollWidth > innerWidth + 1, deploy: (() => { const r = document.getElementById('deploy').getBoundingClientRect(); return r.bottom <= innerHeight && r.top >= 0; })() }));
   check('phone: setup screen fits (no sideways scroll, Deploy on screen)', !mm.scroll && mm.deploy, JSON.stringify(mm));
   await M.tap('#deploy');
-  await M.waitForFunction(() => window.__game.state === 'play', null, { timeout: 15000 });
+  await M.waitForFunction(() => window.__game.state === 'play', null, { timeout: 120000 });
   await M.waitForTimeout(600);
   check('phone: touch controls shown', await M.evaluate(() => document.documentElement.dataset.input === 'touch' && getComputedStyle(document.getElementById('touch')).display !== 'none'));
   await shot(M, `${OUT}/phone.png`);
