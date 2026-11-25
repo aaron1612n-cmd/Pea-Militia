@@ -34,6 +34,8 @@ export const PART_GEO = {
 
 const MP = new THREE.Vector3(), MN = new THREE.Vector3(), MQ = new THREE.Quaternion(), MQ2 = new THREE.Quaternion(), MM = new THREE.Matrix4(), MS = new THREE.Vector3(), Z = new THREE.Vector3(0, 0, 1);
 const ZERO = new THREE.Matrix4().makeScale(0, 0, 0);
+const LS = new THREE.Matrix4();
+const LIMB_R = { thigh: 1, shin: 0.76, upperArm: 0.69, foreArm: 0.53 }; // girth against the lite limb tube (a thigh)
 const SLOT_M = new THREE.Matrix4(), SLOT_T = new THREE.Matrix4();
 const UI_COL = TEAMS.map((t) => new THREE.Color(t.ui).lerp(new THREE.Color('#ffffff'), 0.35)); // worn kit: a light army tint over its own colours
 const HELM_COL = TEAMS.map((t) => new THREE.Color(t.ui).multiplyScalar(0.72));
@@ -132,21 +134,18 @@ export class Crowd {
     }
     // the lite soldier (see lod.js): thinned copies of the same parts for the middle and far distance. They are their own meshes
     // with their own counters, so a distant soldier never touches the near-detail meshes at all.
-    const LG = liteGeos(), lite = this.lite = { np: 0, nf: 0, nh: 0, nl: 0, hn: {}, hn2: {}, gn: 0, helmets: {}, hands: {} };
+    const LG = liteGeos(), lite = this.lite = { np: 0, nf: 0, nh: 0, nl: 0, hn: {}, hn2: {}, gn: 0, nlimb: 0, nhand: 0, helmets: {} };
     for (const k of HELMET_KINDS) { lite.helmets[k] = mks(LG.helmets[k], helmMat, cap, true); lite.helmets[k].name = `crowd-lite-helmet-${k}`; }
     lite.pelvis = mks(LG.pelvis, this.pelvis.material, cap, true);
     lite.boot = mks(LG.boot, this.boot.material, cap * 2, false);
     lite.delt = mks(LG.delt, this.delt.material, cap * 2, true);
-    lite.upperArm = mks(LG.limbs.upperArm, this.upperArm.material, cap * 2, true);
-    lite.foreArm = mks(LG.limbs.foreArm, this.foreArm.material, cap * 2, true);
-    lite.thigh = mks(LG.limbs.thigh, this.thigh.material, cap * 2, true);
-    lite.shin = mks(LG.limbs.shin, this.shin.material, cap * 2, true);
+    lite.limb = mks(LG.limb, this.thigh.material, cap * 8, true); // all four limb segments share one tapered tube; the matrix scales it to each
     lite.gear = mks(LG.gear.rifleman, gearMat, cap, true, { sway: true });
-    for (const id of ['L', 'G', 'R']) { lite.hands[id] = mks(LG.hands[id], glove, cap, false); lite.hands[id].name = `crowd-lite-hands-${id}`; }
-    for (const m of [lite.pelvis, lite.boot, lite.delt, lite.upperArm, lite.foreArm, lite.thigh, lite.shin, lite.gear, ...Object.values(lite.hands), ...Object.values(lite.helmets)]) m.name ||= 'crowd-lite';
+    lite.hand = mks(LG.hand, glove, cap * 2, false); lite.hand.name = 'crowd-lite-hands'; // one mitten for every grip
+    for (const m of [lite.pelvis, lite.boot, lite.delt, lite.limb, lite.gear, lite.hand, ...Object.values(lite.helmets)]) m.name ||= 'crowd-lite';
     lite.gear.name = 'crowd-lite-gear'; lite.pelvis.name = 'crowd-lite-pelvis'; lite.boot.name = 'crowd-lite-boots'; lite.delt.name = 'crowd-lite-shoulders';
-    lite.upperArm.name = 'crowd-lite-upperarm'; lite.foreArm.name = 'crowd-lite-forearm'; lite.thigh.name = 'crowd-lite-thigh'; lite.shin.name = 'crowd-lite-shin';
-    for (const m of [...Object.values(lite.hands), lite.delt, lite.gear]) m.castShadow = false;
+    lite.limb.name = 'crowd-lite-limbs';
+    for (const m of [lite.hand, lite.delt, lite.gear]) m.castShadow = false;
     this.np = 0;
     this.body.name = 'crowd-body'; this.head.name = 'crowd-head'; this.boot.name = 'crowd-boots'; this.toe.name = 'crowd-toes'; this.pelvis.name = 'crowd-pelvis'; this.neck.name = 'crowd-neck'; this.delt.name = 'crowd-shoulders';
     // wound faces where limbs and heads were torn off, and ruined heads (see wreck.js)
@@ -203,6 +202,11 @@ export class Crowd {
   }
 
   // class (0..5) and a per-soldier seed make the camouflage; a negative style is a distant soldier, drawn plain
+  // one lite limb segment: matrix m (pose-space, length already fitted) thinned to the girth ratio r
+  limb(L, m, r, c, sv) {
+    const i = L.nlimb++, e = LS.makeScale(r, r, 1);
+    L.limb.setMatrixAt(i, m.multiply(e)); L.limb.instanceColor.setXYZ(i, c.r, c.g, c.b); this.style(L.limb, i, sv);
+  }
   style(mesh, i, v) { mesh.geometry.attributes.iStyle.setX(i, v); }
   swayTo(mesh, i, sw) {
     const g = mesh.geometry.attributes;
@@ -226,9 +230,8 @@ export class Crowd {
     for (const k of KIND_IDS) this.gn[k] = this.mn[k] = 0;
     for (const k of HELMET_KINDS) this.hn[k] = 0;
     for (const g in this.hands) this.hn2[g] = 0;
-    const L = this.lite; L.np = L.nf = L.nh = L.nl = L.gn = this.np = 0;
+    const L = this.lite; L.np = L.nf = L.nh = L.nl = L.gn = L.nlimb = L.nhand = this.np = 0;
     for (const k of HELMET_KINDS) L.hn[k] = 0;
-    for (const g in L.hands) L.hn2[g] = 0;
   }
 
   // world: the unit's world matrix; p: pose() output (unit-local); opts: { body: false } hides
@@ -317,9 +320,16 @@ export class Crowd {
       if (!L) { if (!(hl & LOST.HEAD)) { this.neck.setMatrixAt(pi, t.multiplyMatrices(world, p.neck)); this.neck.instanceColor.setXYZ(pi, sk.r * 1.6, sk.g * 1.6, sk.b * 1.6); } else this.neck.setMatrixAt(pi, ZERO); }
       for (let k = 0; k < 2; k++) {
         if (lost & (LOST.LEG << k)) { this.addStump(world, p.legs[k][0], 0.056, tc, 0.03); continue; } // torn off at the hip: leg, shin and boot go together
-        const TH = L ? L.thigh : this.thigh, SH = L ? L.shin : this.shin;
-        if ((L ? L.nl : this.nl) + 1 > this.cap * 2) continue;
-        const j = L ? L.nl++ : this.nl++;
+        if (L) { // lite: both segments go into the one limb mesh, scaled to the segment's girth
+          if (L.nlimb + 2 > this.cap * 8) continue;
+          this.limb(L, t.multiplyMatrices(world, p.legs[k][0]), LIMB_R.thigh, tc, sv);
+          if (lost & (LOST.SHIN << k)) { this.addStump(world, p.legs[k][1], 0.043, tc, 0.03); continue; }
+          this.limb(L, t.multiplyMatrices(world, p.legs[k][1]), LIMB_R.shin, tc, sv);
+          continue;
+        }
+        const TH = this.thigh, SH = this.shin;
+        if (this.nl + 1 > this.cap * 2) continue;
+        const j = this.nl++;
         TH.setMatrixAt(j, t.multiplyMatrices(world, p.legs[k][0]));
         TH.instanceColor.setXYZ(j, tc.r, tc.g, tc.b);
         this.style(TH, j, sv); this.style(SH, j, sv);
@@ -353,9 +363,19 @@ export class Crowd {
       const h = p.hands[k];
       const al = opts.lost || 0;
       if (al & (LOST.ARM << k)) { this.addStump(world, p.arms[k][0], 0.039, sc, 0.03); continue; } // torn off at the shoulder
-      const UA = L ? L.upperArm : this.upperArm, FA = L ? L.foreArm : this.foreArm, DL = L ? L.delt : this.delt;
-      if ((L ? L.nh : this.nh) >= this.cap * 2) break;
-      const j = L ? L.nh++ : this.nh++;
+      if (L) { // lite: shoulder pad, two limb segments and one mitten
+        if (L.nh >= this.cap * 2 || L.nlimb + 2 > this.cap * 8) break;
+        const dj = L.nh++;
+        L.delt.setMatrixAt(dj, t.multiplyMatrices(world, p.delts[k])); L.delt.instanceColor.setXYZ(dj, sc.r, sc.g, sc.b); this.style(L.delt, dj, sv);
+        this.limb(L, t.multiplyMatrices(world, p.arms[k][0]), LIMB_R.upperArm, sc, sv);
+        if (al & (LOST.FORE << k)) { this.addStump(world, p.arms[k][1], 0.031, sc, 0.024); continue; }
+        this.limb(L, t.multiplyMatrices(world, p.arms[k][1]), LIMB_R.foreArm, sc, sv);
+        if (!opts.far2 && L.nhand < this.cap * 2) { const n = L.nhand++; L.hand.setMatrixAt(n, t.multiplyMatrices(world, h)); this.style(L.hand, n, sv); }
+        continue;
+      }
+      const UA = this.upperArm, FA = this.foreArm, DL = this.delt;
+      if (this.nh >= this.cap * 2) break;
+      const j = this.nh++;
       UA.setMatrixAt(j, t.multiplyMatrices(world, p.arms[k][0]));
       UA.instanceColor.setXYZ(j, sc.r, sc.g, sc.b);
       DL.setMatrixAt(j, t.multiplyMatrices(world, p.delts[k])); DL.instanceColor.setXYZ(j, sc.r, sc.g, sc.b);
@@ -363,9 +383,8 @@ export class Crowd {
       if (al & (LOST.FORE << k)) { FA.setMatrixAt(j, ZERO); this.addStump(world, p.arms[k][1], 0.031, sc, 0.024); continue; } // torn off at the elbow, hand and all
       // open fingers when the hand is free, otherwise the cup / grip / foregrip hand the gun asks for
       const free = p.curl[k] < 0.5;
-      let hid = free ? (k === 0 ? 'oL' : 'oR') : k === 0 ? (HOLD[opts.weapon]?.grips?.lk === 'grip' ? 'G' : 'L') : 'R';
-      if (L) hid = hid === 'oL' ? 'L' : hid === 'oR' ? 'R' : hid; // the lite soldier has no spread fingers
-      if (!opts.far2) { const hm = L ? L.hands[hid] : this.hands[hid], n = L ? L.hn2[hid]++ : this.hn2[hid]++; hm.setMatrixAt(n, t.multiplyMatrices(world, h)); this.style(hm, n, sv); } // a glove past ~100 m is under a pixel
+      const hid = free ? (k === 0 ? 'oL' : 'oR') : k === 0 ? (HOLD[opts.weapon]?.grips?.lk === 'grip' ? 'G' : 'L') : 'R';
+      if (!opts.far2) { const hm = this.hands[hid], n = this.hn2[hid]++; hm.setMatrixAt(n, t.multiplyMatrices(world, h)); this.style(hm, n, sv); } // a glove past ~100 m is under a pixel
       FA.setMatrixAt(j, t.multiplyMatrices(world, p.arms[k][1]));
       FA.instanceColor.setXYZ(j, sc.r, sc.g, sc.b);
     }
@@ -396,9 +415,8 @@ export class Crowd {
     for (const k in this.hn) c.hn[k] = this.hn[k];
     for (const k in this.hn2) c.hn2[k] = this.hn2[k];
     for (const k in this.wn) { c.wn[k] = this.wn[k]; c.wnL[k] = this.wnL[k]; }
-    c.np = this.np; const L = this.lite, l = c.lite; l.np = L.np; l.nf = L.nf; l.nh = L.nh; l.nl = L.nl; l.gn = L.gn;
+    c.np = this.np; const L = this.lite, l = c.lite; l.np = L.np; l.nf = L.nf; l.nh = L.nh; l.nl = L.nl; l.gn = L.gn; l.nlimb = L.nlimb; l.nhand = L.nhand;
     for (const k in L.hn) l.hn[k] = L.hn[k];
-    for (const k in L.hn2) l.hn2[k] = L.hn2[k];
     this.snapped = true;
   }
 
@@ -424,9 +442,8 @@ export class Crowd {
     fin(this.thigh, this.nl, S(sh?.nl, this.nl)); fin(this.shin, this.nl, S(sh?.nl, this.nl));
     const L = this.lite, ls = sh?.lite;
     for (const k of HELMET_KINDS) fin(L.helmets[k], L.hn[k], S(ls?.hn[k], L.hn[k]));
-    fin(L.pelvis, L.np, S(ls?.np, L.np)); fin(L.boot, L.nf, S(ls?.nf, L.nf)); fin(L.delt, L.nh, S(ls?.nh, L.nh)); fin(L.upperArm, L.nh, S(ls?.nh, L.nh)); fin(L.foreArm, L.nh, S(ls?.nh, L.nh));
-    fin(L.thigh, L.nl, S(ls?.nl, L.nl)); fin(L.shin, L.nl, S(ls?.nl, L.nl)); fin(L.gear, L.gn, S(ls?.gn, L.gn));
-    for (const g in L.hands) fin(L.hands[g], L.hn2[g], S(ls?.hn2[g], L.hn2[g]));
+    fin(L.pelvis, L.np, S(ls?.np, L.np)); fin(L.boot, L.nf, S(ls?.nf, L.nf)); fin(L.delt, L.nh, S(ls?.nh, L.nh)); fin(L.limb, L.nlimb, S(ls?.nlimb, L.nlimb));
+    fin(L.gear, L.gn, S(ls?.gn, L.gn)); fin(L.hand, L.nhand, S(ls?.nhand, L.nhand));
     fin(this.mark, this.nm); fin(this.markW, this.nmw);
     fin(this.stump, this.ns, S(sh?.ns, this.ns)); fin(this.wreckFace, this.nwf, S(sh?.nwf, this.nwf)); fin(this.wreckTop, this.nwt, S(sh?.nwt, this.nwt));
     fin(this.wound, this.nw); fin(this.dentBody, this.nd, S(sh?.nd, this.nd));
