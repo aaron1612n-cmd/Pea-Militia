@@ -90,8 +90,8 @@ function lerpRadius(radii, t) {
 
 // ---- torso: pelvis, belly and chest in one welded shell. The wound decals and dents wrap this
 // block's rounded-box shell (see wounds.js), so it stays within a couple of centimetres of it.
-const WIDTH = [[0, 0.78], [0.12, 0.88], [0.3, 0.84], [0.46, 0.86], [0.64, 0.97], [0.8, 1], [0.94, 0.94], [1, 0.84]];
-const DEPTH = [[0, 0.86], [0.15, 0.95], [0.4, 0.88], [0.62, 0.95], [0.82, 1], [1, 0.88]];
+const WIDTH = [[0, 0.78], [0.12, 0.85], [0.3, 0.77], [0.46, 0.8], [0.64, 0.97], [0.8, 1.04], [0.94, 0.96], [1, 0.8]];
+const DEPTH = [[0, 0.86], [0.15, 0.92], [0.4, 0.82], [0.62, 0.95], [0.82, 1], [1, 0.84]];
 const widthAt = (t) => curve(t, WIDTH), depthAt = (t) => curve(t, DEPTH);
 export function torsoGeo(seg = 6) {
   const g = new RoundedBoxGeometry(U.W, U.H, U.D, seg, U.R);
@@ -202,7 +202,7 @@ function limbSolid(st, { n = 10, p = 2.2, shade = 1 } = {}) {
     return out;
   };
   const all = [...cap(first, -1).reverse(), ...stations, ...cap(last, 1)];
-  return done(loftZ(all, { n, p }, { crease: 0 }), shade);
+  return done(loftZ(all, { n, p, sub: 2 }, { crease: 0 }), shade);
 }
 // small faceted armour cup standing on a limb, axis along +y at pos
 function cupY(pts, { n = 8, sx = 1, sz = 1, shade = 0.45, pos, flipY = false }) {
@@ -234,7 +234,7 @@ function hem(st, z, shade = 0.5) {
   return done(loftZ([{ t: z - 0.0035, rx: rx + 0.0003, ry: ry + 0.0003, cy }, { t: z - 0.002, rx: rx + 0.0018, ry: ry + 0.0018, cy }, { t: z + 0.002, rx: rx + 0.0018, ry: ry + 0.0018, cy }, { t: z + 0.0035, rx: rx + 0.0003, ry: ry + 0.0003, cy }], { n: 12 }, { crease: 30 }), shade);
 }
 const TH = [[-0.1, 0.058, 0.061, 0.0], [-0.07, 0.061, 0.067, 0.004], [-0.02, 0.058, 0.064, 0.004], [0.04, 0.05, 0.054, 0.002], [0.08, 0.043, 0.046, 0.0], [0.1, 0.042, 0.044, 0.0]];
-const SH = [[-0.1, 0.043, 0.045, 0.0], [-0.07, 0.044, 0.047, 0.0], [-0.03, 0.042, 0.049, -0.004], [0.03, 0.036, 0.04, -0.002], [0.075, 0.033, 0.034, 0.0], [0.1, 0.031, 0.032, 0.0]];
+const SH = [[-0.1, 0.043, 0.045, 0.0], [-0.07, 0.044, 0.047, 0.0], [-0.03, 0.042, 0.049, -0.004], [0.03, 0.038, 0.042, -0.002], [0.075, 0.0365, 0.038, 0.0], [0.1, 0.0365, 0.038, 0.0]];
 const UA = [[-0.1, 0.04, 0.042, 0.0], [-0.065, 0.043, 0.045, 0.002], [-0.02, 0.038, 0.04, 0.002], [0.04, 0.032, 0.033, 0.0], [0.09, 0.03, 0.031, 0.0], [0.1, 0.03, 0.031, 0.0]];
 const FA = [[-0.1, 0.031, 0.032, 0.0], [-0.066, 0.034, 0.035, 0.0], [-0.02, 0.029, 0.03, 0.0], [0.04, 0.0245, 0.0255, 0.0], [0.085, 0.0225, 0.023, 0.0], [0.1, 0.0235, 0.024, 0.0]];
 const taper = (z0, z1, wTop, wBot) => (z) => { const w = wBot + (wTop - wBot) * sstep(z1, z0, z); return [-w, w]; };
@@ -280,7 +280,7 @@ for (const k of ['thigh', 'shin', 'upperArm', 'foreArm']) LIMB[k] = limb(k);
 // ball of the foot (U.BALL): the heel-and-shaft, and the toe box, which stays flat on the ground
 // while the heel rises at push-off.
 export const BOOT_TOP = 0.15;
-const BOOT = { leather: [0.17, 0.135, 0.1], cap: [0.2, 0.158, 0.115], cuff: [0.09, 0.075, 0.06], sole: [0.045, 0.042, 0.04], heel: [0.035, 0.033, 0.03], tongue: [0.24, 0.2, 0.15], lace: [0.5, 0.46, 0.38], stitch: [0.3, 0.26, 0.19] };
+const BOOT = { leather: [0.095, 0.075, 0.058], cap: [0.125, 0.098, 0.075], cuff: [0.06, 0.05, 0.04], sole: [0.025, 0.024, 0.023], heel: [0.02, 0.019, 0.018], tongue: [0.16, 0.13, 0.1], lace: [0.5, 0.46, 0.38], stitch: [0.26, 0.22, 0.15] };
 // stations cut at z0..z1 (keeps the shape exactly: a station is added where the cut falls)
 function cutStations(tab, z0, z1) {
   const at = (z) => { let i = 1; while (i < tab.length - 1 && z > tab[i][0]) i++; const a = tab[i - 1], b = tab[i], k = Math.min(1, Math.max(0, (z - a[0]) / (b[0] - a[0]))); return [z, ...a.slice(1).map((v, j) => v + (b[j + 1] - v) * k)]; };
@@ -442,6 +442,7 @@ export const fistGeo = () => handGeos().left;
 // ---- pelvis: origin at the hip line (the hip joints sit at x = +-U.HIP_X), +y up, +z forward.
 // Hips, seat and crotch in trouser cloth with a waistband, belt loops and a fly seam; the legs hang
 // from it and it turns against the chest. The upper edge hides inside the torso's rounded bottom.
+const PELVIS_SLIM = new THREE.Matrix4().makeScale(0.9, 1, 0.94);
 export function pelvisGeo() {
   const l = [];
   const st = [
@@ -449,14 +450,16 @@ export function pelvisGeo() {
     { t: 0.02, rx: 0.12, rz: 0.086, cz: -0.004 }, { t: 0.05, rx: 0.106, rz: 0.08, cz: -0.002 },
   ];
   l.push(done(loftY(st.map((q) => ({ ...q, p: 2.4 })), { n: 20 }, { crease: 0 }), 1));
-  // hip joint covers: a rounded cap where each thigh swings in
-  for (const sx of [-1, 1]) l.push(bake(blob(0.066, 0.064, 0.066, 12, 8), 1, [sx * U.HIP_X, -0.004, 0]));
   // waistband and belt loops
   l.push(done(loftY([{ t: 0.004, rx: 0.123, rz: 0.0885, cz: -0.005, p: 2.4 }, { t: 0.007, rx: 0.1255, rz: 0.0905, cz: -0.005, p: 2.4 }, { t: 0.034, rx: 0.1255, rz: 0.0905, cz: -0.004, p: 2.4 }, { t: 0.037, rx: 0.123, rz: 0.0885, cz: -0.004, p: 2.4 }], { n: 20 }, { crease: 35 }), 0.62));
   for (let i = 0; i < 7; i++) { const a = (i / 7) * Math.PI * 2 + 0.2; l.push(done(plate([[-0.006, 0], [0.006, 0], [0.006, 0.04], [-0.006, 0.04]], 0.004, { bevel: 0.001 }), 0.5, { pos: [Math.sin(a) * 0.1262, 0.0, Math.cos(a) * 0.0912 - 0.005], rot: [0, a, 0] })); }
   // fly and side seams as raised piping
   l.push(done(tubePath([[0, 0.004, 0.0905], [0.0, -0.04, 0.0845], [0.002, -0.085, 0.072]], 0.0017, { n: 4, seg: 10 }), 0.62));
   for (const sx of [-1, 1]) l.push(done(tubePath([[sx * 0.1262, 0.004, -0.004], [sx * 0.1338, -0.04, -0.005], [sx * 0.1208, -0.08, -0.008]], 0.0018, { n: 4, seg: 10 }), 0.62));
+  // the trouser block is slimmer through the hips than the first build; the hip joints stay where they are
+  for (const g of l) g.applyMatrix4(PELVIS_SLIM);
+  // hip joint covers: a rounded cap where each thigh swings in
+  for (const sx of [-1, 1]) l.push(bake(blob(0.062, 0.062, 0.064, 12, 8), 1, [sx * U.HIP_X, -0.004, 0]));
   return merge(l);
 }
 

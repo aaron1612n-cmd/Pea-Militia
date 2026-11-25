@@ -125,7 +125,30 @@ export function loft(rings, { cap0 = true, cap1 = true, crease = 0, smooth = tru
 
 // Stations along an axis → rings. kind 'y' (ringY), 'z' (ringZ) or 'x' (ringX). Each station:
 // { t (position on the axis), rx, rz|ry, cx, cz|cy, p }. `opts` fills in the ring options.
+// Insert k smooth stations between each pair (Catmull-Rom through every numeric field), so a coarse
+// profile becomes a rounded one without hand-writing more rows.
+export function refine(st, k) {
+  if (!k || st.length < 3) return st;
+  const keys = [...new Set(st.flatMap((s) => Object.keys(s)))].filter((f) => st.every((s) => s[f] === undefined || typeof s[f] === 'number'));
+  const out = [];
+  const g = (i, f) => { const s = st[Math.max(0, Math.min(st.length - 1, i))]; return s[f] ?? st[i < 0 ? 0 : Math.min(st.length - 1, i)][f] ?? 0; };
+  for (let i = 0; i < st.length - 1; i++) {
+    for (let j = 0; j < k; j++) {
+      const u = j / k, u2 = u * u, u3 = u2 * u, o = { ...st[i] };
+      for (const f of keys) {
+        if (f === 'p') { o[f] = st[i][f] !== undefined && st[i + 1][f] !== undefined ? st[i][f] + (st[i + 1][f] - st[i][f]) * u : st[i][f]; continue; }
+        const p0 = g(i - 1, f), p1 = g(i, f), p2 = g(i + 1, f), p3 = g(i + 2, f);
+        o[f] = 0.5 * (2 * p1 + (-p0 + p2) * u + (2 * p0 - 5 * p1 + 4 * p2 - p3) * u2 + (-p0 + 3 * p1 - 3 * p2 + p3) * u3);
+        if (f[0] === 'r') o[f] = Math.max(0.0003, o[f]);
+      }
+      out.push(o);
+    }
+  }
+  out.push(st[st.length - 1]);
+  return out;
+}
 export function loftAxis(kind, stations, opts = {}, lo = {}) {
+  if (opts.sub) stations = refine(stations, opts.sub);
   const rings = stations.map((s) => {
     const o = { ...opts, cx: s.cx ?? 0, p: s.p ?? opts.p ?? 2, bump: s.bump ?? opts.bump, rot: s.rot ?? opts.rot ?? 0 };
     if (kind === 'y') return ringY(s.t, s.rx, s.rz ?? s.rx, { ...o, cz: s.cz ?? 0 });
