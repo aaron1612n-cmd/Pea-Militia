@@ -27,7 +27,7 @@ const camera = new THREE.PerspectiveCamera(30, 1, 0.05, 30);
 const WEAPON = { rifleman: 'rifle', assault: 'smg', gunner: 'mg', mortar: 'launcher', coil: 'plasma', medic: 'smg' };
 const ANG = { front: 0, q3: Math.PI / 4, side: Math.PI / 2, back: Math.PI, q3b: -3 * Math.PI / 4, left: -Math.PI / 2 };
 // zoom targets: [centre y, camera distance]
-const ZOOM = { full: [0.62, 3.4], upper: [0.82, 1.6], head: [0.99, 0.75], legs: [0.3, 1.5], boots: [0.08, 0.8], torso: [0.72, 1.1] };
+const ZOOM = { full: [0.62, 3.4], upper: [0.82, 1.6], head: [0.99, 0.75], legs: [0.3, 1.5], boots: [0.08, 0.8], torso: [0.72, 1.1], hands: [0.74, 1.3, -0.08, 0.38] };
 
 window.shot = ({ kind = 'rifleman', team = 0, view = 'front', mode = 'idle', zoom = 'full', phase = 0.1 } = {}) => {
   const s = { t: 1.3, walk: 0, cycle: 0, speed: 0, ready: 1, weapon: WEAPON[kind], mx: 0, mz: 1, stride: 0.5 };
@@ -40,10 +40,10 @@ window.shot = ({ kind = 'rifleman', team = 0, view = 'front', mode = 'idle', zoo
   crowd.begin();
   crowd.add(world, p, team, { weapon: WEAPON[kind], seed: 2, kind });
   crowd.end();
-  const [cy, d] = ZOOM[zoom] || ZOOM.full;
+  const [cy, d, lx = 0, lz = 0] = ZOOM[zoom] || ZOOM.full;
   const a = ANG[view] ?? 0;
-  camera.position.set(Math.sin(a) * d, cy + (zoom === 'full' ? 0.18 : 0.06), Math.cos(a) * d);
-  camera.lookAt(0, cy, 0);
+  camera.position.set(lx + Math.sin(a) * d, cy + (zoom === 'full' ? 0.18 : 0.06), lz + Math.cos(a) * d);
+  camera.lookAt(lx, cy, lz);
   renderer.render(scene, camera);
   return true;
 };
