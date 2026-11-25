@@ -3,7 +3,8 @@
 // Run by hand: node tests/loose-parts.mjs [propType...]
 import * as THREE from 'three';
 import { Kit } from '../src/models.js';
-import { PROPS, propModel } from '../src/props.js';
+import { PROPS } from '../src/props.js';
+import { buildProp, VARIANTS } from '../src/propbuild.js';
 
 const TOUCH = 0.012;
 const pieces = [];
@@ -44,13 +45,19 @@ function joined(A, B) {
   for (const p of B.pts) if (dist(p, A, TOUCH) < TOUCH) return true;
   for (const p of A.pts.slice(0, 12)) if (B.box.containsPoint(p) && inside(p, B)) return true;
   for (const p of B.pts.slice(0, 12)) if (A.box.containsPoint(p) && inside(p, A)) return true;
+  // solids that overlap without their skins passing near each other (a brick sunk into its mortar core)
+  const ca = A.box.getCenter(new THREE.Vector3()), cb = B.box.getCenter(new THREE.Vector3());
+  if (B.box.containsPoint(ca) && inside(ca, B)) return true;
+  if (A.box.containsPoint(cb) && inside(cb, A)) return true;
   return false;
 }
 const types = process.argv.length > 2 ? process.argv.slice(2) : Object.keys(PROPS).filter((k) => !PROPS[k].noModel);
+const jobs = types.flatMap((t) => Array.from({ length: VARIANTS[t] || 1 }, (_, v) => [t, v]).flatMap(([a, b]) => [[a, b, false], [a, b, true]]));
 let bad = 0;
-for (const type of types) {
+for (const [type0, v, lite] of jobs) {
+  const type = `${type0}.${v}${lite ? '.far' : ''}`;
   pieces.length = 0;
-  propModel(type);
+  buildProp(type0, v, lite);
   const P = pieces.map((g) => { g.computeBoundingBox?.(); return mesh(g); });
   const parent = P.map((_, i) => i);
   const find = (i) => (parent[i] === i ? i : (parent[i] = find(parent[i])));

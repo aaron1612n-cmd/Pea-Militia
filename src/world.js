@@ -74,6 +74,22 @@ function mergeShared(group, meshes, shadow = true) {
     group.add(out);
   }
 }
+// The same, but every piece keeps its own colour as vertex colour and they all share one material: one draw call.
+let COLORED = null;
+function mergeColored(group, meshes, shadow = true) {
+  COLORED ||= new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 0.7, metalness: 0.25, flatShading: true, vertexColors: true });
+  const list = meshes.map((m) => {
+    m.updateMatrix();
+    const g = m.geometry.clone().applyMatrix4(m.matrix);
+    const c = m.material.color, n = g.attributes.position.count, a = new Float32Array(n * 3);
+    for (let i = 0; i < n; i++) { a[i * 3] = c.r; a[i * 3 + 1] = c.g; a[i * 3 + 2] = c.b; }
+    g.setAttribute('color', new THREE.BufferAttribute(a, 3));
+    return g;
+  });
+  const out = new THREE.Mesh(mergeGeometries(list, false), COLORED);
+  out.castShadow = shadow; out.receiveShadow = true;
+  group.add(out);
+}
 
 // Control point marker: a flat ring on the ground and a slim mast that takes the holder's colour.
 export function pointMarker(r) {
@@ -116,9 +132,9 @@ export function pointMarker(r) {
   // the mast and its ring of stakes are one steel mesh, the plinth and step one concrete mesh
   const stakeMeshes = [];
   for (let i = 0; i < 16; i++) { const st = new THREE.Mesh(stakeGeo, steel); const a = (i / 16) * Math.PI * 2; st.position.set(Math.cos(a) * (r + 0.1), 0.35, Math.sin(a) * (r + 0.1)); stakeMeshes.push(st); }
-  mergeShared(g, [mast, ...stakeMeshes]);
-  mergeShared(g, [plinth, step]);
-  g.add(ring, finial, flag);
+  for (const m of stakeMeshes) { m.updateMatrix(); }
+  mergeColored(g, [mast, ...stakeMeshes, plinth, step, finial]);   // mast, stakes, plinth and finial: one draw
+  g.add(ring, flag);
   g.userData = { ring, flag, wave };
   return g;
 }
@@ -141,6 +157,6 @@ export function ammoCrate() {
   const sts = [-0.3, 0.3].map((x) => { const st = new THREE.Mesh(crateGeo.strap, crateGeo.iron); st.position.set(x, 0.25, 0); return st; });
   const l = new THREE.Mesh(crateGeo.lid, crateGeo.mark); l.position.y = 0.506;
   const top = new THREE.Mesh(crateGeo.body, crateGeo.wood); top.scale.set(0.7, 0.55, 0.7); top.position.set(0.05, 0.64, 0.02); top.rotation.y = 0.3;
-  mergeShared(g, [b, top]); mergeShared(g, sts, false); mergeShared(g, [l], false); // wood, iron and the stencilled lid: three draws
+  mergeColored(g, [b, top, ...sts, l]); // wood, iron straps and the stencilled lid: one draw
   return g;
 }
