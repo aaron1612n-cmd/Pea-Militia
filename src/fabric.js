@@ -68,10 +68,11 @@ ${styled ? 'if (vStyle >= 0.0) {' : '{'}
   float cls = ${styled ? 'floor(vStyle + 0.01)' : '0.0'};
   // cloth grain: a fine speckle that fades out when it gets smaller than a pixel
   float gf = 1.0 - smoothstep(0.0015, 0.006, foot);
-  ${o.grain ? 'diffuseColor.rgb *= 1.0 + (fbm2(p * 260.0 + sd) - 0.5) * 0.22 * gf;' : ''}
+  ${o.grain ? 'if (gf > 0.004) diffuseColor.rgb *= 1.0 + (fbm2(p * 260.0 + sd) - 0.5) * 0.22 * gf;' : ''}
   ${o.camo ? `
   float pf = 1.0 - smoothstep(0.012, 0.05, foot);
-  if (cls < 0.5) {
+  if (pf < 0.004) { /* too small to see: the pattern would only add shimmer, so skip its noise */ }
+  else if (cls < 0.5) {
     float a = smoothstep(0.44, 0.52, fbm2(p * 24.0 + sd)), b = smoothstep(0.58, 0.66, fbm2(p * 17.0 + sd + 11.0));
     diffuseColor.rgb *= mix(vec3(1.0), vec3(0.6, 0.72, 0.52), a * 0.9 * pf) * mix(vec3(1.0), vec3(1.22, 1.1, 0.84), b * 0.75 * pf);
   } else if (cls < 1.5) {
@@ -112,7 +113,9 @@ ${styled ? 'if (vStyle >= 0.0)' : ''} {
   vec3 bp = vOP * uScale;
   float fw = length(fwidth(bp));
   float f1 = 1.0 - smoothstep(0.0012, 0.005, fw), f2 = 1.0 - smoothstep(0.01, 0.04, fw);
-  float bh = fbm2(bp * 190.0 + ${styled ? 'vStyle' : '0.0'}) * 0.55 * f1 + (fbm2(bp * vec3(34.0, 34.0, 12.0) + ${styled ? 'vStyle' : '0.0'}) - 0.5) * 1.6 * f2;
+  float bh = 0.0;
+  if (f1 > 0.004) bh += fbm2(bp * 190.0 + ${styled ? 'vStyle' : '0.0'}) * 0.55 * f1;
+  if (f2 > 0.004) bh += (fbm2(bp * vec3(34.0, 34.0, 12.0) + ${styled ? 'vStyle' : '0.0'}) - 0.5) * 1.6 * f2;
   vec3 sx = normalize(dFdx(-vViewPosition)), sy = normalize(dFdy(-vViewPosition));
   vec3 r1 = cross(sy, normal), r2 = cross(normal, sx);
   float det = dot(sx, r1) * faceDirection;

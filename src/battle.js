@@ -73,7 +73,7 @@ class Grid {
   along(ax, az, bx, bz, stamp, out = []) {
     out.length = 0;
     const len = Math.hypot(bx - ax, bz - az);
-    const steps = Math.max(1, Math.ceil(len / (this.cell * 0.5)));
+    const steps = Math.max(1, Math.ceil(len / this.cell)); // a sample a cell apart, each with its eight neighbours, covers every cell the segment crosses
     const w = this.w, cells = this.cells;
     let last = -1;
     for (let s = 0; s <= steps; s++) {
@@ -389,7 +389,7 @@ export class Battle {
 
   // Fog of war: an enemy is known only while you or a teammate has clear line of sight to it.
   // Each frame a few observers look around; what they see gets seenAt and a last-known spot.
-  updateSight() {
+  updateSight(dt = 1 / 60) {
     const pl = this.player; if (!pl) return;
     const obs = this.sightObs || (this.sightObs = []);
     if (!this.sightI || this.sightI >= obs.length) {
@@ -397,7 +397,7 @@ export class Battle {
       for (const u of this.units) if (u.alive && u.team === pl.team && !u.vehicle) obs.push(u);
       for (const v of this.vehicles) if (v.alive && v.team === pl.team) obs.push(v);
     }
-    const eye = V(), tc = V(), end = Math.min(obs.length, this.sightI + 8);
+    const eye = V(), tc = V(), end = Math.min(obs.length, this.sightI + Math.min(16, Math.max(4, Math.ceil(obs.length * dt / 0.3)))); // the whole side looks round about three times a second, however big the army
     for (; this.sightI < end; this.sightI++) {
       const o = obs[this.sightI];
       if (!o.alive) continue;
@@ -407,6 +407,7 @@ export class Battle {
         if (!e.alive || e.vehicle || !hostile(e.team, pl.team)) continue;
         const dx = e.pos.x - o.pos.x, dz = e.pos.z - o.pos.z, d2 = dx * dx + dz * dz;
         if (d2 > range * range) continue;
+        if (this.time - e.seenAt < 0.2) continue; // a teammate saw it a moment ago: nothing new to learn
         if (d2 > 100 && face !== undefined && Math.abs(wrapAng(Math.atan2(dx, dz) - face)) > 1.6) continue;
         e.center(tc);
         if (!this.los(eye, tc)) continue;
@@ -1182,7 +1183,7 @@ export class Battle {
         }
       }
     }
-    this.updateSight();
+    this.updateSight(dt);
     this.updateProjectiles(dt);
     this.updateBullets(dt);
     this.callins.update(dt);

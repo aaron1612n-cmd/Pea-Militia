@@ -124,7 +124,7 @@ function rifle(k) {
   k.add(profile(roundRect(-0.01, 0.056, 0.16, 0.068, 0.005), 0.032, 0.003), MAT.darkSteel);
   k.add(turned([[0.026, 0.18], [0.03, 0.185], [0.03, 0.205], [0.026, 0.21]], 12), MAT.brass, { pos: [0, 0.03, 0] });
   // five-round clip magazine, curved, with a brass floor plate
-  k.slot('mag', () => curvedMag(k, 0.05, -0.004, 0.085, 0.06, 0.012), MAT.darkSteel);
+  k.slot('mag', () => curvedMag(k, 0.05, -0.004, 0.085, 0.06, 0.012));
   // handguard in two wooden halves with a brass nose cap; gas tube riding on top
   k.add(profile(roundRect(0.2, -0.014, 0.42, 0.04, 0.016), 0.046, 0.008), MAT.wood);
   k.add(profile(roundRect(0.2, 0.034, 0.42, 0.05, 0.006), 0.03, 0.003), MAT.darkWood);
@@ -139,7 +139,7 @@ function rifle(k) {
   k.slot('bolt', () => {
     k.add(rod(0.004, 0.0, 0.066, 6), MAT.steel, { pos: [-0.02, 0.045, 0.07], rot: [0, -Math.PI / 2, 0] });
     k.add(ellipsoidGeo(0.014, 0.014, 0.014, 8, 6), MAT.brass, { pos: [-0.086, 0.045, 0.07] });
-  }, MAT.steel);
+  });
   k.add(profile([[0.02, -0.004], [0.052, -0.004], [0.042, -0.036], [0.032, -0.04]], 0.006, 0.001), MAT.brass); // trigger
   k.add(pipe([[0, -0.004, -0.01], [0, -0.048, 0.0], [0, -0.048, 0.055], [0, -0.004, 0.066]], 0.0032, 10, 5), MAT.brass); // guard
   swivel(k, -0.32, -0.082); swivel(k, 0.42, -0.014);
@@ -155,7 +155,7 @@ function smg(k) {
   k.add(profile(roundRect(0.0, 0.062, 0.17, 0.072, 0.004), 0.034, 0.003), MAT.darkSteel); // dust cover
   k.slot('bolt', () => {
     k.add(rod(0.006, 0.0, 0.034, 6), MAT.brass, { pos: [0.018, 0.045, 0.12], rot: [0, Math.PI / 2, 0] }); // cocking knob
-  }, MAT.brass);
+  });
   // perforated barrel shroud: a tube with a row of dark vent slots and brass end rings
   k.add(turned([[0, 0.19], [0.027, 0.19], [0.027, 0.42], [0.021, 0.43], [0, 0.43]], 14), MAT.steel, { pos: [0, 0.034, 0] });
   for (let z = 0.21; z < 0.4; z += 0.03) for (const a of [-0.9, -0.3, 0.3, 0.9]) k.add(ellipsoidGeo(0.008, 0.004, 0.006, 6, 4), MAT.rubber, { pos: [Math.sin(a) * 0.027, 0.034 + Math.cos(a) * 0.027, z] });
@@ -166,7 +166,7 @@ function smg(k) {
     k.add(turned([[0, -0.03], [0.07, -0.03], [0.075, -0.024], [0.075, 0.024], [0.07, 0.03], [0, 0.03]], 20), MAT.brass, { pos: [0, -0.095, 0.1], rot: [0, 0, Math.PI / 2] });
     k.add(turned([[0, 0.03], [0.045, 0.03], [0.045, 0.034], [0, 0.034]], 16), MAT.darkSteel, { pos: [0, -0.095, 0.1], rot: [0, 0, Math.PI / 2] });
     k.add(profile(roundRect(0.075, -0.026, 0.125, -0.004, 0.004), 0.034, 0.003), MAT.darkSteel); // drum neck
-  }, MAT.brass);
+  });
   // wooden fore grip and a trigger
   k.add(profile([[0.255, 0.0], [0.292, 0.0], [0.306, -0.082], [0.265, -0.088]], 0.034, 0.008), MAT.wood);
   k.add(profile([[0.02, -0.004], [0.05, -0.004], [0.04, -0.03], [0.03, -0.034]], 0.006, 0.001), MAT.brass);
@@ -189,8 +189,8 @@ function mg(k) {
   k.slot('mag', () => {
     k.add(block(0.075, 0.12, 0.13, 0.008, 0.004), MAT.iron, { pos: [0.085, -0.07, 0.12] });
     k.add(pipe([[0.085, -0.01, 0.12], [0.075, 0.03, 0.12], [0.04, 0.058, 0.12]], 0.013, 10, 6), MAT.brass); // ammo belt into the feed tray
-  }, MAT.iron);
-  k.slot('bolt', () => k.add(rod(0.007, 0.0, 0.05, 6), MAT.brass, { pos: [-0.034, 0.05, 0.14], rot: [0, -Math.PI / 2, 0] }), MAT.brass); // charging handle
+  });
+  k.slot('bolt', () => k.add(rod(0.007, 0.0, 0.05, 6), MAT.brass, { pos: [-0.034, 0.05, 0.14], rot: [0, -Math.PI / 2, 0] })); // charging handle
   // finned cooling jacket with steam vents and a brass front collar
   k.add(turned([[0, 0.25], [0.04, 0.25], [0.04, 0.58], [0.032, 0.6], [0, 0.6]], 18), MAT.darkSteel, { pos: [0, 0.035, 0] });
   for (let z = 0.28; z < 0.57; z += 0.032) k.add(ring(0.042, 0.006, 18), MAT.steel, { pos: [0, 0.035, z] });
@@ -263,7 +263,7 @@ function launcher(k) {
   k.slot('mag', () => {
     k.add(turned([[0, 0.43], [0.04, 0.43], [0.046, 0.45], [0.046, 0.54], [0.03, 0.6], [0, 0.63]], 14), MAT.brass, { pos: [0, 0.075, 0] });
     k.add(ring(0.047, 0.004, 14), MAT.darkSteel, { pos: [0, 0.075, 0.5] });
-  }, MAT.brass);
+  });
   // leaf sight for lobbing
   const y = 0.162;
   k.add(profile(roundRect(0.0, 0.126, 0.03, y - 0.004, 0.004), 0.03, 0.003), MAT.darkSteel);

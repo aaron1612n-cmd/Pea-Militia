@@ -434,7 +434,7 @@ export class PropBatch {
     }
     L.im.clearUpdateRanges(); L.im.addUpdateRange(0, Math.max(16, n * 16)); L.im.needsUpdate = true;
     L.ic.clearUpdateRanges(); L.ic.addUpdateRange(0, Math.max(3, n * 3)); L.ic.needsUpdate = true;
-    for (const m of L.parts) { m.count = n; m.visible = n > 0; }
+    for (const m of L.parts) { m.count = n; m.visible = n > 0; m.castShadow = L.k > 0; } // no prop in the shadow box: leave the shadow pass a draw call lighter
   }
   clear() {
     for (const t of this.types.values()) for (const L of t.levels) for (const im of L.parts) { this.scene.remove(im); im.dispose(); }

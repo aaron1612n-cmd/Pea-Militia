@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { height, noise } from './terrain.js';
+import { InstCull } from './instcull.js';
 
 // Trees, drawn in bulk: tall firs in the woods, rounder broadleaf trees along roads and in the
 // orchards. Each kind is one instanced trunk mesh and one instanced crown mesh.
@@ -68,6 +69,7 @@ export function buildTrees(spots) {
   if (!GEO) GEO = { fir: [firTrunk(), firCrown()], leaf: [leafTrunk(), leafCrown()] };
   const g = new THREE.Group();
   g.name = 'trees';
+  g.userData.culls = [];
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), sc = new THREE.Vector3(), v = new THREE.Vector3(), c = new THREE.Color();
   const tint = { fir: ['#3c4a33', '#46553a', '#344230'], leaf: ['#57633d', '#66703f', '#4d5a37', '#6f6b40'] };
   for (const kind of ['fir', 'leaf']) {
@@ -85,7 +87,14 @@ export function buildTrees(spots) {
       const pal = tint[kind];
       crown.setColorAt(i, c.set(pal[i % pal.length]).multiplyScalar(0.92 + 0.16 * ((i * 0.37) % 1)));
     });
-    for (const im of [trunk, crown]) { im.castShadow = true; im.receiveShadow = true; im.computeBoundingSphere(); g.add(im); }
+    for (const im of [trunk, crown]) { im.castShadow = true; im.receiveShadow = true; g.add(im); }
+    // one sphere per tree (a fir is about 5.5 m tall, a broadleaf crown about 4.6 m across), so only the trees in view are drawn
+    const sp = new Float32Array(list.length * 4);
+    list.forEach((t, i) => {
+      const sy = t.s * (0.9 + 0.2 * ((i * 0.618) % 1)), y = height(t.x, t.z) - 0.15;
+      sp[i * 4] = t.x; sp[i * 4 + 1] = y + 2.5 * sy; sp[i * 4 + 2] = t.z; sp[i * 4 + 3] = Math.max(3.2 * sy, 3.2 * t.s);
+    });
+    g.userData.culls.push(new InstCull([trunk, crown], sp, { shared: true }));
   }
   return g;
 }

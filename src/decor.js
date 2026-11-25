@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { height, normalAt, nearRoad, layout, POINTS, POINT_R, slopeAt } from './terrain.js';
 import { HALF } from './world.js';
+import { InstCull } from './instcull.js';
 
 // Small scenery with no collision: grass and weed tufts, pebbles, rubble round the shell craters,
 // barbed-wire runs on posts, tyre stacks, burnt-out wrecks and smoke columns. Everything is
@@ -77,11 +78,12 @@ function wreck() {
 export function buildDecor(battle, seed = 11) {
   const group = new THREE.Group();
   group.name = 'decor';
+  group.userData.culls = [];
   let s = seed * 9973 + 5;
   const rnd = () => ((s = (s * 16807) % 2147483647) / 2147483647);
   const EDGE = HALF - 3;
   const m = new THREE.Matrix4(), q = new THREE.Quaternion(), e = new THREE.Euler(), p = new THREE.Vector3(), sc = new THREE.Vector3();
-  const place = (g, material, list, { shadow = false, tint } = {}) => {
+  const place = (g, material, list, { shadow = false, tint, far = 0 } = {}) => {
     if (!list.length) return null;
     const im = new THREE.InstancedMesh(g, material, list.length);
     list.forEach((it, i) => {
@@ -94,6 +96,11 @@ export function buildDecor(battle, seed = 11) {
     });
     im.castShadow = shadow; im.receiveShadow = true; im.frustumCulled = false;
     group.add(im);
+    // a sphere per instance, so what is out of view or too far to read is not drawn (tufts and pebbles are under a pixel past a short distance)
+    g.computeBoundingSphere();
+    const bs = g.boundingSphere, sp = new Float32Array(list.length * 4);
+    list.forEach((it, i) => { const s = it.s || 1; sp[i * 4] = it.x; sp[i * 4 + 1] = it.y + bs.center.y * s; sp[i * 4 + 2] = it.z; sp[i * 4 + 3] = bs.radius * s + 0.3; });
+    group.userData.culls.push(new InstCull([im], sp, { far }));
     return im;
   };
   const open = (x, z) => nearRoad(x, z) > 1.5 && POINTS.every((pt) => Math.hypot(x - pt.x, z - pt.z) > 2.5) && !layout.craters.some((c) => Math.hypot(x - c.x, z - c.z) < c.r * 0.8);
@@ -107,8 +114,8 @@ export function buildDecor(battle, seed = 11) {
     (rnd() < 0.18 ? weeds : grass).push(it);
   }
   const tuftG = tuft();
-  place(tuftG, new THREE.MeshStandardMaterial({ color: '#6f7a45', roughness: 1, flatShading: true, side: THREE.DoubleSide }), grass, { tint: '#6f7a45' });
-  place(tuftG, new THREE.MeshStandardMaterial({ color: '#a39560', roughness: 1, flatShading: true, side: THREE.DoubleSide }), weeds, { tint: '#a39560' });
+  place(tuftG, new THREE.MeshStandardMaterial({ color: '#6f7a45', roughness: 1, flatShading: true, side: THREE.DoubleSide }), grass, { tint: '#6f7a45', far: 85 });
+  place(tuftG, new THREE.MeshStandardMaterial({ color: '#a39560', roughness: 1, flatShading: true, side: THREE.DoubleSide }), weeds, { tint: '#a39560', far: 85 });
 
   // pebbles scattered everywhere, more on slopes
   const stones = [];
@@ -116,7 +123,7 @@ export function buildDecor(battle, seed = 11) {
     const x = (rnd() * 2 - 1) * EDGE, z = (rnd() * 2 - 1) * EDGE;
     stones.push({ x, y: height(x, z) + 0.01, z, yaw: rnd() * 6.3, s: 0.6 + rnd() * 1.6 });
   }
-  place(pebble(), mat('#85817a'), stones, { tint: '#85817a' });
+  place(pebble(), mat('#85817a'), stones, { tint: '#85817a', far: 60 });
 
   // rubble ring and scorch round each crater; a few wrecks and smoke columns
   const rubble = [], scorch = [], smokers = [];
@@ -129,7 +136,7 @@ export function buildDecor(battle, seed = 11) {
     }
     if (i % 4 === 0 && c.r > 2.4) smokers.push({ x: c.x, y: height(c.x, c.z) + 0.2, z: c.z, r: c.r });
   });
-  place(pebble(), mat('#6b665e'), rubble, { shadow: true, tint: '#6b665e' });
+  place(pebble(), mat('#6b665e'), rubble, { shadow: true, tint: '#6b665e', far: 110 });
 
   // barbed wire: short runs, gaps left for walking through
   const posts = [], coils = [];
