@@ -303,7 +303,7 @@ function poseCore(s, out) {
       // foot lock: a boot that is down stays where it landed in the world, whatever the clips and the planter blend to.
       // The gap between the lock and the clip's own foot is eased out once the boot lifts, so nothing snaps.
       if (s.wx !== undefined) {
-        const L = out.lk || (out.lk = [{ on: false, wx: 0, wz: 0, wy: 0, ex: 0, ez: 0, ey: 0 }, { on: false, wx: 0, wz: 0, wy: 0, ex: 0, ez: 0, ey: 0 }]);
+        const L = out.lk || (out.lk = [{ on: false, wx: 0, wz: 0, wy: 0, ex: 0, ez: 0, ey: 0, clr: 0, pw: false, pwx: 0, pwz: 0 }, { on: false, wx: 0, wz: 0, wy: 0, ex: 0, ez: 0, ey: 0, clr: 0, pw: false, pwx: 0, pwz: 0 }]);
         const l = L[i], c = Math.cos(s.wf), sn = Math.sin(s.wf);
         let down = ground > 0.5 && kneelStill < 0.5 && (pf && pf.k * (1 - w) > 0.5 ? pf.lift[i] < 0.004 : FO.stance >= 0.5);
         if (down) {
@@ -320,6 +320,15 @@ function poseCore(s, out) {
           const d = Math.exp(-16 * (s.dt || 0.016));
           l.ex *= d; l.ez *= d; l.ey *= d;
         }
+        // a boot never scrapes along the ground: the faster it travels over it, the higher it clears it
+        const nwx = s.wx + x * c + z * sn, nwz = s.wz - x * sn + z * c;
+        if (l.pw && ground > 0.5) {
+          const wv = Math.hypot(nwx - l.pwx, nwz - l.pwz) / Math.max(1e-3, s.dt || 0.016);
+          const want = Math.min(0.04 * ls, Math.max(0, wv - 0.25) * 0.02);
+          l.clr += (want - l.clr) * (want > l.clr ? 0.8 : 0.35);
+          y += l.clr * (1 - kneelStill);
+        } else l.clr = 0;
+        l.pwx = nwx; l.pwz = nwz; l.pw = true;
       }
       // the planted foot sits on the ground under it, flat to a slope; a swinging one follows the terrain it passes over
       const gh = s.gnd ? s.gnd[i] : 0;
