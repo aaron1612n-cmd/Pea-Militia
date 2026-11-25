@@ -855,10 +855,10 @@ function respawnPlayer() {
 
 // ---------------- render: everyone through the instanced crowd ----------------
 const viewPose = makePose();
-const LOD_FAR = 70; // beyond this, soldiers draw as the plain block, hands, feet, arms and weapon
+const LOD_FAR = 52; // beyond this, soldiers draw as the plain block, hands, feet, arms and weapon
 const view = new View();
 let unitView = new Uint8Array(256); // per soldier: 0 skip, 1 camera only, 2 camera and shadow box
-const LOD_FAR2 = 100; // beyond this a glove is under a pixel and is not drawn
+const LOD_FAR2 = 85; // beyond this a glove is under a pixel and is not drawn
 function drawUnits() {
   crowd.begin();
   vmCrowd.begin();

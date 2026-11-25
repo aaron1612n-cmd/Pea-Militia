@@ -24,7 +24,7 @@ export class Nav {
     this.mark = new Uint32Array(this.n * this.n); // search id per cell
     this.closed = new Uint32Array(this.n * this.n);
     this.search = 0;
-    this.heap = [];
+    this.hk = new Float32Array(4096); this.hv = new Int32Array(4096); this.hn = 0; // the open list (see push)
   }
 
   cellOf(x, z) {
@@ -85,31 +85,37 @@ export class Nav {
     return -1;
   }
 
+  // binary min-heap of (cost, cell) pairs in two typed arrays: a route search pushes tens of thousands of entries,
+  // and a small array per entry made each search a burst of garbage
   push(c, f) {
-    const h = this.heap;
-    h.push([f, c]);
-    let k = h.length - 1;
-    while (k > 0) {
-      const p = (k - 1) >> 1;
-      if (h[p][0] <= h[k][0]) break;
-      [h[p], h[k]] = [h[k], h[p]]; k = p;
+    if (this.hn >= this.hk.length) {
+      const k = new Float32Array(this.hk.length * 2), v = new Int32Array(this.hv.length * 2);
+      k.set(this.hk); v.set(this.hv); this.hk = k; this.hv = v;
     }
+    const hk = this.hk, hv = this.hv;
+    let i = this.hn++;
+    while (i > 0) {
+      const p = (i - 1) >> 1;
+      if (hk[p] <= f) break;
+      hk[i] = hk[p]; hv[i] = hv[p]; i = p;
+    }
+    hk[i] = f; hv[i] = c;
   }
   pop() {
-    const h = this.heap, top = h[0], last = h.pop();
-    if (h.length) {
-      h[0] = last;
-      let k = 0;
+    const hk = this.hk, hv = this.hv, top = hv[0], n = --this.hn;
+    if (n > 0) {
+      const f = hk[n], c = hv[n];
+      let i = 0;
       for (;;) {
-        const l = 2 * k + 1, r = l + 1;
-        let m = k;
-        if (l < h.length && h[l][0] < h[m][0]) m = l;
-        if (r < h.length && h[r][0] < h[m][0]) m = r;
-        if (m === k) break;
-        [h[m], h[k]] = [h[k], h[m]]; k = m;
+        let m = 2 * i + 1;
+        if (m >= n) break;
+        if (m + 1 < n && hk[m + 1] < hk[m]) m++;
+        if (hk[m] >= f) break;
+        hk[i] = hk[m]; hv[i] = hv[m]; i = m;
       }
+      hk[i] = f; hv[i] = c;
     }
-    return top[1];
+    return top;
   }
 
   // route from (ax,az) to (bx,bz) as a list of {x,z}; null when there is none.
@@ -119,13 +125,13 @@ export class Nav {
     const s = this.open(this.cellOf(ax, az), B), t = this.open(this.cellOf(bx, bz), B);
     if (s < 0 || t < 0) return null;
     const id = ++this.search;
-    this.heap.length = 0;
+    this.hn = 0;
     const tx = t % n, tz = Math.floor(t / n);
     this.g[s] = 0; this.mark[s] = id; this.from[s] = -1;
     this.push(s, 0);
     let found = false, iter = 0;
     const tmp = { x: 0, z: 0 };
-    while (this.heap.length && iter++ < 30000) {
+    while (this.hn && iter++ < 30000) {
       const c = this.pop();
       if (this.closed[c] === id) continue;
       this.closed[c] = id;
