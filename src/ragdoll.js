@@ -268,6 +268,8 @@ export class Ragdoll {
     this.body.matrix(out.body);
     out.body.elements[13] -= sink;
     attachToBody(out);
+    out.spine[0] = out.spine[1] = out.spine[2] = 0; out.toeRel[0] = out.toeRel[1] = 0; out.sway.fill(0);
+    out.curl[0] = out.curl[1] = 0.25; out.trig = 0;
     const parts = [out.hands[0], out.hands[1], out.feet[0], out.feet[1]];
     for (let i = 0; i < 4; i++) {
       _p.copy(this.limbs[i].p);

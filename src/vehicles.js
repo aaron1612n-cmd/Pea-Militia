@@ -6,6 +6,7 @@ import { TEAMS } from './factions.js';
 import { height } from './terrain.js';
 import { pushCircle } from './physics.js';
 import { HALF } from './world.js';
+import { detail } from './fabric.js';
 
 // Vehicles: heavy, believable machines for the big field. Each is one body on the ground with
 // a hull box for hits and collisions, a turret and gun that turn on their own, and seats for
@@ -53,7 +54,8 @@ class CKit {
   bake() { return this.list.length ? mergeGeometries(this.list, false) : new THREE.BufferGeometry(); }
 }
 
-const BODY = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.3 });
+// plating: chipped paint, dirt toward the ground and a pitted surface, in metre-sized features (see fabric.js)
+const BODY = detail(new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.62, metalness: 0.3 }), { style: false, grain: 0, dirt: [0.04, 0, 0.35], wear: 0.35, bump: 0.5, scale: 0.16 });
 const WRECK = new THREE.MeshStandardMaterial({ vertexColors: true, color: '#3c3835', roughness: 0.95, metalness: 0.1 });
 const cyl = (r, len, seg = 14) => new THREE.CylinderGeometry(r, r, len, seg);
 
@@ -109,6 +111,32 @@ function striderParts(team) {
   for (let i = 0; i < 5; i++) hull.add(new THREE.SphereGeometry(0.03, 5, 4), C.steel, { pos: [-0.4 + i * 0.2, 0.22, 1.32] });
   hull.add(block(0.9, 0.04, 0.04, 0.01, 0.005), C.brass, { pos: [0, 1.3, -0.45] }); // manifold bar
   for (const s of [-1, 1]) glow.push([bolt(0.05), [s * 1.15, 0.9, 0.9], [0, 0, -Math.PI / 2 * s]]);
+  // hull plating: layered armour over the hip housings, panel lines, rivet rows and bolt heads
+  const rivets = (kit, a, b, n, rot, r = 0.03, col = C.steel) => { for (let i = 0; i < n; i++) { const t = n === 1 ? 0.5 : i / (n - 1); kit.add(new THREE.SphereGeometry(r, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2), col, { pos: [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t, a[2] + (b[2] - a[2]) * t], rot }); } };
+  for (const s of [-1, 1]) {
+    hull.add(block(0.1, 0.62, 1.1, 0.06, 0.03), paint, { pos: [s * 1.3, 0.12, 0.0], rot: [0, 0, s * 0.1] }); // hip armour, a plate over each housing
+    hull.add(block(0.06, 0.5, 0.9, 0.05, 0.02), C.iron, { pos: [s * 1.37, 0.05, 0.0], rot: [0, 0, s * 0.1] }); // second layer
+    rivets(hull, [s * 1.42, 0.3, -0.45], [s * 1.42, 0.3, 0.45], 6, [0, 0, -s * Math.PI / 2 + s * 0.1]);
+    rivets(hull, [s * 1.42, -0.12, -0.45], [s * 1.42, -0.12, 0.45], 6, [0, 0, -s * Math.PI / 2 + s * 0.1]);
+    for (const z of [-0.2, 0.2]) hull.add(block(0.07, 0.6, 0.025, 0.01, 0.005), C.dark, { pos: [s * 1.345, 0.1, z], rot: [0, 0, s * 0.1] }); // panel line
+    hull.add(block(0.05, 0.12, 0.34, 0.02, 0.01), trim, { pos: [s * 1.43, 0.34, 0.0], rot: [0, 0, s * 0.1] }); // unit stripe
+    // hull side vents and a grab rail
+    for (let i = 0; i < 4; i++) hull.add(block(0.05, 0.035, 0.34, 0.01, 0.005), C.dark, { pos: [s * 1.07, 1.05 + i * 0.07, 0.58] });
+    hull.add(pipe([[s * 1.1, 1.2, 0.95], [s * 1.2, 1.2, 0.95], [s * 1.2, 1.2, 0.35], [s * 1.1, 1.2, 0.35]], 0.025, 12, 6), C.steel);
+    // shoulder lamp pods on the chin
+    hull.add(cyl(0.1, 0.16, 12), C.dark, { pos: [s * 0.55, 0.34, 1.26], rot: [Math.PI / 2, 0, 0] });
+    glow.push([cyl(0.075, 0.03, 10), [s * 0.55, 0.34, 1.35], [Math.PI / 2, 0, 0]]);
+  }
+  // cockpit: frame ribs over the glass, a brow visor, wipers and a roof searchlight
+  for (const x of [-0.3, 0, 0.3]) hull.add(block(0.04, 0.5, 0.04, 0.01, 0.005), C.dark, { pos: [x, 1.05, 1.5], rot: [-0.55, 0, 0] });
+  hull.add(profile([[0.9, 1.5], [1.55, 1.38], [1.62, 1.3], [0.9, 1.34]], 1.3, 0.02, 1), paint, { pos: [0, 0.0, 0.0] }); // brow visor
+  for (const x of [-0.18, 0.22]) hull.add(rod(0.012, 0, 0.5, 6), C.dark, { pos: [x, 0.78, 1.37], rot: [-0.55 + 0.3, 0, x > 0 ? 0.5 : -0.4] }); // wipers
+  hull.add(cyl(0.12, 0.12, 14), C.dark, { pos: [0.55, 1.58, 0.55] });
+  glow.push([cyl(0.09, 0.03, 12), [0.55, 1.58, 0.65], [Math.PI / 2, 0, 0]]);
+  hull.add(rod(0.012, 0, 1.2, 6), C.dark, { pos: [-0.7, 1.45, -0.9], rot: [-1.45, 0, 0.1] }); // whip antenna
+  // belly armour skirt and a tow shackle
+  hull.add(block(1.5, 0.08, 0.5, 0.03, 0.015), C.iron, { pos: [0, -0.28, 0.5] });
+  hull.add(ring(0.1, 0.025, 14), C.steel, { pos: [0, 0.18, 1.34], rot: [0.3, 0, 0] });
   // turret: a squat drum, a cheek for the cannon, the mortar tube racked on the left
   turret.add(cyl(0.62, 0.3, 22), C.steel, { pos: [0, 0.1, 0] });
   turret.add(profile([[-0.7, 0.2], [0.7, 0.2], [0.55, 0.62], [-0.5, 0.7]], 1.3, 0.05, 2), paint, { pos: [0, 0.1, 0] });
@@ -118,6 +146,10 @@ function striderParts(team) {
   turret.add(turned([[0.2, 1.2], [0.26, 1.2], [0.26, 1.35], [0.2, 1.35]], 14), C.iron, { pos: [-0.5, 0.55, -0.2], rot: [-1.05, 0, 0] });
   for (const z of [0.4, 0.8]) turret.add(ring(0.205, 0.03, 14), C.brass, { pos: [-0.5 + 0, 0.55 + z * Math.sin(1.05), -0.2 + z * Math.cos(1.05)], rot: [-1.05, 0, 0] });
   turret.add(block(0.7, 0.04, 0.5, 0.01, 0.006), trim, { pos: [0, 0.78, -0.1] });
+  for (let i = 0; i < 6; i++) turret.add(new THREE.SphereGeometry(0.028, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2), C.steel, { pos: [-0.5 + i * 0.2, 0.7, 0.5] });
+  turret.add(block(0.06, 0.26, 0.5, 0.02, 0.01), trim, { pos: [0.7, 0.45, -0.1] }); // side stripe
+  turret.add(cyl(0.05, 0.4, 8), C.dark, { pos: [0.68, 0.7, -0.45] }); // sight mast
+  turret.add(cyl(0.09, 0.14, 10), C.iron, { pos: [0.68, 0.92, -0.45], rot: [Math.PI / 2, 0, 0] });
   // autocannon on the gun pivot: shrouded barrel, brake, drum
   gunK.add(block(0.34, 0.34, 0.9, 0.05, 0.02), C.steel, { pos: [0, 0, 0.1] });
   gunK.add(rod(0.07, 0.4, 2.3, 12), C.dark);
@@ -130,30 +162,76 @@ function striderParts(team) {
 
 function striderLeg(team) {
   const T = TEAMS[team] || TEAMS[0];
-  const paint = T.body;
+  const paint = T.body, trim = T.trim;
   const { L1, L2 } = WL;
-  const thigh = new CKit(), shin = new CKit(), foot = new CKit();
-  // thigh: a tapered armoured slab with a piston alongside; hung down from the hip
+  const thigh = new CKit(), shin = new CKit(), foot = new CKit(), toes = new CKit(), ramTube = new CKit(), ramRod = new CKit();
+  const dome = (kit, r, pos, rot, col = C.steel) => kit.add(new THREE.SphereGeometry(r, 6, 4, 0, Math.PI * 2, 0, Math.PI / 2), col, { pos, rot });
+  // hip: a gimbal drum between two collars, bolted down
   thigh.add(cyl(0.3, 0.62, 16), C.brass, { rot: [0, 0, Math.PI / 2] });
+  for (const sx of [-1, 1]) {
+    thigh.add(cyl(0.36, 0.06, 18), C.iron, { pos: [sx * 0.33, 0, 0], rot: [0, 0, Math.PI / 2] });
+    thigh.add(ring(0.31, 0.03, 18), C.copper, { pos: [sx * 0.31, 0, 0], rot: [0, Math.PI / 2, 0] });
+    for (let i = 0; i < 8; i++) { const a = i / 8 * Math.PI * 2; dome(thigh, 0.026, [sx * 0.365, Math.cos(a) * 0.27, Math.sin(a) * 0.27], [0, 0, -sx * Math.PI / 2]); }
+  }
+  // thigh: a tapered armoured slab with layered plates, a piston pair and a stiffening rib
   thigh.add(profile([[-0.34, -0.1], [0.34, -0.1], [0.24, -L1 + 0.1], [-0.24, -L1 + 0.1]], 0.4, 0.05, 2), paint);
   thigh.add(block(0.05, L1 * 0.8, 0.3, 0.01, 0.005), C.steel, { pos: [0.24, -L1 * 0.5, 0.0] });
-  thigh.add(rod(0.05, -L1 * 0.9, -0.2, 8).rotateX(-Math.PI / 2), C.copper, { pos: [0.28, 0, 0.38] });
+  thigh.add(block(0.05, L1 * 0.8, 0.3, 0.01, 0.005), C.steel, { pos: [-0.24, -L1 * 0.5, 0.0] });
+  thigh.add(block(0.3, L1 * 0.62, 0.05, 0.02, 0.01), C.iron, { pos: [0, -L1 * 0.52, 0.3], rot: [0.12, 0, 0] }); // front shield
+  for (const y of [-0.55, -0.9, -1.25]) thigh.add(block(0.32, 0.03, 0.06, 0.01, 0.005), C.dark, { pos: [0, y, 0.3], rot: [0.12, 0, 0] }); // panel lines
+  for (const sx of [-1, 1]) for (let i = 0; i < 5; i++) dome(thigh, 0.022, [sx * 0.13, -0.5 - i * 0.2, 0.33 - i * 0.012], [0.12 + Math.PI / 2, 0, 0]);
+  for (const sx of [-1, 1]) {
+    thigh.add(rod(0.05, -L1 * 0.9, -0.2, 8).rotateX(-Math.PI / 2), C.copper, { pos: [sx * 0.29, 0, 0.38] });
+    thigh.add(cyl(0.065, 0.55, 10), C.steel, { pos: [sx * 0.29, -0.55, 0.38] }); // piston sleeve
+    for (const y of [-0.34, -0.76]) thigh.add(ring(0.068, 0.014, 10), C.brass, { pos: [sx * 0.29, y, 0.38], rot: [Math.PI / 2, 0, 0] });
+  }
+  thigh.add(block(0.36, 0.3, 0.1, 0.03, 0.015), trim, { pos: [0, -0.3, -0.3] }); // rear marking plate
+  // knee: a drum between two collars, with a plated cap on the front
   thigh.add(cyl(0.24, 0.58, 16), C.iron, { pos: [0, -L1, 0], rot: [0, 0, Math.PI / 2] });
   for (const d of [-0.22, 0.22]) thigh.add(ring(0.245, 0.025, 16), C.brass, { pos: [d, -L1, 0], rot: [0, Math.PI / 2, 0] });
-  // shin: slimmer, with a rear hydraulic ram
+  thigh.add(block(0.46, 0.3, 0.16, 0.05, 0.02), paint, { pos: [0, -L1 + 0.02, 0.28], rot: [0.15, 0, 0] });
+  for (const sx of [-1, 1]) { dome(thigh, 0.026, [sx * 0.2, -L1 + 0.04, 0.36], [0.15 + Math.PI / 2, 0, 0]); dome(thigh, 0.03, [sx * 0.3, -L1, 0], [0, 0, -sx * Math.PI / 2]); }
+  // ram anchor lug at the upper rear of the thigh
+  thigh.add(block(0.14, 0.16, 0.12, 0.02, 0.01), C.iron, { pos: [0, -0.5, -0.34] });
+  // shin: slimmer, with a front greave, calf cover, hose loops and the ram's lower mount
   shin.add(profile([[-0.24, 0], [0.24, 0], [0.16, -L2 + 0.1], [-0.16, -L2 + 0.1]], 0.32, 0.04, 2), paint);
   shin.add(pipe([[0.0, -0.1, -0.26], [0.0, -L2 * 0.5, -0.34], [0.0, -L2 + 0.35, -0.2]], 0.05, 10, 6), C.copper);
   shin.add(block(0.4, 0.2, 0.3, 0.04, 0.02), C.steel, { pos: [0, -L2 * 0.35, 0.18] });
+  shin.add(block(0.26, L2 * 0.62, 0.05, 0.02, 0.01), C.iron, { pos: [0, -L2 * 0.5, 0.24], rot: [0.09, 0, 0] }); // greave
+  for (const y of [-0.5, -0.85, -1.2]) shin.add(block(0.28, 0.025, 0.06, 0.008, 0.004), C.dark, { pos: [0, y, 0.25], rot: [0.09, 0, 0] });
+  for (const sx of [-1, 1]) for (let i = 0; i < 4; i++) dome(shin, 0.02, [sx * 0.1, -0.45 - i * 0.28, 0.28 - i * 0.007], [0.09 + Math.PI / 2, 0, 0]);
+  shin.add(block(0.2, 0.55, 0.1, 0.03, 0.015), C.iron, { pos: [0, -0.95, -0.3] }); // calf cover over the hose
+  shin.add(pipe([[0.12, -0.25, 0.1], [0.3, -0.5, 0.0], [0.3, -1.0, -0.05], [0.18, -1.35, 0.05]], 0.03, 14, 6), C.rubber); // hose loop
+  shin.add(block(0.14, 0.16, 0.12, 0.02, 0.01), C.iron, { pos: [0, -0.95, -0.4] }); // ram lug
   shin.add(cyl(0.2, 0.46, 14), C.iron, { pos: [0, -L2 + 0.1, 0], rot: [0, 0, Math.PI / 2] });
-  // foot: ankle block, broad pad and three toes
+  for (const sx of [-1, 1]) { shin.add(ring(0.205, 0.022, 14), C.brass, { pos: [sx * 0.2, -L2 + 0.1, 0], rot: [0, Math.PI / 2, 0] }); dome(shin, 0.024, [sx * 0.235, -L2 + 0.1, 0], [0, 0, -sx * Math.PI / 2]); }
+  // hydraulic ram: a sleeve from the thigh lug and a polished rod from the shin lug, aimed at each other (unit length along +z)
+  ramTube.add(turned([[0.0001, 0], [0.085, 0], [0.085, 0.92], [0.07, 0.96], [0.0001, 0.96]], 12), C.dark);
+  for (const z of [0.15, 0.75]) ramTube.add(ring(0.088, 0.016, 12), C.brass, { pos: [0, 0, z] });
+  ramTube.add(turned([[0.04, 0.9], [0.1, 0.9], [0.1, 1.0], [0.04, 1.0]], 12), C.iron);
+  ramRod.add(turned([[0.0001, 0], [0.04, 0], [0.04, 0.98], [0.0001, 0.98]], 10), '#b9bcbc');
+  ramRod.add(turned([[0.0001, 0], [0.075, 0], [0.075, 0.1], [0.0001, 0.1]], 10), C.iron);
+  // foot: ankle ball under a bellows, a broad armoured pad with a tread, and a heel guard
+  foot.add(cyl(0.3, 0.1, 16), C.steel, { pos: [0, WL.ankle + 0.06, 0] });
+  foot.add(new THREE.SphereGeometry(0.24, 12, 8), C.iron, { pos: [0, WL.ankle + 0.06, 0] });
+  for (const y of [0.14, 0.2, 0.26]) foot.add(ring(0.27 - (y - 0.14) * 0.5, 0.025, 14), C.rubber, { pos: [0, WL.ankle + y - 0.12, 0], rot: [Math.PI / 2, 0, 0] });
   foot.add(block(0.5, 0.3, 0.5, 0.05, 0.02), C.steel, { pos: [0, WL.ankle - 0.05, 0] });
-  foot.add(profile([[-0.5, 0.0], [0.62, 0.0], [0.9, 0.08], [0.55, 0.22], [-0.45, 0.22]], 0.8, 0.04, 2), C.iron);
-  for (const x of [-0.26, 0, 0.26]) foot.add(profile([[0.55, 0.0], [1.05, 0.0], [1.15, 0.07], [0.6, 0.15]], 0.2, 0.02, 1), C.dark, { pos: [x, 0, 0] });
+  foot.add(profile([[-0.5, 0.0], [0.58, 0.0], [0.6, 0.1], [0.5, 0.22], [-0.45, 0.22]], 0.8, 0.04, 2), C.iron);
   foot.add(block(0.5, 0.1, 0.3, 0.02, 0.01), C.dark, { pos: [0, 0.07, -0.55] }); // heel
-  return { thigh, shin, foot };
+  for (let i = 0; i < 5; i++) foot.add(block(0.76, 0.03, 0.05, 0.008, 0.004), C.rubber, { pos: [0, 0.015, -0.4 + i * 0.2] }); // tread bars
+  foot.add(block(0.46, 0.04, 0.34, 0.02, 0.01), paint, { pos: [0, 0.26, 0.2] }); // top plate
+  for (const sx of [-1, 1]) dome(foot, 0.02, [sx * 0.3, 0.285, 0.3], [0, 0, 0]);
+  // toes: three claws on a hinge bar, ridged on top; origin at the hinge (0, 0, 0), toes reach +z
+  toes.add(cyl(0.09, 0.78, 10), C.steel, { pos: [0, 0.1, 0], rot: [0, 0, Math.PI / 2] });
+  for (const x of [-0.26, 0, 0.26]) {
+    toes.add(profile([[0.0, 0.0], [0.54, 0.0], [0.64, 0.07], [0.1, 0.17]], 0.2, 0.02, 1), C.dark, { pos: [x, 0, 0] });
+    toes.add(block(0.06, 0.05, 0.38, 0.01, 0.005), C.iron, { pos: [x, 0.17, 0.28], rot: [-0.18, 0, 0] });
+    toes.add(profile([[0.52, 0.0], [0.7, 0.02], [0.66, 0.09], [0.54, 0.09]], 0.14, 0.01, 1), C.steel, { pos: [x, 0, 0] }); // claw tip
+  }
+  return { thigh, shin, foot, toes, ramTube, ramRod };
 }
 
-const _ik = { H: new THREE.Vector3(), A: new THREE.Vector3(), K: new THREE.Vector3(), d: new THREE.Vector3(), pole: new THREE.Vector3(), inv: new THREE.Matrix4(), dn: new THREE.Vector3(0, -1, 0), tmp: new THREE.Vector3() };
+const _ik = { A0: new THREE.Vector3(), R1: new THREE.Vector3(), R2: new THREE.Vector3(), Z: new THREE.Vector3(0, 0, 1), Q: new THREE.Quaternion(), H: new THREE.Vector3(), A: new THREE.Vector3(), K: new THREE.Vector3(), d: new THREE.Vector3(), pole: new THREE.Vector3(), inv: new THREE.Matrix4(), dn: new THREE.Vector3(0, -1, 0), tmp: new THREE.Vector3() };
 const smooth = (u) => u * u * (3 - 2 * u);
 
 function buildStriderModel(team) {
@@ -161,7 +239,7 @@ function buildStriderModel(team) {
   if (!modelCache.has(key)) {
     const p = striderParts(team), lg = striderLeg(team);
     const gk = new CKit(); for (const [g, pos, rot] of p.glow) gk.add(g, '#ffe9a8', { pos, rot });
-    modelCache.set(key, { hull: p.hull.bake(), turret: p.turret.bake(), gun: p.gunK.bake(), glow: gk.bake(), thigh: lg.thigh.bake(), shin: lg.shin.bake(), foot: lg.foot.bake() });
+    modelCache.set(key, { hull: p.hull.bake(), turret: p.turret.bake(), gun: p.gunK.bake(), glow: gk.bake(), thigh: lg.thigh.bake(), shin: lg.shin.bake(), foot: lg.foot.bake(), toes: lg.toes.bake(), ramTube: lg.ramTube.bake(), ramRod: lg.ramRod.bake() });
   }
   const m = modelCache.get(key), def = VEHICLES.walker;
   const root = new THREE.Group();
@@ -181,9 +259,10 @@ function buildStriderModel(team) {
   turretPivot.add(tMesh, gun, mortarMuzzle);
   const meshes = [hull, tMesh, gMesh];
   const legs = [-1, 1].map((side) => {
-    const th = mesh(m.thigh), sh = mesh(m.shin), ft = mesh(m.foot);
-    root.add(th, sh, ft); meshes.push(th, sh, ft);
-    return { side, th, sh, ft, fp: new THREE.Vector3(), from: new THREE.Vector3(), to: new THREE.Vector3(), stepping: false, u: 0, dur: 0.45, init: false };
+    const th = mesh(m.thigh), sh = mesh(m.shin), ft = mesh(m.foot), toe = mesh(m.toes), rt = mesh(m.ramTube), rr = mesh(m.ramRod);
+    toe.position.set(0, 0, 0.58); ft.add(toe); // the toes hinge on the front of the pad
+    root.add(th, sh, ft, rt, rr); meshes.push(th, sh, ft, toe, rt, rr);
+    return { side, th, sh, ft, toe, rt, rr, fp: new THREE.Vector3(), from: new THREE.Vector3(), to: new THREE.Vector3(), stepping: false, u: 0, dur: 0.45, init: false };
   });
   root.add(bodyG, turretPivot);
   const parts = { root, turretPivot, gun, gunZ: 0.45, recoilK: 0.0, muzzles: [muzzle, mortarMuzzle], meshes, legs, lastT: -1, hy: WL.hip };
@@ -241,11 +320,22 @@ function striderAnimate(v, P, bodyG) {
   _ik.inv.copy(v.group.matrixWorld).invert();
   for (const leg of P.legs) {
     _ik.H.set(leg.side * WL.x, P.hy, 0);
-    _ik.A.copy(leg.fp).applyMatrix4(_ik.inv); _ik.A.y += WL.ankle;
+    // the foot pitches through the step: toes down as it lifts off (hinging on the ball), toes up as it lands
+    // (hinging on the heel); the ankle follows the pitched foot
+    const want = leg.stepping ? (leg.u < 0.3 ? 0.5 * (1 - leg.u / 0.3) : leg.u > 0.8 ? -0.32 * ((leg.u - 0.8) / 0.2) : -0.1 * Math.sin((leg.u - 0.3) / 0.5 * Math.PI)) : 0;
+    leg.pitch = dt === 0 ? want : (leg.pitch || 0) + (want - (leg.pitch || 0)) * Math.min(1, dt * 16);
+    const th0 = leg.pitch, cs = Math.cos(th0), sn = Math.sin(th0), pz = th0 > 0 ? 0.58 : -0.5;
+    _ik.A0.copy(leg.fp).applyMatrix4(_ik.inv); // the sole under the ankle, at rest
+    // origin of the pitched foot: the pivot stays put (Rx(th) * (0, 0, pz) = (0, -pz sn, pz cs))
+    _ik.A.set(_ik.A0.x, _ik.A0.y + pz * sn, _ik.A0.z + pz * (1 - cs));
+    leg.ft.position.copy(_ik.A);
+    leg.ft.quaternion.setFromAxisAngle(_ik.R1.set(1, 0, 0), th0);
+    leg.toe.rotation.x = th0 > 0 ? -th0 * 0.92 : -th0 * 0.5;
+    _ik.A.add(_ik.R2.set(0, WL.ankle, 0).applyQuaternion(leg.ft.quaternion));
     _ik.d.subVectors(_ik.A, _ik.H);
     let d = _ik.d.length(); const maxD = L1 + L2 - 0.03;
     _ik.d.multiplyScalar(1 / (d || 1));
-    if (d > maxD) { d = maxD; _ik.A.copy(_ik.H).addScaledVector(_ik.d, d); }
+    if (d > maxD) { d = maxD; _ik.A.copy(_ik.H).addScaledVector(_ik.d, d); leg.ft.position.copy(_ik.A).sub(_ik.R2.set(0, WL.ankle, 0).applyQuaternion(leg.ft.quaternion)); }
     d = Math.max(d, 0.5);
     const a = (L1 * L1 - L2 * L2 + d * d) / (2 * d), h = Math.sqrt(Math.max(0, L1 * L1 - a * a));
     _ik.pole.set(0, 0, 1); _ik.pole.addScaledVector(_ik.d, -_ik.d.z).normalize();
@@ -254,8 +344,13 @@ function striderAnimate(v, P, bodyG) {
     leg.th.quaternion.setFromUnitVectors(_ik.dn, _ik.tmp.subVectors(_ik.K, _ik.H).normalize());
     leg.sh.position.copy(_ik.K);
     leg.sh.quaternion.setFromUnitVectors(_ik.dn, _ik.tmp.subVectors(_ik.A, _ik.K).normalize());
-    leg.ft.position.copy(_ik.A); leg.ft.position.y -= WL.ankle;
-    leg.ft.quaternion.identity();
+    // the ram runs from the lug on the thigh to the lug on the shin: sleeve and rod aimed at each other, telescoping with the knee
+    _ik.R1.set(0, -0.5, -0.34).applyQuaternion(leg.th.quaternion).add(leg.th.position);
+    _ik.R2.set(0, -0.95, -0.4).applyQuaternion(leg.sh.quaternion).add(leg.sh.position);
+    _ik.d.subVectors(_ik.R2, _ik.R1);
+    const rd = Math.max(0.2, _ik.d.length()); _ik.d.multiplyScalar(1 / rd);
+    leg.rt.position.copy(_ik.R1); leg.rt.quaternion.setFromUnitVectors(_ik.Z, _ik.d); leg.rt.scale.set(1, 1, rd * 0.62);
+    leg.rr.position.copy(_ik.R2); leg.rr.quaternion.setFromUnitVectors(_ik.Z, _ik.d.negate()); leg.rr.scale.set(1, 1, rd * 0.5);
   }
 }
 

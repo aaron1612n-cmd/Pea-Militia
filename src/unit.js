@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { U, pose, makePose, HOLD } from './rig.js';
+import { Sway } from './secondary.js';
 import { strideLength } from './gait.js';
 import { WEAPONS, makeWeapon } from './weapons.js';
 import { wrap } from './physics.js';
@@ -604,6 +605,12 @@ export class Unit {
       return;
     }
     pose(s, this.poseOut);
+    // loose kit swings on the soldier's acceleration, the stride's bounce and turning
+    const sw = this.sway || (this.sway = new Sway());
+    const run = THREE.MathUtils.smoothstep(this.gspeed || 0, 1.2, 3.2) * this.walk * (1 - this.air);
+    const turn = THREE.MathUtils.clamp(((this.facing - (this.lastFacing ?? this.facing) + Math.PI * 3) % (Math.PI * 2) - Math.PI) / Math.max(dt, 1e-3), -8, 8);
+    this.lastFacing = this.facing;
+    sw.update(dt, this.vel.x, this.vel.z, this.facing, this.cycle, run, turn, this.poseOut.sway);
     this.poseOut.showWeapon = this.alive && !(this.weapon.def.kind === 'throw' && this.thrown && this.throwT > 0);
     this.world.makeRotationY(this.facing).setPosition(this.pos.x, this.pos.y - (this.deadT > 10 ? (this.deadT - 10) * 0.2 : 0), this.pos.z);
   }
