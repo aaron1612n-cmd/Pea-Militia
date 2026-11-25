@@ -483,3 +483,48 @@ html[data-free='1'][data-input='touch'] .spec { bottom: max(108px, env(safe-area
 @media (min-width: 421px) { .spec-card { min-width: 190px; } }
 @media (max-width: 420px) { .spec-card { flex: 1 1 0; } .spec-btn { width: 40px; } .spec-btn.spec-txt { width: auto; padding: 0 8px; font-size: 11px; } }
 html[data-free='1'] .radar { border-color: var(--line-2); }
+
+/* ---------------- compact HUD (smaller footprint) ---------------- */
+.radar { width: 104px; height: 104px; }
+.callins { top: calc(max(12px, env(safe-area-inset-top)) + 110px); gap: 4px; }
+.ci { width: 38px; height: 38px; }
+.vitals { padding: 5px 8px; gap: 6px; }
+.hp { width: 110px; }
+.gun { min-width: 140px; padding: 5px 8px; }
+.gun b { font-size: 18px; }
+.touchpad { transform: scale(0.84); transform-origin: 100% 100%; }
+/* follow bar: one slim line, tucked to the bottom centre, fades when idle */
+.spec { gap: 4px; transition: opacity 0.25s; }
+.spec-btn { width: 36px; min-height: 36px; border-radius: 8px; }
+.spec-btn svg { width: 18px; height: 18px; }
+.spec-btn.spec-txt { padding: 0 8px; font-size: 11px; }
+.spec-card { max-width: 230px; min-width: 0 !important; padding: 3px 10px; border-radius: 8px; }
+.spec-row b { font-size: 13px; }
+.spec-row span { font-size: 11px; }
+.spec-hp { margin: 3px 0 2px; height: 3px; }
+.spec-fight { font-size: 11px; }
+.spec-hint { font-size: 11px; }
+html[data-free='1'][data-idle='1'] .spec { opacity: 0; pointer-events: none; }
+html[data-free='1'][data-input='touch'] .spec { bottom: max(84px, env(safe-area-inset-bottom)); }
+/* hide-all toggle (U): only vitals, ammo and the follow bar stay */
+html[data-lite='1'] .radar, html[data-lite='1'] .callins, html[data-lite='1'] .compass, html[data-lite='1'] .feed, html[data-lite='1'] .points, html[data-lite='1'] .spec-fight { display: none; }
+.hud-toggle svg { width: 18px; height: 18px; }
+.corner .icon-btn { width: 36px; height: 36px; }
+@media (max-width: 640px), (max-height: 500px) {
+  .radar { width: 72px; height: 72px; }
+  .callins { top: calc(max(12px, env(safe-area-inset-top)) + 80px); }
+  .ci { width: 34px; height: 34px; }
+  .hp { width: 70px; }
+  .touchpad { transform: scale(0.78); }
+  .spec-card { max-width: 170px; }
+  .spec-fight { display: none; }
+  .spec-row span:last-child { display: none; }
+  html[data-input='touch'] .vitals { top: calc(max(12px, env(safe-area-inset-top)) + 122px); }
+  html[data-input='touch'] .gun { top: calc(max(12px, env(safe-area-inset-top)) + 80px); min-width: 110px; }
+}
+@media (max-height: 500px) {
+  html[data-input='touch'] .vitals { top: auto; bottom: max(8px, env(safe-area-inset-bottom)); }
+  html[data-input='touch'] .gun { top: max(8px, env(safe-area-inset-top)); }
+  html[data-free='1'][data-input='touch'] .spec { bottom: max(8px, env(safe-area-inset-bottom)); }
+}
+@media (prefers-reduced-motion: reduce) { .spec { transition: none; } }
