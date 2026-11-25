@@ -19,12 +19,15 @@ void main(){
   vec2 uv = vUv;
   vec3 c = texture2D(tColor, uv).rgb;
   if (dot(blurVec, blurVec) > 1e-9) {
-    // five taps along the screen-space sweep of the camera, centred on this pixel
-    c *= 0.28;
-    for (int i = 0; i < 4; i++) {
-      float k = (float(i) - 1.5) / 3.0;
-      c += texture2D(tColor, uv + blurVec * k).rgb * 0.18;
+    // eight taps along the screen-space sweep of the camera, centred on this pixel, each nudged by a
+    // little noise so a fast turn smears smoothly instead of showing stepped copies of the picture
+    float jit = ign(gl_FragCoord.xy) - 0.5;
+    c = vec3(0.0);
+    for (int i = 0; i < 8; i++) {
+      float k = ((float(i) + 0.5 + jit * 0.8) / 8.0 - 0.5);
+      c += texture2D(tColor, uv + blurVec * k).rgb;
     }
+    c *= 0.125;
   }
   float d = texture2D(tDepth, uv).x;
   if (aoAmt > 0.0 && d < 0.99999) {

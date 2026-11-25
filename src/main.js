@@ -41,7 +41,7 @@ const coarse = matchMedia('(pointer: coarse)').matches;
 const tier = params.get('q') || (coarse || (navigator.hardwareConcurrency || 8) <= 4 ? 'low' : 'high');
 const usePost = tier === 'high' && (!testing || params.has('post'));
 document.documentElement.dataset.quality = usePost ? 'high' : 'low';
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: tier !== 'low', preserveDrawingBuffer: testing, powerPreference: 'high-performance' }); // phones skip MSAA: it costs fill and memory bandwidth
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: testing, powerPreference: 'high-performance' }); // MSAA on phones too: tiled mobile GPUs resolve it on chip, and without it every moving edge crawls
 renderer.setPixelRatio(testing ? 1 : Math.min(devicePixelRatio, tier === 'low' ? 1.5 : 2)); // the check suite renders in software
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = tier === 'low' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
@@ -98,11 +98,9 @@ const vmCrowd = new Crowd(vmScene, 2);
 let vmOn = false;
 const post = usePost ? new Post(renderer, { samples: 4, reduced }) : null;
 let frameDt = 1 / 60;
-// Phones redraw the shadow map every other frame: it is the same picture a sixtieth of a second apart,
-// and the map and its matrix are kept together, so shadows only trail a moving thing by a frame.
-let shadowTick = 0;
+// The shadow map is redrawn every frame on every tier: the shadow box moves with the camera, so a stale
+// map paired with a fresh matrix makes every shadow jump back and forth on the frames in between.
 function renderWorld() {
-  if (tier === 'low' && !testing) { renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = (shadowTick++ & 1) === 0; }
   if (post) {
     post.render(scene, camera, frameDt, { night: atmo.night, wet: Math.min(1, atmo.w.rain), flash: atmo.flash * atmo.flash * 0.18, noBlur: testing || state === 'menu' || cam.frozen });
     // the post pass leaves its own depth behind, so the gun gets a clean depth range on the screen
@@ -119,6 +117,18 @@ function renderWorld() {
   renderer.clearDepth();
   renderer.render(vmScene, vmCamera);
   renderer.autoClear = true;
+}
+// Slide the shadow box in whole shadow-map texels (measured across the sun's view) so shadow edges stay
+// put on the ground while the camera walks, instead of crawling and shimmering.
+const _sx = new THREE.Vector3(), _sy = new THREE.Vector3(), _sz = new THREE.Vector3();
+function snapShadowBox(p) {
+  if (!(SH > 0)) return;
+  const texel = (2 * SH) / SM;
+  _sz.copy(SUN).normalize();
+  _sx.set(0, 1, 0).cross(_sz).normalize();
+  _sy.copy(_sz).cross(_sx);
+  const a = Math.round(p.dot(_sx) / texel) * texel, b = Math.round(p.dot(_sy) / texel) * texel, c = p.dot(_sz);
+  p.set(0, 0, 0).addScaledVector(_sx, a).addScaledVector(_sy, b).addScaledVector(_sz, c);
 }
 const hud = new Hud();
 const input = new Input(canvas, {
@@ -961,6 +971,7 @@ function frame(_t, fixedDt) {
   updateEnv(performance.now() / 1000, atmo.hour, atmo.weather);
   SUN.copy(atmo.sunDir);
   if (Math.abs(atmo.sight - sightSet) > 0.02) { sightSet = atmo.sight; setSight(sightSet); }
+  snapShadowBox(look);
   sun.position.copy(look).add(SUN);
   sun.target.position.copy(look);
   if (state !== 'menu' && player) { hud.update(dt, player, battle, cam); if (cam.mode !== 'over' && cam.mode !== 'free') hud.drawMarks(player, battle, camera); }
