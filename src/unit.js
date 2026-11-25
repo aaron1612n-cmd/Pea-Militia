@@ -93,7 +93,7 @@ export class Unit {
     this.tendK = 0; this.dragK = 0; this.drgK = 0; this.tendT = 0; this.dragT = 0; this.draggedT = 0; this.tendTarget = null; // tending a casualty, hauling one, being hauled
     this.hs = { x: 0, z: 0, vx: 0, vz: 0 }; // how the torso is rocked by hits (rad, rad/s): pitch and roll
     this.gl = [0, 0, 0, 0]; this.glv = [0, 0, 0, 0]; this.lastAim = 0; this.lastAimP = 0; // the gun's lag behind a turning body: yaw, pitch, x, y
-    this.animLod = 0; // 0 near the camera .. 2 far: how much of the animation is worth computing
+    this.animLod = 1; // 0 near the camera .. 2 far: how much of the animation is worth computing (the render loop sets it every frame; a soldier nobody is looking at stays cheap)
     this.poseState = {};
     this.world = new THREE.Matrix4();
     this.box = { x: 0, z: 0, yaw: 0, hx: U.W / 2, hz: U.D / 2, h: U.TOP, y0: 0 };

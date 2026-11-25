@@ -933,6 +933,7 @@ export function legPass(s, out) {
   out.pelvis.decompose(_bp, _bq, _bs);
   // lifting a boot onto its sole changes where the shin points, so the limit and the sole are settled together
   for (let pass = 0; pass < 3; pass++) {
+    let moved = false;
   for (let i = 0; i < 2; i++) {
     const side = i === 0 ? -1 : 1, f = out.feet[i];
     // where the shin points: solve the leg once with the foot as placed
@@ -957,6 +958,7 @@ export function legPass(s, out) {
       T.sub(_fp.copy(_ank).applyQuaternion(_fq));
       f.compose(_fp.copy(T), _fq, S1);
       if (over > 0) out.toeRel[i] -= 0.97 * over; // the heel comes up and the toe box stays flat: it hinges at the ball
+      moved = true;
     }
   }
   // a planted sole rests exactly on the ground (flat to a slope); a swinging boot only has to stay out of it. This also holds
@@ -964,11 +966,13 @@ export function legPass(s, out) {
   for (let i = 0; i < 2; i++) {
     // (a swinging boot clears the real terrain it passes over; a planted one lies on the plane under it)
     const f = out.feet[i], gy = s.gnd ? s.gnd[i] : 0, gxs = s.slope ? s.slope[i][0] : 0, gzs = s.slope ? s.slope[i][1] : 0;
-    const lo = soleLow(f, gy, gxs, gzs, s.lod > 0 || pass < 2 || (out.st && out.st[i] > 0.5) ? null : s, out.toeRel[i]), st = (out.st ? out.st[i] : 0) * (1 - smooth(0.02, 0.2, s.prone || 0));
+    const lo = soleLow(f, gy, gxs, gzs, s.lod > 0 || (out.st && out.st[i] > 0.5) ? null : s, out.toeRel[i]), st = (out.st ? out.st[i] : 0) * (1 - smooth(0.02, 0.2, s.prone || 0));
     let dy = -lo * st;
     if (lo + dy < 0.0005) dy += 0.0005 - (lo + dy);
     f.elements[13] += dy;
+    if (Math.abs(dy) > 0.0004) moved = true;
   }
+    if (!moved) break; // nothing shifted, so the shins and the soles already agree
   }
 }
 // arms: shoulder joint to the wrist, elbows down and out. hands[0] is the left (support) hand at +x.

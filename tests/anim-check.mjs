@@ -28,7 +28,7 @@ const v = new THREE.Vector3(), w = new THREE.Matrix4();
 
 function mk(kind = 'rifleman', loadout = ['rifle', 'grenade']) {
   const u = new Unit({ team: 0, loadout, kind, pos: new THREE.Vector3(0, 0, 0) });
-  u.isPlayer = true; u.god = true;
+  u.isPlayer = true; u.god = true; u.animLod = 0; // full detail: the render loop would set this for a soldier near the camera
   return u;
 }
 // world positions of the joints that matter, for the pop check
