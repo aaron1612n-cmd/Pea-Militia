@@ -4,6 +4,7 @@ import { createSky, HALF } from './world.js';
 import './haze.js';
 import { Atmosphere } from './atmosphere.js';
 import { Post } from './post.js';
+import { View } from './cull.js';
 import { Ambience } from './ambience.js';
 import { setSight } from './ai.js';
 import { height, updateGround, setWetness } from './terrain.js';
@@ -40,10 +41,10 @@ const coarse = matchMedia('(pointer: coarse)').matches;
 const tier = params.get('q') || (coarse || (navigator.hardwareConcurrency || 8) <= 4 ? 'low' : 'high');
 const usePost = tier === 'high' && (!testing || params.has('post'));
 document.documentElement.dataset.quality = usePost ? 'high' : 'low';
-const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: testing, powerPreference: 'high-performance' });
+const renderer = new THREE.WebGLRenderer({ canvas, antialias: tier !== 'low', preserveDrawingBuffer: testing, powerPreference: 'high-performance' }); // phones skip MSAA: it costs fill and memory bandwidth
 renderer.setPixelRatio(testing ? 1 : Math.min(devicePixelRatio, tier === 'low' ? 1.5 : 2)); // the check suite renders in software
 renderer.shadowMap.enabled = true;
-renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+renderer.shadowMap.type = tier === 'low' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
 renderer.toneMappingExposure = 1.0;
 
@@ -97,7 +98,11 @@ const vmCrowd = new Crowd(vmScene, 2);
 let vmOn = false;
 const post = usePost ? new Post(renderer, { samples: 4, reduced }) : null;
 let frameDt = 1 / 60;
+// Phones redraw the shadow map every other frame: it is the same picture a sixtieth of a second apart,
+// and the map and its matrix are kept together, so shadows only trail a moving thing by a frame.
+let shadowTick = 0;
 function renderWorld() {
+  if (tier === 'low' && !testing) { renderer.shadowMap.autoUpdate = false; renderer.shadowMap.needsUpdate = (shadowTick++ & 1) === 0; }
   if (post) {
     post.render(scene, camera, frameDt, { night: atmo.night, wet: Math.min(1, atmo.w.rain), flash: atmo.flash * atmo.flash * 0.18, noBlur: testing || state === 'menu' || cam.frozen });
     // the post pass leaves its own depth behind, so the gun gets a clean depth range on the screen
@@ -662,12 +667,13 @@ function spotEnemy() {
   hud.say(`Enemy spotted · ${tgt.crew ? tgt.def.name : KINDS[tgt.kind]?.name || 'Soldier'}`, 1.2);
 }
 const aimPoint = new THREE.Vector3();
+const _aimD = new THREE.Vector3(), _aimO = new THREE.Vector3(), _aimS = new THREE.Vector3();
 function updateAim() {
-  const d = camera.getWorldDirection(new THREE.Vector3());
-  const o = camera.position.clone();
+  const d = camera.getWorldDirection(_aimD);
+  const o = _aimO.copy(camera.position);
   // start the ray past the player's own body in third person
   const skip = cam.mode === '3p' ? Math.max(0, camera.position.distanceTo(player.eye()) * 0.9) : 0.2;
-  const hit = battle.raycast(o.clone().addScaledVector(d, skip), d, 300, { ignore: player });
+  const hit = battle.raycast(_aimS.copy(o).addScaledVector(d, skip), d, 300, { ignore: player });
   aimPoint.copy(hit.hit ? hit.point : o.addScaledVector(d, 300));
 }
 
@@ -780,20 +786,40 @@ function respawnPlayer() {
 // ---------------- render: everyone through the instanced crowd ----------------
 const viewPose = makePose();
 const LOD_FAR = 70; // beyond this, soldiers draw as the plain block, hands, feet, arms and weapon
+const view = new View();
+let unitView = new Uint8Array(256); // per soldier: 0 skip, 1 camera only, 2 camera and shadow box
+const LOD_FAR2 = 100; // beyond this a glove is under a pixel and is not drawn
 function drawUnits() {
   crowd.begin();
   vmCrowd.begin();
   vmOn = false;
+  // what the camera or the sun's shadow can reach: everything else is left out of the instance buffers
+  view.update(camera, sun, scene.fog.far);
+  battle.batch.cull(view);
   const fp = state !== 'menu' && player && cam.mode === '1p' && cam.blend > 0.6;
-  for (const u of battle.units) {
-    if (u.removed || u.vehicle) continue;
-    if (u === player && fp) {
-      if (!u.alive) continue;
-      vmCrowd.add(vm.identity, vm.pose, u.team, { body: false, weapon: u.weapon.id });
-      vmOn = true;
-      continue;
+  const cp = camera.position;
+  const us = battle.units;
+  if (unitView.length < us.length) unitView = new Uint8Array(us.length * 2);
+  for (let i = 0; i < us.length; i++) {
+    const u = us[i];
+    unitView[i] = u.removed || u.vehicle ? 0 : u === player ? 2 : view.test(u.pos.x, u.pos.y + 1, u.pos.z, 2.4);
+  }
+  // soldiers inside the sun's shadow box first, then the rest that only the camera sees: the shadow pass
+  // draws just the first group (see Crowd.snap)
+  for (let pass = 2; pass >= 1; pass--) {
+    for (let i = 0; i < us.length; i++) {
+      if (unitView[i] !== pass) continue;
+      const u = us[i];
+      if (u === player && fp) {
+        if (!u.alive) continue;
+        vmCrowd.add(vm.identity, vm.pose, u.team, { body: false, weapon: u.weapon.id });
+        vmOn = true;
+        continue;
+      }
+      const dd = u.pos.distanceToSquared(cp);
+      crowd.add(u.world, u.poseOut, u.team, { weapon: u.weapon.id, seed: u.id, wound: u.wound, lost: u.lost, wounds: u.wounds, marks: u.marks, kind: u.kind, far: dd > LOD_FAR * LOD_FAR, far2: dd > LOD_FAR2 * LOD_FAR2 });
     }
-    crowd.add(u.world, u.poseOut, u.team, { weapon: u.weapon.id, seed: u.id, wound: u.wound, lost: u.lost, wounds: u.wounds, marks: u.marks, kind: u.kind, far: u.pos.distanceToSquared(camera.position) > LOD_FAR * LOD_FAR });
+    if (pass === 2) crowd.snap();
   }
   crowd.end();
   vmCrowd.end();
@@ -801,6 +827,7 @@ function drawUnits() {
 
 // ---------------- loop ----------------
 const clock = new THREE.Clock();
+const _look = new THREE.Vector3(), _fwd = new THREE.Vector3(); // reused each frame: nothing is allocated in the loop
 let frozen = false;
 let menuT = 0;
 let skipDraw = false;
@@ -923,7 +950,11 @@ function frame(_t, fixedDt) {
   if (state !== 'menu' && player) battleFeel(dt);
   audio.listener.x = camera.position.x; audio.listener.z = camera.position.z; audio.listener.yaw = state === 'menu' ? 0 : cam.yaw;
   // shadows follow what the camera is looking at
-  const look = state === 'menu' ? new THREE.Vector3() : cam.mode === 'over' ? new THREE.Vector3(cam.over.x, 0, cam.over.z) : cam.mode === 'free' ? cam.fr.clone().add(cam.forward().setY(0).normalize().multiplyScalar(22)).setY(0) : player.pos.clone().add(cam.forward().setY(0).multiplyScalar(12));
+  const look = _look;
+  if (state === 'menu') look.set(0, 0, 0);
+  else if (cam.mode === 'over') look.set(cam.over.x, 0, cam.over.z);
+  else if (cam.mode === 'free') look.copy(cam.fr).add(cam.forward(_fwd).setY(0).normalize().multiplyScalar(22)).setY(0);
+  else look.copy(player.pos).add(cam.forward(_fwd).setY(0).multiplyScalar(12));
   atmo.update(dt, camera);
   setWetness(Math.min(1, atmo.w.rain));
   if (state !== 'menu') ambience.update(dt, camera, battle);
