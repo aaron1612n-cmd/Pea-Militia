@@ -19,7 +19,7 @@ page.on('console', (m) => { if (m.type() === 'error') errs.push(m.text()); });
 await page.goto(`http://localhost:${port}/tests/viewer.html`);
 await page.waitForFunction(() => window.ready, null, { timeout: 60000 });
 for (const kind of kinds) for (const mode of modes) for (const zoom of zooms) for (const view of views) {
-  await page.evaluate((o) => window.shot(o), { kind, view, mode, zoom, phase: Number(process.env.PHASE || 0.15) });
+  await page.evaluate((o) => window.shot(o), { kind, view, mode, zoom, phase: Number(process.env.PHASE || 0.15), state: process.env.STATE ? JSON.parse(process.env.STATE) : null });
   await page.locator('canvas').screenshot({ path: `${out}/${kind}-${mode}-${zoom}-${view}.png` });
 }
 if (errs.length) console.log('ERRORS', errs.slice(0, 5));

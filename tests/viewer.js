@@ -30,7 +30,7 @@ const ANG = { front: 0, q3: Math.PI / 4, side: Math.PI / 2, back: Math.PI, q3b: 
 // zoom targets: [centre y, camera distance]
 const ZOOM = { full: [0.62, 3.4], upper: [0.82, 1.6], head: [0.99, 0.75], legs: [0.3, 1.5], boots: [0.08, 0.8], torso: [0.72, 1.1], hands: [0.74, 1.3, -0.08, 0.38] };
 
-window.shot = ({ kind = 'rifleman', team = 0, view = 'front', mode = 'idle', zoom = 'full', phase = 0.1 } = {}) => {
+window.shot = ({ kind = 'rifleman', team = 0, view = 'front', mode = 'idle', zoom = 'full', phase = 0.1, state = null } = {}) => {
   const s = { t: 1.3, walk: 0, cycle: 0, speed: 0, ready: 1, weapon: WEAPON[kind], mx: 0, mz: 1, stride: 0.5 };
   if (mode === 'run') Object.assign(s, { walk: 1, speed: 4.2, cycle: phase, sprint: false, free: 0 });
   if (mode === 'walk') Object.assign(s, { walk: 1, speed: 1.4, cycle: phase });
@@ -41,6 +41,7 @@ window.shot = ({ kind = 'rifleman', team = 0, view = 'front', mode = 'idle', zoo
   if (mode === 'sprint') Object.assign(s, { walk: 1, speed: 6, cycle: phase, free: 1 });
   if (mode === 'reload') Object.assign(s, { reload: 0.5 });
   if (mode === 'fire') Object.assign(s, { recoil: 0.6 });
+  if (state) Object.assign(s, state); // any pose state of rig.js, for the poses the named modes leave out
   const p = pose(s, makePose());
   // loose kit: run a few seconds of the soldier's motion through the springs so the shot catches it mid-swing
   if (s.walk > 0) { const sw = new Sway(); for (let i = 0; i < 90; i++) sw.update(1 / 60, 0, s.speed, 0, (phase + i * s.speed * 0.4 / 60 / (0.45 + 0.32 * s.speed)) % 1, 1, 0, p.sway); }
