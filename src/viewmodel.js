@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { HOLD, makePose } from './rig.js';
+import { HOLD, U, makePose } from './rig.js';
 
 // First-person gun, bodycam style: the gun and hands hang in front of the camera, bob with the
 // stride, lag behind quick turns, kick on each shot, and come up to the centre line when aiming
@@ -27,9 +27,29 @@ export const VIEW = {
 };
 const DEF_VIEW = VIEW.rifle;
 const L = new THREE.Matrix4();
+const BP = new THREE.Vector3(), BQ = new THREE.Quaternion();
 const M = new THREE.Matrix4();
 const lerp = THREE.MathUtils.lerp;
 const smooth = (a, b, x) => THREE.MathUtils.smoothstep(x, a, b);
+
+// The unseen shoulders follow the hands: slide the body toward them until both arms reach the gun
+// without stretching, so the forearms keep their true length however the gun is carried or aimed.
+const SH = new THREE.Vector3(), HP = new THREE.Vector3(), SHIFT = new THREE.Vector3(), EX = new THREE.Vector3();
+function seatShoulders(p) {
+  const max = (U.ARM[0] + U.ARM[1]) * 0.94;
+  for (let it = 0; it < 3; it++) {
+    SHIFT.set(0, 0, 0);
+    for (let i = 0; i < 2; i++) {
+      SH.set((i === 0 ? 1 : -1) * U.SH_X, U.SH_Y, -0.005).applyMatrix4(p.body);
+      HP.setFromMatrixPosition(p.hands[i]);
+      EX.subVectors(HP, SH);
+      const d = EX.length();
+      if (d > max) SHIFT.addScaledVector(EX, (d - max) / d * 0.5);
+    }
+    if (SHIFT.lengthSq() < 1e-8) break;
+    p.body.elements[12] += SHIFT.x; p.body.elements[13] += SHIFT.y; p.body.elements[14] += SHIFT.z;
+  }
+}
 
 export class ViewModel {
   constructor() {
@@ -109,10 +129,12 @@ export class ViewModel {
     L.compose(P.set(x, y, z), Q, S1);
     p.weapon.multiplyMatrices(camera.matrixWorld, L);
     // trigger hand on the grip, support hand cupping the handguard (or the magazine mid-reload)
-    p.hands[1].multiplyMatrices(p.weapon, M.makeTranslation(0, V.rh[0], V.rh[1]));
-    p.hands[0].multiplyMatrices(p.weapon, M.makeTranslation(0, lerp(V.lh[0], h.anim.hand[0], rl), lerp(V.lh[1], h.anim.hand[1], rl)));
+    p.hands[1].multiplyMatrices(p.weapon, h.rh.m);
+    BP.lerpVectors(h.lhA.p, h.magA.p, rl); BQ.copy(h.lhA.q).slerp(h.magA.q, rl);
+    p.hands[0].multiplyMatrices(p.weapon, M.compose(BP, BQ, S1));
     p.showWeapon = true;
     p.muzzle.copy(h.muzzle).applyMatrix4(p.weapon);
+    seatShoulders(p);
     return p;
   }
 }

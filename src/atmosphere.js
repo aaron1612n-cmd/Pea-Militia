@@ -50,6 +50,7 @@ export class Atmosphere {
     this.sunDir = new THREE.Vector3(42, 40, 26);
     this.onThunder = null;
     this.sight = 1;
+    this.night = 0;
     this.t = 0;
     this._buildRain();
     this.apply(0);
@@ -125,6 +126,7 @@ export class Atmosphere {
     const f = this.flash * this.flash;
     const grey = w.grey, dim = w.dim;
     const night = 1 - Math.min(1, lerpKey(h, 9, tmpA) / 2.2);
+    this.night = night;
     const ov = tmpOv.setScalar(0.42 + 0.3 * (1 - night)); // overcast grey, darker at night
     const u = this.sky.material.uniforms;
     lerpKey(h, 1, u.top.value).lerp(ov, grey * 0.8).multiplyScalar(dim * (1 + f * 2.5));
@@ -138,12 +140,15 @@ export class Atmosphere {
     this.hemi.intensity = lerpKey(h, 7, tmpA) * (0.6 + 0.4 * dim) + f * 2.2;
     this.sun.color.copy(lerpKey(h, 8, tmpB)).lerp(ov, grey * 0.5);
     this.sun.intensity = lerpKey(h, 9, tmpA) * (1 - grey * 0.75) * dim;
+    u.night.value = night;
+    u.dim.value = dim;
     this.rim.intensity = 0.6 * (0.4 + 0.6 * (1 - night));
     this.renderer.toneMappingExposure = lerpKey(h, 10, tmpA) * (1 + night * 0.1);
     // sun arcs across the sky; below the horizon the moon takes over from the same side
     const a = ((h - 6) / 12) * Math.PI, el = Math.sin(a);
     const elev = Math.max(0.28, Math.abs(el)); // keep shadows from going flat
     this.sunDir.set(Math.cos(a) * 60, 20 + elev * 50, 26);
+    u.sunDir.value.copy(this.sunDir).normalize();
     // rain
     const r = this.rain;
     r.visible = w.rain > 0.02;
