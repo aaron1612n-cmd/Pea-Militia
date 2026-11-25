@@ -127,6 +127,8 @@ export class Input {
         this.lookId = null;
         // a still tap in build mode is a click on the world
         if (this.mode === 'build' && this.lookTap && this.lookTap.moved < 10 && this.onWorldClick) this.onWorldClick(e.clientX, e.clientY);
+        // a still tap in play is a 'tap' (the free camera uses it to pick a soldier)
+        else if (this.mode === 'play' && this.lookTap && this.lookTap.moved < 10 && e.type === 'pointerup') this.actions.push({ type: 'tap', x: e.clientX, y: e.clientY });
         this.lookTap = null;
       }
       if (this.drag && e.pointerId === this.drag.id) {
@@ -151,7 +153,7 @@ export class Input {
     });
 
     const GAME = new Set(['KeyW', 'KeyA', 'KeyS', 'KeyD', 'ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'Space']);
-    const KEYS = { KeyR: 'reload', KeyG: 'grenade', KeyB: 'menu', KeyV: 'view', KeyF: 'free', KeyX: 'use', KeyY: 'spot', KeyN: 'map', KeyK: 'callin', Tab: 'map', KeyH: 'skill', KeyJ: 'bandage' };
+    const KEYS = { KeyR: 'reload', KeyG: 'grenade', KeyB: 'menu', KeyV: 'view', KeyF: 'free', KeyX: 'use', KeyY: 'spot', KeyN: 'map', KeyK: 'callin', Tab: 'map', KeyH: 'skill', KeyJ: 'bandage', KeyQ: 'specPrev', KeyE: 'specNext' };
     const WHEEL = 'KeyT';
     addEventListener('keydown', (e) => {
       if (e.target && (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT')) return;

@@ -11,6 +11,7 @@ import { height, updateGround, setWetness } from './terrain.js';
 import { initEnv, updateEnv } from './env.js';
 import { Input } from './input.js';
 import { PlayerCam } from './camera.js';
+import { Spectate } from './spectate.js';
 import { Unit } from './unit.js';
 import { U, pose, makePose, HOLD, solveLegs, solveArms } from './rig.js';
 import { Crowd } from './crowd.js';
@@ -80,6 +81,7 @@ atmo.onThunder = () => audio.play('boom', null, 0.35);
 
 const camera = new THREE.PerspectiveCamera(70, 1, 0.05, 700);
 const cam = new PlayerCam(camera);
+const spec = new Spectate(cam, camera, (o, d, max) => cam.collide ? cam.collide(o, d, max) : max);
 scene.add(camera); // the cockpit frame rides on the camera
 const cockpit = new Cockpit(camera);
 let cockpitVeh = null;
@@ -340,6 +342,7 @@ function startBattle(s) {
   battle.onPlayerHurt = (dmg) => { hud.hurt(dmg); bloodScreen(Math.ceil(dmg / 15), 0.5); cam.shake = Math.min(1, cam.shake + dmg / 60); };
   battle.onShock = (sec) => { audio.deaf = Math.min(1, Math.max(audio.deaf, 0.5 + sec / 10)); if (!reduced) cam.shake = 1; bloodScreen(2, 0.6); hud.say('Shell shock', 1.6); };
   battle.onKill = (u, from) => {
+    spec.onKill(u, from);
     if (from === player && u !== player && player.pos.distanceTo(u.pos) < 4) bloodScreen(3, 1.2);
     if (from === player && u !== player) hud.log(`${KINDS[u.kind]?.name || 'Soldier'} · ${TEAMS[u.team].short}`, true);
     if (u === player) hud.log(from?.kind ? `Killed by ${KINDS[from.kind]?.name || 'enemy'}` : 'Killed', true);
@@ -366,6 +369,7 @@ function startBattle(s) {
 // while you do, and drops back in wherever you were when you switch back.
 function toggleFree(on = cam.mode !== 'free', start = false) {
   if (state !== 'play' || (on && cam.mode === 'free') || (!on && cam.mode !== 'free')) return;
+  spec.release(); hud.setView(null);
   if (on) {
     if (sandbox.open) sandbox.toggle(false);
     cam.fr.copy(camera.position);
@@ -387,7 +391,49 @@ function toggleFree(on = cam.mode !== 'free', start = false) {
   }
   document.documentElement.dataset.free = on ? '1' : '0';
   document.documentElement.dataset.view = cam.mode;
-  if (on) hud.say('Free camera · F returns to your soldier', 2.2);
+  if (on) hud.say(input.touch ? 'Free camera · tap a soldier to follow' : 'Free camera · click a soldier to follow · F returns', 2.6);
+}
+
+// Follow camera controls: Q / E (or the arrows on screen) step through soldiers, a click or tap picks one.
+let specFire = false;
+function specStep(dir) {
+  if (!spec.active) { const n = spec.nearest(battle, player); if (n) { spec.follow(n); return; } }
+  if (!spec.step(battle, player, dir)) hud.say('No soldiers left to follow', 1.4);
+}
+function specPickAt(x, y) {
+  const dpr = Math.min(2, devicePixelRatio || 1);
+  const reach = (input.touch ? 70 : 80) * dpr;
+  const u = spec.pick(hud.pts || [], x * dpr, y * dpr, reach);
+  if (u) spec.follow(u);
+}
+const specEl = { prev: $('specPrev'), next: $('specNext'), mode: $('specMode'), free: $('specFree'), card: $('specCard'), hint: $('specHint'), info: $('specInfo'), name: $('specName'), team: $('specTeam'), kills: $('specKills'), hp: $('specHp'), fight: $('specFight') };
+for (const [el, fn] of [[specEl.prev, () => specStep(-1)], [specEl.next, () => specStep(1)], [specEl.mode, () => hud.say(spec.toggleMode() === 'duel' ? 'Duel cam · keeps his fight in frame' : 'Chase cam · you steer', 1.4)], [specEl.free, () => spec.release()]]) {
+  el.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); fn(); });
+  el.addEventListener('click', (e) => e.preventDefault());
+}
+let specLast = '', specCut = 0;
+function specUi() {
+  const u = spec.unit, on = !!u;
+  if (specEl.info.hidden === on) { specEl.info.hidden = !on; specEl.hint.hidden = on; specEl.mode.hidden = specEl.free.hidden = !on; }
+  if (!u) { specLast = ''; return; }
+  const t = spec.target, dead = !u.alive;
+  specEl.mode.textContent = spec.mode === 'duel' ? 'Duel' : 'Chase';
+  const kind = KINDS[u.kind]?.name || 'Soldier';
+  const hp = Math.max(0, Math.round((u.hp / (u.maxHp || 100)) * 100));
+  const range = t ? Math.round(Math.hypot(t.pos.x - u.pos.x, t.pos.z - u.pos.z)) : 0;
+  const fight = dead ? (spec.killer ? `Killed by <em>${KINDS[spec.killer.kind]?.name || 'enemy'} · ${TEAMS[spec.killer.team].short}</em>` : 'Killed') : t ? `Fighting <em>${KINDS[t.kind]?.name || 'Soldier'} · ${TEAMS[t.team].short}</em> · ${range} m` : 'No target';
+  const key = `${kind}|${u.team}|${u.kills}|${hp}|${fight}|${spec.mode}`;
+  // each cut to a new soldier replays the card's entrance
+  if (specCut !== u) { specCut = u; specEl.card.classList.remove('cut'); void specEl.card.offsetWidth; specEl.card.classList.add('cut'); }
+  if (key === specLast) return;
+  specLast = key;
+  specEl.name.textContent = kind;
+  specEl.team.textContent = TEAMS[u.team].short;
+  specEl.kills.textContent = u.kills ? `${u.kills} kill${u.kills === 1 ? '' : 's'}` : '';
+  specEl.hp.style.transform = `scaleX(${hp / 100})`;
+  specEl.hp.classList.toggle('low', hp < 35);
+  specEl.fight.innerHTML = fight;
+  specEl.card.style.borderLeftColor = TEAMS[u.team].ui;
 }
 
 function pause(on) {
@@ -554,6 +600,12 @@ function handle(actions) {
     if (a.type === 'callin') { if (callinOk()) cycleCallin(); continue; }
     if (a.type === 'map') { hud.toggleMap(); continue; }
     if (a.type === 'spot') { if (player.alive && cam.mode !== 'free' && !sandbox.open) spotEnemy(); continue; }
+    if (cam.mode === 'free' && !sandbox.open) {
+      if (a.type === 'specNext' || a.type === 'specPrev') { specStep(a.type === 'specNext' ? 1 : -1); continue; }
+      if (a.type === 'tap') { specPickAt(a.x, a.y); continue; }
+      if (a.type === 'next' || a.type === 'prev') { if (spec.active) spec.zoom(a.type === 'next' ? 1.15 : 0.87); continue; }
+      if (a.type === 'view') { if (spec.active) hud.say(spec.toggleMode() === 'duel' ? 'Duel cam · keeps his fight in frame' : 'Chase cam · you steer', 1.4); continue; }
+    }
     if (a.type === 'view') { if (player.vehicle) { cam.cockpit = !cam.cockpit; hud.say(cam.cockpit ? 'Cockpit view' : 'Chase view', 1); continue; } if (cam.mode !== 'over' && cam.mode !== 'free') { cam.mode = cam.mode === '1p' ? '3p' : '1p'; document.documentElement.dataset.view = cam.mode; } continue; }
     if (!player.alive || sandbox.open || cam.mode === 'free') continue;
     if (a.type === 'slot') player.setWeapon(a.n);
@@ -865,9 +917,18 @@ function frame(_t, fixedDt) {
           if (inp.zoom) cam.zoom(Math.exp(inp.zoom * 0.0012));
           cam.look(inp.look.dx, inp.look.dy);
         } else if (cam.mode === 'free') {
-          cam.look(inp.look.dx, inp.look.dy);
           const up = (inp.jumpHeld ? 1 : 0) - (inp.crouch ? 1 : 0);
-          cam.fly(dt, inp.move, up, inp.sprint);
+          if (spec.active) {
+            // following: look orbits him, the wheel zooms, and any move key lets go
+            spec.nudge(inp.look.dx, inp.look.dy);
+            if (inp.move.x || inp.move.y || up) spec.release();
+          } else {
+            cam.look(inp.look.dx, inp.look.dy);
+            cam.fly(dt, inp.move, up, inp.sprint);
+          }
+          // a click with the mouse locked picks the soldier under the crosshair
+          if (inp.fire && !specFire && !input.touch) specPickAt(innerWidth / 2, innerHeight / 2);
+          specFire = inp.fire;
         } else {
           if (input.touch && player?.alive) aimAssist(dt, inp);
           if (wheel.open) { wheel.nudge(inp.look.dx, inp.look.dy); inp.look.dx = inp.look.dy = 0; inp.fire = false; }
@@ -922,6 +983,7 @@ function frame(_t, fixedDt) {
       if (!player.alive) recoilDebt = 0;
     }
     cam.adsZoom = (VIEW[player.weapon.id] || VIEW.rifle).zoom;
+    if (cam.mode === 'free') spec.update(dt, battle, player, reduced);
     cam.update(dt, player, snap);
     snap = false;
     {
@@ -974,7 +1036,17 @@ function frame(_t, fixedDt) {
   snapShadowBox(look);
   sun.position.copy(look).add(SUN);
   sun.target.position.copy(look);
-  if (state !== 'menu' && player) { hud.update(dt, player, battle, cam); if (cam.mode !== 'over' && cam.mode !== 'free') hud.drawMarks(player, battle, camera); }
+  if (state !== 'menu' && player) {
+    // free camera: the radar and compass work from the camera (or the soldier being followed)
+    if (cam.mode === 'free') {
+      const f = spec.unit, c = camera.position;
+      hud.setView({ x: c.x, z: c.z, cx: f ? f.pos.x : c.x, cz: f ? f.pos.z : c.z, unit: f, target: spec.target });
+    } else hud.setView(null);
+    hud.update(dt, player, battle, cam);
+    if (cam.mode === 'free') { hud.drawSpecMarks(battle, camera, player, spec); specUi(); }
+    else if (cam.mode === 'over') hud.clearMarks();
+    else hud.drawMarks(player, battle, camera);
+  }
   if (skipDraw) return;
   drawUnits();
   updateGround(camera);
@@ -1001,7 +1073,7 @@ if (params.has('play')) startBattle({ mode: params.get('play') || 'battle' });
 // Test hooks for the check suite.
 window.__game = { maxSpeed: MAX_SPEED,
   THREE, scene, camera, renderer, cam, input, crowd, fx, SLOTS, U, pose, makePose, solveLegs, solveArms, HOLD, HALF, weaponModel,
-  height, get battle() { return battle; }, get player() { return player; }, get state() { return state; },
+  spec, height, get battle() { return battle; }, get player() { return player; }, get state() { return state; },
   sandbox, atmo, ambience, envNow: () => updateEnv(1e9, atmo.hour, atmo.weather, true), start: startBattle, openMenu, pause,
   freeze(on = true) { frozen = on; },
   // render one frame now (for screenshots while frozen)
