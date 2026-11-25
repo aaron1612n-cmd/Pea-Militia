@@ -58,6 +58,24 @@ const BUILDERS = {
     k.poly([[0.69, -0.66], [0.71, -0.66], [0.74, -0.58], [0.72, -0.58]], '#e8dca8');
     k.poly([[-0.71, -0.66], [-0.69, -0.66], [-0.66, -0.74], [-0.68, -0.74]], '#7a2a1a');
   },
+  // the commander's view out of the cupola: thick armour above and below a wide vision slit, a periscope hood, a reticle
+  // scale across the middle of the glass, and the gunner's controls along the sill
+  tank(k, accent) {
+    k.rect(-BIG, 0.3, BIG, BIG, DARK);
+    k.rect(-BIG, -BIG, BIG, -0.3, DARK);
+    k.rect(-BIG, 0.3, BIG, 0.34, STEEL);
+    k.rect(-BIG, -0.34, BIG, -0.3, STEEL);
+    for (const x of [-1.4, -0.7, 0.7, 1.4]) k.rect(x - 0.03, -0.3, x + 0.03, 0.3, x === -0.7 || x === 0.7 ? IRON : DARK);
+    k.poly([[-BIG, -0.3], [-1.9, -0.3], [-1.7, 0.3], [-BIG, 0.3]], DARK);
+    k.poly([[BIG, -0.3], [1.9, -0.3], [1.7, 0.3], [BIG, 0.3]], DARK);
+    k.rect(-1.7, 0.29, 1.7, 0.31, accent);
+    for (let i = -6; i <= 6; i++) k.rect(i * 0.1 - 0.004, -(i % 3 ? 0.025 : 0.05), i * 0.1 + 0.004, i % 3 ? 0.025 : 0.05, '#e8dca8'); // the sight's range scale
+    k.rect(-0.004, -0.14, 0.004, -0.04, '#e8dca8'); k.rect(-0.004, 0.04, 0.004, 0.14, '#e8dca8');
+    for (let i = 0; i < 10; i++) k.disc(-1.2 + i * 0.27, -0.325, 0.011, STEEL);
+    k.ring(0.9, -0.62, 0.11, 0.016, BRASS); k.disc(0.9, -0.62, 0.09, '#1a3a38');
+    k.ring(-0.9, -0.62, 0.09, 0.016, BRASS); k.disc(-0.9, -0.62, 0.07, '#d8d2b8');
+    for (let i = 0; i < 5; i++) { k.rect(-0.2 + i * 0.09, -0.7, -0.16 + i * 0.09, -0.55, i % 2 ? IRON : DARK); k.disc(-0.18 + i * 0.09, -0.55, 0.012, i === 1 ? accent : BRASS); }
+  },
 };
 
 export class Cockpit {

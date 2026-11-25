@@ -332,9 +332,12 @@ export class Audio {
   }
 
   // continuous engine hum: returns a handle with set(speed01, pos) and stop()
+  // kind: 'steam' (the strider's boilers: a low saw drone) or 'diesel' (the tank: a slow lumpy idle that quickens with load,
+  // with the clatter of the tracks coming up under it). set(load 0..1, position) each frame; stop() when it is gone.
   engine(kind) {
     const c = this.ctx;
     if (!c) return { set() {}, stop() {} };
+    const diesel = kind === 'diesel';
     const o = c.createOscillator();
     o.type = 'sawtooth';
     const f = c.createBiquadFilter();
@@ -345,20 +348,46 @@ export class Audio {
     o.connect(f).connect(g);
     if (pan) g.connect(pan).connect(this.master); else g.connect(this.master);
     o.start();
-    const base = { walker: 45 }[kind] || 45;
+    const stops = [o];
+    // the cylinders firing: a slow tremolo on the drone, faster as the revs climb
+    let lfo = null, lfoG = null, clat = null, cg = null, cf = null;
+    if (diesel) {
+      lfo = c.createOscillator(); lfo.type = 'square'; lfo.frequency.value = 9;
+      lfoG = c.createGain(); lfoG.gain.value = 0;
+      lfo.connect(lfoG).connect(g.gain); lfo.start(); stops.push(lfo);
+      if (this.noise) {
+        clat = c.createBufferSource(); clat.buffer = this.noise; clat.loop = true;
+        cf = c.createBiquadFilter(); cf.type = 'bandpass'; cf.frequency.value = 600; cf.Q.value = 0.7;
+        cg = c.createGain(); cg.gain.value = 0;
+        clat.connect(cf).connect(cg);
+        if (pan) cg.connect(pan); else cg.connect(this.master);
+        clat.start(); stops.push(clat);
+      }
+    }
+    const base = diesel ? 34 : 45;
     return {
       set: (k, p) => {
         const t = c.currentTime;
-        o.frequency.setTargetAtTime(base * (1 + k * 0.9), t, 0.1);
-        f.frequency.setTargetAtTime(220 + k * 500, t, 0.1);
-        let v = this.muted ? 0 : 0.08 + 0.07 * k;
+        o.frequency.setTargetAtTime(base * (1 + k * (diesel ? 1.5 : 0.9)), t, 0.1);
+        f.frequency.setTargetAtTime((diesel ? 170 : 220) + k * (diesel ? 380 : 500), t, 0.1);
+        let v = this.muted ? 0 : (diesel ? 0.1 : 0.08) + 0.07 * k;
+        let near = 1;
         if (p) {
           const d = Math.hypot(p.x - this.listener.x, p.z - this.listener.z);
-          v /= 1 + d * 0.12;
+          near = 1 / (1 + d * 0.12);
+          v *= near;
         }
         g.gain.setTargetAtTime(v, t, 0.1);
+        if (diesel) {
+          lfo.frequency.setTargetAtTime(7 + k * 15, t, 0.2);
+          lfoG.gain.setTargetAtTime(v * 0.45, t, 0.1);
+          if (cg) { cf.frequency.setTargetAtTime(500 + k * 900, t, 0.15); cg.gain.setTargetAtTime(this.muted ? 0 : k * 0.07 * near, t, 0.15); }
+        }
       },
-      stop: () => { g.gain.setTargetAtTime(0, c.currentTime, 0.05); setTimeout(() => { try { o.stop(); } catch {} }, 300); },
+      stop: () => {
+        g.gain.setTargetAtTime(0, c.currentTime, 0.05); if (cg) cg.gain.setTargetAtTime(0, c.currentTime, 0.05);
+        setTimeout(() => { for (const n of stops) try { n.stop(); } catch {} }, 300);
+      },
     };
-  }
+ }
 }

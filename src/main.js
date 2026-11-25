@@ -335,7 +335,8 @@ function startBattle(s) {
       }
       t.tickets = tickets;
       battle.spawnTeamVehicle(t, true, 0, 'walker');
-      if (t.id === settings.playerTeam) { battle.spawnTeamVehicle(t, false, 1, 'walker'); } // some for you to climb into
+      battle.spawnTeamVehicle(t, true, 1, 'tank');
+      if (t.id === settings.playerTeam) { battle.spawnTeamVehicle(t, false, 2, 'walker'); battle.spawnTeamVehicle(t, false, 3, 'tank'); } // some for you to climb into
     }
   }
   battle.onNearMiss = (k) => { sup = Math.min(1, sup + k * 0.35); };
@@ -878,7 +879,12 @@ function drawUnits() {
   battle.batch.cull(view);
   for (const d of battle.decor) if (d.userData.culls) for (const c of d.userData.culls) c.update(view);
   // machines the camera and the sun's shadow cannot reach (or past the haze) are not sent to the GPU at all
-  for (const v of battle.vehicles) v.group.visible = v.hasPlayer || view.test(v.pos.x, v.pos.y + 3, v.pos.z, 7) > 0;
+  // and the ones that are far away are drawn from a thinner copy of the model, then without shadows
+  for (const v of battle.vehicles) {
+    v.group.visible = v.hasPlayer || view.test(v.pos.x, v.pos.y + 3, v.pos.z, 7) > 0;
+    const dx = v.pos.x - camera.position.x, dz = v.pos.z - camera.position.z, d2 = dx * dx + dz * dz;
+    v.setLod(v.hasPlayer ? 0 : d2 > 170 * 170 ? 2 : d2 > 75 * 75 ? 1 : 0);
+  }
   const fp = state !== 'menu' && player && cam.mode === '1p' && cam.blend > 0.6;
   const cp = camera.position;
   const us = battle.units;
