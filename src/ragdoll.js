@@ -25,6 +25,7 @@ class Box {
     this.hits = 0; // ground contacts this step
     this.legs = 0; // 1 while the legs hold the body up, falling to 0 as they give way
     this.fall = 0; this.tip = new THREE.Vector3();
+    this.shove = null; this.slump = 0; // horizontal direction a corpse pitches over if it lands upright
     this.thump = 0; // hardest landing speed since last read
   }
 
@@ -110,6 +111,19 @@ class Box {
     this.age = (this.age || 0) + dt;
     // settled: resting on 2+ corners and barely moving (looser the longer it has been going)
     const lax = this.age > 2.5 ? 4 : 1;
+    // a corpse never settles upright (that reads as sitting): if it lands on its pelvis, the top-heavy
+    // body pitches over along the way it was pushed, as a real one does
+    if (this.shove && this.legs <= 0.05 && this.hits >= 2) {
+      const upY = _v.set(0, 1, 0).applyQuaternion(this.q).y;
+      if (upY > 0.5 && this.v.lengthSq() < 1 && this.w.lengthSq() < 4) {
+        this.slump += dt;
+        if (this.slump > 0.06) {
+          this.slump = 0; this.asleep = false; this.rest = 0;
+          this.impulseAt(_r.set(0, 0.2, 0).applyQuaternion(this.q), _p.copy(this.shove).multiplyScalar(this.m * 1.4));
+        }
+      } else this.slump = 0;
+      if (upY > 0.5) { this.rest = 0; return; }
+    }
     if (this.hits >= 2 && this.v.lengthSq() < 0.16 * lax && this.w.lengthSq() < 0.7 * lax) {
       this.rest += dt;
       if (this.rest > 0.2) { this.asleep = true; this.v.set(0, 0, 0); this.w.set(0, 0, 0); }
@@ -166,6 +180,7 @@ export class Ragdoll {
       this.body.tip.set(horiz.z / hl, 0, -horiz.x / hl);
       this.body.fall = 8 + Math.random() * 3;
     }
+    this.body.shove = (kl > 0.05 ? new THREE.Vector3(horiz.x, 0, horiz.z) : new THREE.Vector3(Math.sin(unit.facing || 0) * (Math.random() < 0.5 ? 1 : -1), 0, Math.cos(unit.facing || 0))).normalize();
     // limbs start where the pose had them
     this.limbs = [];
     const hm = new THREE.Matrix4();
