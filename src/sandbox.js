@@ -20,6 +20,7 @@ const ICON = {
   move: '<path d="M12 3v18M3 12h18M12 3l-3 3M12 3l3 3M12 21l-3-3M12 21l3-3M3 12l3-3M3 12l3 3M21 12l-3-3M21 12l-3 3"/>',
   delete: '<path d="M5 7h14M9 7V4h6v3M7 7l1 13h8l1-13"/>',
   walker: '<path d="M7 4h10v6H7zM9 10l-2 5-2 5h4M15 10l2 5 2 5h-4M12 6h6"/>',
+  tank: '<path d="M3 15h18l-2 4H5zM7 15v-4h8v4M15 12h6"/><circle cx="7" cy="17" r="0.6"/><circle cx="12" cy="17" r="0.6"/><circle cx="17" cy="17" r="0.6"/>',
   command: '<path d="M6 21V4M6 4h11l-3 4 3 4H6"/>',
 };
 const UNIT_ITEMS = [...Object.entries(KINDS).map(([k, v]) => ({ id: k, name: v.name, icon: 'unit', kind: 'unit' })),
@@ -27,6 +28,8 @@ const UNIT_ITEMS = [...Object.entries(KINDS).map(([k, v]) => ({ id: k, name: v.n
 const VEHICLE_ITEMS = [
   { id: 'walker', name: 'Strider', icon: 'walker', kind: 'vehicle', vkind: 'walker', crew: true },
   { id: 'walkerEmpty', name: 'Strider (empty)', icon: 'walker', kind: 'vehicle', vkind: 'walker', crew: false },
+  { id: 'tank', name: 'Bulwark tank', icon: 'tank', kind: 'vehicle', vkind: 'tank', crew: true },
+  { id: 'tankEmpty', name: 'Bulwark (empty)', icon: 'tank', kind: 'vehicle', vkind: 'tank', crew: false },
 ];
 const COVER_ITEMS = Object.entries(PROPS).filter(([, v]) => !v.hidden).map(([k, v]) => ({ id: k, name: v.name, icon: k, kind: 'prop' }));
 const TOOL_ITEMS = [
