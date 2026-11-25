@@ -381,7 +381,7 @@ export class Unit {
     if (this.throwT > 0) {
       const before = this.throwT;
       this.throwT -= dt;
-      if (before > 0.32 && this.throwT <= 0.32 && !this.thrown) { this.thrown = true; world.releaseThrow(this); }
+      if (before > 0.3 && this.throwT <= 0.3 && !this.thrown) { this.thrown = true; world.releaseThrow(this); }
       if (this.throwT <= 0) {
         this.throwT = 0;
         if (this.weapon.mag <= 0) this.startReload();
@@ -598,16 +598,25 @@ export class Unit {
   // ground height and slope under each boot (from where the last pose put it), for the feet to rest on
   groundFeet(s) {
     const wr = this.wref, fx = this.poseOut.fx;
+    const pp = this.gpos || (this.gpos = { x: this.pos.x, z: this.pos.z, f: this.facing }), px = pp.x, pz = pp.z, pf = pp.f; // where the boots' last pose was placed from
+    pp.x = this.pos.x; pp.z = this.pos.z; pp.f = this.facing;
     if (!wr || this.animLod > 0 || !this.grounded || !this.alive) { s.gnd = null; s.slope = null; return; }
     const g = this.gndBuf || (this.gndBuf = [0, 0]), sl = this.slopeBuf || (this.slopeBuf = [[0, 0], [0, 0]]);
-    const c = Math.cos(this.facing), sn = Math.sin(this.facing);
+    const c = Math.cos(this.facing), sn = Math.sin(this.facing), pc = Math.cos(pf), ps = Math.sin(pf);
     for (let i = 0; i < 2; i++) {
-      const x = fx[i * 3], z = fx[i * 3 + 1], y = fx[i * 3 + 2];
-      const wx = this.pos.x + x * c + z * sn, wz = this.pos.z - x * sn + z * c;
-      const yaw = this.facing + y, fxn = Math.sin(yaw) * 0.12, fzn = Math.cos(yaw) * 0.12;
-      const h = wr.groundAt(wx, wz, this.pos.y + 0.2), hf = wr.groundAt(wx + fxn, wz + fzn, this.pos.y + 0.2), hb = wr.groundAt(wx - fxn, wz - fzn, this.pos.y + 0.2);
+      const x = fx[i * 3], z = fx[i * 3 + 1];
+      let wx = px + x * pc + z * ps, wz = pz - x * ps + z * pc;
+      // a boot in the swing is a frame ahead of where it was last posed: look where it is heading
+      const lw = this.lastFoot || (this.lastFoot = [[wx, wz], [wx, wz]]), lf = lw[i];
+      const nx = wx + THREE.MathUtils.clamp(wx - lf[0], -0.1, 0.1), nz = wz + THREE.MathUtils.clamp(wz - lf[1], -0.1, 0.1);
+      lf[0] = wx; lf[1] = wz; wx = nx; wz = nz;
+      // the ground's gradient in the soldier's own frame (x across, z ahead), from four samples about the boot
+      const dd = 0.1, ax = c * dd, az = -sn * dd, bx = sn * dd, bz = c * dd;
+      const h = wr.groundAt(wx, wz, this.pos.y + 0.2);
+      const hxp = wr.groundAt(wx + ax, wz + az, this.pos.y + 0.2), hxm = wr.groundAt(wx - ax, wz - az, this.pos.y + 0.2);
+      const hzp = wr.groundAt(wx + bx, wz + bz, this.pos.y + 0.2), hzm = wr.groundAt(wx - bx, wz - bz, this.pos.y + 0.2);
       g[i] = THREE.MathUtils.clamp(h - this.pos.y, -0.3, 0.3);
-      sl[i][0] = THREE.MathUtils.clamp(Math.atan2(hb - hf, 0.24), -0.6, 0.6); sl[i][1] = 0;
+      sl[i][0] = THREE.MathUtils.clamp((hxp - hxm) / (2 * dd), -0.7, 0.7); sl[i][1] = THREE.MathUtils.clamp((hzp - hzm) / (2 * dd), -0.7, 0.7);
     }
     s.gnd = g; s.slope = sl;
   }
@@ -686,7 +695,7 @@ export class Unit {
       }
       (s.tendAt || (s.tendAt = [0, 0, 0]))[0] = lx; s.tendAt[1] = ly; s.tendAt[2] = lz;
     }
-    s.wx = this.pos.x; s.wz = this.pos.z; s.wf = this.facing; s.dt = dt;
+    s.wx = this.pos.x; s.wz = this.pos.z; s.wy = this.pos.y; s.wf = this.facing; s.dt = dt; s.wref = this.grounded ? this.wref : null;
     s.hx = this.hs.x; s.hz = this.hs.z; s.gl = this.gl; s.stag = this.alive ? this.stagger : 0;
     if (s.stag > 0) s.ready = Math.min(s.ready, 1 - 0.45 * Math.min(1, s.stag));
     if (this.rag && !this.alive) {

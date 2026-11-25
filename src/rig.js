@@ -105,8 +105,8 @@ function vkeys(k, u, out) {
 }
 // grenade throw, hands in the body's frame (x + left, y up from the chest centre, z forward)
 const THR = {
-  R: vk([[0, -0.2, -0.09, 0.19], [0.12, -0.14, -0.04, 0.2], [0.4, -0.22, 0.3, -0.18], [0.54, -0.08, 0.36, 0.34], [0.72, 0.04, -0.12, 0.34], [1, -0.2, -0.09, 0.19]]),
-  RX: vk([[0, -0.3, 0, 0], [0.4, -1.1, 0, 0], [0.54, -0.4, 0, 0], [0.72, 0.2, 0, 0], [1, -0.3, 0, 0]]),
+  R: vk([[0, -0.2, -0.09, 0.19], [0.12, -0.14, -0.04, 0.2], [0.36, -0.3, 0.38, -0.14], [0.58, -0.28, 0.44, 0.32], [0.72, 0.04, -0.12, 0.34], [1, -0.2, -0.09, 0.19]]),
+  RX: vk([[0, -0.3, 0, 0], [0.36, -1.1, 0, 0], [0.58, -0.4, 0, 0], [0.72, 0.2, 0, 0], [1, -0.3, 0, 0]]),
   L: vk([[0, 0.2, -0.17, 0.06], [0.1, -0.1, -0.05, 0.2], [0.2, -0.1, -0.05, 0.2], [0.38, 0.3, 0.12, 0.3], [0.6, 0.3, 0.1, 0.28], [1, 0.2, -0.17, 0.06]]),
 };
 const Q = new THREE.Quaternion();
@@ -229,13 +229,14 @@ const FP0 = new THREE.Vector3();
 // the lowest sole point of a boot above the ground under it, in the frame the boot matrix is in. gy: the ground
 // under the boot's origin; pitch: the ground's fall away toward the toe (rad), so a boot on a slope is measured
 // against the slope and not against level ground
-function soleLow(f, gy = 0, pitch = 0) {
+function soleLow(f, gy = 0, gx = 0, gz = 0, s = null) { // the lowest point of the sole above the ground: the terrain itself when it can be asked, else a plane through the boot
   let lo = Infinity;
-  const fx = f.elements[8], fz = f.elements[10], l = Math.hypot(fx, fz) || 1, tn = Math.tan(pitch);
+  const wr = s && s.wref && s.wx !== undefined ? s.wref : null;
+  const c = wr ? Math.cos(s.wf) : 1, sn = wr ? Math.sin(s.wf) : 0;
   for (const q of FOOT_LOW) {
     FP0.copy(q).applyMatrix4(f);
-    const zf = ((FP0.x - f.elements[12]) * fx + (FP0.z - f.elements[14]) * fz) / l;
-    lo = Math.min(lo, FP0.y - (gy - tn * zf));
+    if (wr) lo = Math.min(lo, FP0.y - (wr.groundAt(s.wx + FP0.x * c + FP0.z * sn, s.wz - FP0.x * sn + FP0.z * c, s.wy + 0.2) - s.wy));
+    else lo = Math.min(lo, FP0.y - (gy + gx * (FP0.x - f.elements[12]) + gz * (FP0.z - f.elements[14])));
   }
   return lo;
 }
@@ -335,7 +336,10 @@ function poseCore(s, out) {
       const st = ground * (1 - smooth(0, 0.025, y)) * (kneelStill > 0.5 ? 0 : 1);
       out.st[i] = st;
       y += gh;
-      if (s.slope) { rx += s.slope[i][0] * st; rz += s.slope[i][1] * st; }
+      if (s.slope) { // the sole lies flat to the ground: pitched along the boot, rolled across it
+        const gx = s.slope[i][0], gz = s.slope[i][1], sy = Math.sin(ry), cy = Math.cos(ry);
+        rx += Math.atan(-(gx * sy + gz * cy)) * st; rz += Math.atan(gx * cy - gz * sy) * st;
+      }
       // the heel comes up about the ball of the foot while the toe box stays flat on the ground (it hinges)
       const flat = Math.min(1, Math.max(0, 1 - (y - gh) / 0.05));
       out.toeRel[i] = rx > 0 ? -rx * 0.97 * flat + 0.2 * (1 - flat) * Math.min(rx, 0.6) / 0.6 : 0;
@@ -589,7 +593,7 @@ function crawl(s, out) {
       const a = c + (i ? Math.PI : 0), f = out.feet[i];
       const hurt = down && (i === 0 ? -1 : 1) === side; // the hurt leg just trails
       const push = Math.sin(a), draw = Math.max(0, -Math.cos(a));
-      f.elements[14] += push * (hurt ? 0.015 : 0.09) * w;
+      f.elements[14] += (0.5 - 0.5 * push) * (hurt ? 0.03 : 0.1) * w; // never past the leg's reach: the pushing leg is full out behind, the other draws up
       f.elements[13] += draw * (hurt ? 0.0 : 0.05) * w;
       f.elements[12] += (i ? 1 : -1) * draw * (hurt ? 0 : 0.045) * w; // the knee comes up and out
     }
@@ -786,20 +790,28 @@ function torsoDepth(inv, p, r) {
   const d = Math.hypot(Math.max(qx, 0), Math.max(qy, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qy, qz), 0) - U.R;
   return Math.max(0, r - d);
 }
-function swingClear(inv, root, target, x, h) {
+function swingClear(inv, root, target, x, h, out) {
   _sd.crossVectors(_d, _up); // the way the elbow turns
   const up0 = _y2.copy(_up), ctr = _sp.copy(root).addScaledVector(_d, x);
-  let best = Infinity, bestA = 0;
-  for (const a of SWING) {
+  const pen = (a) => {
     const c = Math.cos(a), s = Math.sin(a);
     _ep.copy(ctr).addScaledVector(up0, c * h).addScaledVector(_sd, s * h);
-    let pen = 0;
-    for (const t of [0.5, 0.75, 1]) pen = Math.max(pen, torsoDepth(inv, _k.lerpVectors(root, _ep, t), 0.04) - 0.012);
-    for (const t of [0.15, 0.35, 0.55, 0.75]) pen = Math.max(pen, torsoDepth(inv, _k.lerpVectors(_ep, target, t), 0.033) - 0.012);
-    if (pen < best - 1e-4) { best = pen; bestA = a; }
-    if (pen <= 0) break;
+    let p = 0;
+    for (const t of [0.5, 0.75, 1]) p = Math.max(p, torsoDepth(inv, _k.lerpVectors(root, _ep, t), 0.04) - 0.012);
+    for (const t of [0.15, 0.35, 0.55, 0.75]) p = Math.max(p, torsoDepth(inv, _k.lerpVectors(_ep, target, t), 0.033) - 0.012);
+    return p;
+  };
+  // the elbow swings out only as far as it has to, and moves there continuously: it never jumps round the shoulder
+  const prev = out.swA || 0;
+  let bestA = 0;
+  if (pen(0) > 0) {
+    let best = Infinity;
+    const tries = prev ? [prev, ...SWING.slice(1)] : SWING.slice(1);
+    for (const a of tries) { const p = pen(a); if (p < best - 1e-4) { best = p; bestA = a; } if (p <= 0) break; }
   }
-  if (bestA) { const c = Math.cos(bestA), s = Math.sin(bestA); _up.copy(up0).multiplyScalar(c).addScaledVector(_sd, s); }
+  const a = prev + Math.max(-0.3, Math.min(0.3, bestA - prev));
+  out.swA = a;
+  if (a) { const c = Math.cos(a), s = Math.sin(a); _up.copy(up0).multiplyScalar(c).addScaledVector(_sd, s); }
 }
 // joint(out, root, target, l1, l2, pole, over, sgn, twist, k): returns the stretch factor used.
 // sgn: +1 puts +y on the bend side (legs, the knee), -1 on the outside of the bend (arms, the elbow
@@ -819,7 +831,7 @@ function joint(out, root, target, l1, l2, pole, over, sgn, twist, k, avoid = nul
   _up.copy(pole).addScaledVector(_d, -pole.dot(_d));
   if (_up.lengthSq() < 1e-6) _up.set(0, 0, 1).addScaledVector(_d, -_d.z);
   _up.normalize();
-  if (avoid) swingClear(avoid, root, target, x, h);
+  if (avoid) swingClear(avoid, root, target, x, h, out);
   _a.copy(root).addScaledVector(_d, x).addScaledVector(_up, h);
   // a knee or elbow of a body lying down can't sink into the ground (p.floor is set for ragdolls)
   if (FLOOR) { const g = FLOOR(_a.x, _a.z, _a.y) + 0.05; if (_a.y < g) _a.y = g; }
@@ -902,6 +914,8 @@ export function legPass(s, out) {
   if ((s.dead ?? -1) >= 0) return;
   solveTorso(out);
   out.pelvis.decompose(_bp, _bq, _bs);
+  // lifting a boot onto its sole changes where the shin points, so the limit and the sole are settled together
+  for (let pass = 0; pass < 3; pass++) {
   for (let i = 0; i < 2; i++) {
     const side = i === 0 ? -1 : 1, f = out.feet[i];
     // where the shin points: solve the leg once with the foot as placed
@@ -915,8 +929,8 @@ export function legPass(s, out) {
     _kn.set(-e[8], -e[9], -e[10]).normalize(); // up the shin
     _fz.copy(_kn).transformDirection(_fi.copy(f).invert());
     const flex = Math.atan2(_fz.z, Math.max(1e-3, _fz.y));
-    const over = flex > DORSI ? flex - DORSI : flex < -PLANTAR ? flex + PLANTAR : 0;
-    if (Math.abs(over) > 1e-3 && !(s.prone > 0.3)) {
+    const over = (flex > DORSI ? flex - DORSI : flex < -PLANTAR ? flex + PLANTAR : 0);
+    if (Math.abs(over) > 1e-3) {
       // turn the foot about the ankle, about its own side-to-side axis, until the joint is back in range
       _ax.set(f.elements[0], f.elements[1], f.elements[2]).normalize();
       f.decompose(_fp, _fq, _fs);
@@ -930,11 +944,12 @@ export function legPass(s, out) {
   // a planted sole rests exactly on the ground (flat to a slope); a swinging boot only has to stay out of it. This also holds
   // while going down or getting up, so a boot never sinks through the ground on the way.
   for (let i = 0; i < 2; i++) {
-    const f = out.feet[i], gy = s.gnd ? s.gnd[i] : 0, sl = s.slope ? s.slope[i][0] : 0;
-    const lo = soleLow(f, gy, sl), st = (out.st ? out.st[i] : 0) * (1 - smooth(0.02, 0.2, s.prone || 0));
+    const f = out.feet[i], gy = s.gnd ? s.gnd[i] : 0, gxs = s.slope ? s.slope[i][0] : 0, gzs = s.slope ? s.slope[i][1] : 0;
+    const lo = soleLow(f, gy, gxs, gzs, s.lod > 0 ? null : s), st = (out.st ? out.st[i] : 0) * (1 - smooth(0.02, 0.2, s.prone || 0));
     let dy = -lo * st;
     if (lo + dy < 0.0005) dy += 0.0005 - (lo + dy);
     f.elements[13] += dy;
+  }
   }
 }
 // arms: shoulder joint to the wrist, elbows down and out. hands[0] is the left (support) hand at +x.
