@@ -128,15 +128,18 @@ export class Hud {
   update(dt, player, battle, cam) {
     // compass: heading from the view, north is -z; objectives sit at their bearing
     const head = ((-cam.yaw * 180) / Math.PI % 360 + 360) % 360;
-    const cw = this.compass.parentElement.clientWidth;
-    this.compass.style.transform = `translateX(${(cw / 2 - head * PX).toFixed(1)}px)`;
+    // the width is read once per resize: reading it every frame forces a layout right after the styles below change
+    if (!this.cw) { this.cw = this.compass.parentElement.clientWidth; addEventListener('resize', () => { this.cw = 0; }, { once: true }); }
+    const tx = `translateX(${(this.cw / 2 - head * PX).toFixed(1)}px)`;
+    if (tx !== this.lastTx) { this.lastTx = tx; this.compass.style.transform = tx; }
     battle.points.forEach((p, i) => {
       const el = this.objEls?.[i];
       if (!el) return;
       let b = (Math.atan2(p.pos.x - player.pos.x, -(p.pos.z - player.pos.z)) * 180) / Math.PI;
       b = ((b % 360) + 360) % 360;
       if (b - head > 180) b -= 360; else if (head - b > 180) b += 360;
-      el.style.left = `${b * PX}px`;
+      const left = `${b * PX}px`;
+      if (el._left !== left) { el._left = left; el.style.left = left; }
       const col = p.owner >= 0 ? TEAMS[p.owner].ui : '#d8d8d4';
       if (el.dataset.c !== col) { el.dataset.c = col; el.style.background = col; }
     });

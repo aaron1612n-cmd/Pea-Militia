@@ -50,6 +50,9 @@ export class Crowd {
       const m = new THREE.InstancedMesh(geo, mat, n);
       m.frustumCulled = false; // instances are spread over the whole map
       m.castShadow = true;
+      // the shadow pass draws only the front part of the list (soldiers inside the sun's shadow box; see snap())
+      m.onBeforeShadow = () => { m._full = m.count; m.count = Math.min(m.count, m._sc ?? m.count); };
+      m.onAfterShadow = () => { m.count = m._full; };
       m.receiveShadow = true;
       m.count = 0;
       if (colored) m.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3), 3);
@@ -100,6 +103,9 @@ export class Crowd {
     this.stump = mk(stumpGeo(), wm(), 240, true); this.stump.name = 'crowd-stumps'; this.ns = 0;
     this.wreckFace = mk(wreckHead('face'), wm(), 48, true); this.wreckFace.name = 'crowd-head-face'; this.nwf = 0;
     this.wreckTop = mk(wreckHead('top'), wm(), 48, true); this.wreckTop.name = 'crowd-head-top'; this.nwt = 0;
+    // The shadow map is about 5 cm a texel, so fingers, toe caps, kit pouches and shoulder pads leave no shadow of their own:
+    // they stay out of the shadow pass (the body, limbs, helmet, boots and gun still cast).
+    for (const m of [...Object.values(this.hands), this.toe, this.neck, this.delt, ...Object.values(this.gear), ...Object.values(this.marks)]) m.castShadow = false;
     this.nl = 0; this.na = 0;
     this.mark = mk(new THREE.PlaneGeometry(1, 1), markMaterial(), cap * 10, false); this.mark.name = 'crowd-hitmarks'; this.mark.castShadow = false; this.nm = 0;
     this.markW = mk(new THREE.PlaneGeometry(1, 1), woundMarkMaterial(), cap * 10, false); this.markW.name = 'crowd-woundmarks'; this.markW.castShadow = false; this.nmw = 0;
@@ -127,6 +133,7 @@ export class Crowd {
     this.nd = 0;
     this.n = 0; this.nf = 0; this.nh = 0; this.nl = 0; this.na = 0;
     this.wn = {};
+    this.sh = { gn: {}, mn: {}, hn: {}, hn2: {}, wn: {} }; this.snapped = false;
     this.tmp = new THREE.Matrix4();
   }
 
@@ -283,7 +290,7 @@ export class Crowd {
       // open fingers when the hand is free, otherwise the cup / grip / foregrip hand the gun asks for
       const free = p.curl[k] < 0.5;
       const hid = free ? (k === 0 ? 'oL' : 'oR') : k === 0 ? (HOLD[opts.weapon]?.grips?.lk === 'grip' ? 'G' : 'L') : 'R';
-      { const hm = this.hands[hid], n = this.hn2[hid]++; hm.setMatrixAt(n, t.multiplyMatrices(world, h)); this.style(hm, n, sv); }
+      if (!opts.far2) { const hm = this.hands[hid], n = this.hn2[hid]++; hm.setMatrixAt(n, t.multiplyMatrices(world, h)); this.style(hm, n, sv); } // a glove past ~100 m is under a pixel
       this.foreArm.setMatrixAt(j, t.multiplyMatrices(world, p.arms[k][1]));
       this.foreArm.instanceColor.setXYZ(j, sc.r, sc.g, sc.b);
     }
@@ -298,27 +305,44 @@ export class Crowd {
     }
   }
 
+  // Call once the soldiers that cast a shadow into view have been added and before the rest: every
+  // mesh's list then starts with those, and the shadow pass draws just that front part.
+  snap() {
+    const c = this.sh;
+    c.n = this.n; c.nf = this.nf; c.nh = this.nh; c.nl = this.nl; c.nd = this.nd; c.nm = this.nm; c.nmw = this.nmw; c.ns = this.ns; c.nwf = this.nwf; c.nwt = this.nwt;
+    for (const k in this.gn) c.gn[k] = this.gn[k];
+    for (const k in this.mn) c.mn[k] = this.mn[k];
+    for (const k in this.hn) c.hn[k] = this.hn[k];
+    for (const k in this.hn2) c.hn2[k] = this.hn2[k];
+    for (const k in this.wn) c.wn[k] = this.wn[k];
+    this.snapped = true;
+  }
+
   end() {
-    const fin = (m, n) => {
+    const sh = this.snapped ? this.sh : null; this.snapped = false;
+    const fin = (m, n, s = n) => {
+      m._sc = s;
       m.count = n;
+      m.visible = n > 0; // an empty mesh costs nothing: no draw call, no state changes
       m.instanceMatrix.needsUpdate = true;
       if (m.instanceColor) m.instanceColor.needsUpdate = true;
       const ga = m.geometry.attributes;
       if (ga.iStyle) ga.iStyle.needsUpdate = true;
       if (ga.iSwA) ga.iSwA.needsUpdate = ga.iSwB.needsUpdate = ga.iSwC.needsUpdate = true;
     };
-    fin(this.body, this.n); fin(this.head, this.n); for (const k of HELMET_KINDS) fin(this.helmets[k], this.hn[k]); fin(this.pack, this.n);
-    fin(this.boot, this.nf); fin(this.toe, this.nf); fin(this.pelvis, this.n); fin(this.neck, this.n); fin(this.delt, this.nh);
-    for (const g in this.hands) fin(this.hands[g], this.hn2[g]);
-    fin(this.upperArm, this.nh); fin(this.foreArm, this.nh);
-    fin(this.thigh, this.nl); fin(this.shin, this.nl);
+    const S = (k, n) => (sh ? k : n); // the shadow count, or the whole list when no snap() came
+    fin(this.body, this.n, S(sh?.n, this.n)); fin(this.head, this.n, S(sh?.n, this.n)); for (const k of HELMET_KINDS) fin(this.helmets[k], this.hn[k], S(sh?.hn[k], this.hn[k])); fin(this.pack, this.n, S(sh?.n, this.n));
+    fin(this.boot, this.nf, S(sh?.nf, this.nf)); fin(this.toe, this.nf, S(sh?.nf, this.nf)); fin(this.pelvis, this.n, S(sh?.n, this.n)); fin(this.neck, this.n, S(sh?.n, this.n)); fin(this.delt, this.nh, S(sh?.nh, this.nh));
+    for (const g in this.hands) fin(this.hands[g], this.hn2[g], S(sh?.hn2[g], this.hn2[g]));
+    fin(this.upperArm, this.nh, S(sh?.nh, this.nh)); fin(this.foreArm, this.nh, S(sh?.nh, this.nh));
+    fin(this.thigh, this.nl, S(sh?.nl, this.nl)); fin(this.shin, this.nl, S(sh?.nl, this.nl));
     fin(this.mark, this.nm); fin(this.markW, this.nmw);
-    fin(this.stump, this.ns); fin(this.wreckFace, this.nwf); fin(this.wreckTop, this.nwt);
-    fin(this.wound, this.nw); fin(this.dentBody, this.nd);
+    fin(this.stump, this.ns, S(sh?.ns, this.ns)); fin(this.wreckFace, this.nwf, S(sh?.nwf, this.nwf)); fin(this.wreckTop, this.nwt, S(sh?.nwt, this.nwt));
+    fin(this.wound, this.nw); fin(this.dentBody, this.nd, S(sh?.nd, this.nd));
     const wg = this.wound.geometry.attributes, dg = this.dentBody.geometry.attributes;
     wg.aC.needsUpdate = wg.aS.needsUpdate = wg.aN.needsUpdate = true;
     for (let k = 0; k < MAX_DENTS; k++) dg[`aD${k}`].needsUpdate = true;
-    for (const k of KIND_IDS) { fin(this.gear[k], this.gn[k]); if (this.marks[k]) fin(this.marks[k], this.mn[k]); }
-    for (const id in this.weapons) for (const m of this.weapons[id]) fin(m, this.wn[id]);
+    for (const k of KIND_IDS) { fin(this.gear[k], this.gn[k], S(sh?.gn[k], this.gn[k])); if (this.marks[k]) fin(this.marks[k], this.mn[k], S(sh?.mn[k], this.mn[k])); }
+    for (const id in this.weapons) for (const m of this.weapons[id]) fin(m, this.wn[id], S(sh?.wn[id], this.wn[id]));
   }
 }
