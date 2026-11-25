@@ -229,12 +229,14 @@ const FP0 = new THREE.Vector3();
 // the lowest sole point of a boot above the ground under it, in the frame the boot matrix is in. gy: the ground
 // under the boot's origin; pitch: the ground's fall away toward the toe (rad), so a boot on a slope is measured
 // against the slope and not against level ground
-function soleLow(f, gy = 0, gx = 0, gz = 0, s = null) { // the lowest point of the sole above the ground: the terrain itself when it can be asked, else a plane through the boot
+function soleLow(f, gy = 0, gx = 0, gz = 0, s = null, toe = 0) { // the lowest point of the sole above the ground: the terrain itself when it can be asked, else a plane through the boot. toe: how far the toe box is tipped down at the ball
   let lo = Infinity;
   const wr = s && s.wref && s.wx !== undefined ? s.wref : null;
   const c = wr ? Math.cos(s.wf) : 1, sn = wr ? Math.sin(s.wf) : 0;
+  const tc = Math.cos(toe), ts = Math.sin(toe);
   for (const q of FOOT_LOW) {
-    FP0.copy(q).applyMatrix4(f);
+    if (toe && q.z > U.BALL) { const dz = q.z - U.BALL; FP0.set(q.x, q.y * tc - dz * ts, U.BALL + q.y * ts + dz * tc); } else FP0.copy(q);
+    FP0.applyMatrix4(f);
     if (wr) lo = Math.min(lo, FP0.y - (wr.groundAt(s.wx + FP0.x * c + FP0.z * sn, s.wz - FP0.x * sn + FP0.z * c, s.wy + 0.2) - s.wy));
     else lo = Math.min(lo, FP0.y - (gy + gx * (FP0.x - f.elements[12]) + gz * (FP0.z - f.elements[14])));
   }
@@ -505,6 +507,12 @@ function poseCore(s, out) {
   if (need > 0 && Math.abs(T.y) < U.H / 2 + 0.05) {
     const k = Math.min(need, 0.07);
     out.weapon.elements[12] += out.body.elements[8] * k; out.weapon.elements[13] += out.body.elements[9] * k; out.weapon.elements[14] += out.body.elements[10] * k;
+  }
+  // as the chest turns with the stride the butt must not swing in over the torso: the gun keeps to the right of the chest
+  T.set(out.weapon.elements[12], out.weapon.elements[13], out.weapon.elements[14]).applyMatrix4(M);
+  if (mv > 0.05 && T.x > -U.W / 2) {
+    const k = Math.min(0.06, T.x + U.W / 2) * mv;
+    out.weapon.elements[12] -= out.body.elements[0] * k; out.weapon.elements[13] -= out.body.elements[1] * k; out.weapon.elements[14] -= out.body.elements[2] * k;
   }
   out.muzzle.copy(h.muzzle).applyMatrix4(out.weapon);
   // both hands ride anchors on the gun: the trigger hand on the grip, the support hand on this gun's
@@ -939,13 +947,14 @@ export function legPass(s, out) {
       _fq.premultiply(_pq);
       T.sub(_fp.copy(_ank).applyQuaternion(_fq));
       f.compose(_fp.copy(T), _fq, S1);
+      if (over > 0) out.toeRel[i] -= 0.97 * over; // the heel comes up and the toe box stays flat: it hinges at the ball
     }
   }
   // a planted sole rests exactly on the ground (flat to a slope); a swinging boot only has to stay out of it. This also holds
   // while going down or getting up, so a boot never sinks through the ground on the way.
   for (let i = 0; i < 2; i++) {
     const f = out.feet[i], gy = s.gnd ? s.gnd[i] : 0, gxs = s.slope ? s.slope[i][0] : 0, gzs = s.slope ? s.slope[i][1] : 0;
-    const lo = soleLow(f, gy, gxs, gzs, s.lod > 0 ? null : s), st = (out.st ? out.st[i] : 0) * (1 - smooth(0.02, 0.2, s.prone || 0));
+    const lo = soleLow(f, gy, gxs, gzs, s.lod > 0 ? null : s, out.toeRel[i]), st = (out.st ? out.st[i] : 0) * (1 - smooth(0.02, 0.2, s.prone || 0));
     let dy = -lo * st;
     if (lo + dy < 0.0005) dy += 0.0005 - (lo + dy);
     f.elements[13] += dy;

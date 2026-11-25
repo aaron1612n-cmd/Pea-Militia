@@ -41,7 +41,7 @@ function joints(u, out) {
   return out;
 }
 const N_J = 10;
-const lowest = (f, world) => { let lo = Infinity; for (const q of FOOT_LOW) { v.copy(q).applyMatrix4(f); lo = Math.min(lo, v.y - world.groundAt(v.x, v.z)); } return lo; };
+const lowest = (f, world, toe) => { let lo = Infinity; for (const q of FOOT_LOW) { v.copy(q).applyMatrix4(q.z > 0.07 && toe ? toe : f); lo = Math.min(lo, v.y - world.groundAt(v.x, v.z)); } return lo; }; // the toe box hinges at the ball: its points go through the toe matrix
 
 // ---- scripted runs: [seconds, ctrl changes] ------------------------------------------------------
 function run(u, world, script, onFrame) {
@@ -91,7 +91,7 @@ function measure(name, u, world, script, opts = {}) {
       S.ankleMax = Math.max(S.ankleMax, e); S.ankleMin = Math.min(S.ankleMin, e);
       // the ground
       const f = new THREE.Matrix4().multiplyMatrices(u.world, p.feet[i]);
-      const lo = lowest(f, world);
+      const lo = lowest(f, world, new THREE.Matrix4().multiplyMatrices(u.world, p.toes[i]));
       if (S.n > 3 && lo < -0.004) S.below = Math.min(S.below, lo); // the first frames read the ground under the boots' last pose
       if (S.n > 3 && u.grounded && p.st[i] > 0.97 && !(u.proneK > 0.05)) S.plantErr = Math.max(S.plantErr, Math.abs(lo));
     }

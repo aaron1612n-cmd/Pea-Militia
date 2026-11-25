@@ -107,13 +107,14 @@ export const modelChecks = () => {
   phases.push({ name: 'lean kneel', lean: 1, kneel: 1, ready: 1 });
   for (const pr of [0.5, 1]) phases.push({ name: `prone ${pr}`, prone: pr, ready: 1 }, { name: `prone ${pr} aimed`, prone: pr, ready: 1, aimPitch: 0.3 });
   for (const d of [0, 0.5, 1]) phases.push({ name: `dead ${d}`, dead: d });
-  const pz = makePose();
+  let pz = makePose();
   const ends = (m) => [new THREE.Vector3(0, 0, -0.1).applyMatrix4(m), new THREE.Vector3(0, 0, 0.1).applyMatrix4(m)];
   const near = (A, B) => Math.min(...A.flatMap((a) => B.map((b) => a.distanceTo(b))));
   for (const ph of phases) {
     for (const w of ph.only ? [ph.weapon] : W) {
       if (!ph.only && w === 'grenade' && (ph.reload !== undefined)) continue;
       const s = { t: 0, weapon: w, ...ph };
+      pz = makePose(); // a pose is checked on its own: the feet keep a little state (stride widening) from one frame to the next
       pose(s, pz);
       bodyInv.copy(pz.body).invert();
       solveLegs(pz); // the toe boxes follow the feet
@@ -139,7 +140,7 @@ export const modelChecks = () => {
         const hand = new THREE.Vector3().setFromMatrixPosition(pz.hands[1]);
         const gd = grip.distanceTo(hand);
         if (gd > (s.weapon === 'grenade' ? 0.1 : 0.06)) r.loose.push(`grip ${gd.toFixed(3)}`);
-        if (s.weapon !== 'grenade' && ph.reload === undefined && !ph.free && !ph.down) {
+        if (s.weapon !== 'grenade' && ph.reload === undefined && !ph.free && !ph.down && !(ph.prone > 0 && ph.prone < 1)) { // (going prone the support hand leaves the gun on purpose, to plant on the ground)
           const h0 = new THREE.Vector3().setFromMatrixPosition(pz.hands[0]);
           const best = gunDist(s.weapon, h0, m);
           if (best > 0.05) r.loose.push(`support hand ${best.toFixed(3)} off the gun`);
@@ -163,7 +164,7 @@ export const modelChecks = () => {
       };
       for (let i = 0; i < 2; i++) {
         const hipX = (i === 0 ? -1 : 1) * U.HIP_X;
-        const hip = new THREE.Vector3(hipX, -U.H / 2 + 0.035, 0).applyMatrix4(pz.body);
+        const hip = new THREE.Vector3(hipX, 0, 0).applyMatrix4(pz.pelvis); // the legs hang from the pelvis, which tips and turns against the chest
         const ankle = new THREE.Vector3(0, 0.092, -0.004).applyMatrix4(pz.feet[i]);
         const len = joints(pz.legs[i], hip, ankle, `leg${i}`);
         if (!dead && len > (U.LEG[0] + U.LEG[1] + 0.04) * 1.35) r.loose.push(`leg${i} stretched ${len.toFixed(2)}`);
