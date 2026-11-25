@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
 import { U, setWeaponBounds, solveLegs, solveArms } from './rig.js';
 import { GEAR, MARKS, KIND_IDS, kindKey } from './gear.js';
-import { markMaterial, partMatrix } from './hitmarks.js';
+import { markMaterial, woundMarkMaterial, partMatrix } from './hitmarks.js';
 import { torsoGeo, headGeo, helmetGeo, HELMET_KINDS, bootGeo, handGeos, packGeo, LIMB, HEAD_COLORS } from './anatomy.js';
 import { WEAPONS, weaponParts } from './weapons.js';
 import { TEAMS } from './factions.js';
@@ -81,6 +81,7 @@ export class Crowd {
     this.wreckTop = mk(wreckHead('top'), wm(), 48, true); this.wreckTop.name = 'crowd-head-top'; this.nwt = 0;
     this.nl = 0; this.na = 0;
     this.mark = mk(new THREE.PlaneGeometry(1, 1), markMaterial(), cap * 10, false); this.mark.name = 'crowd-hitmarks'; this.mark.castShadow = false; this.nm = 0;
+    this.markW = mk(new THREE.PlaneGeometry(1, 1), woundMarkMaterial(), cap * 10, false); this.markW.name = 'crowd-woundmarks'; this.markW.castShadow = false; this.nmw = 0;
     // weapons: one instanced mesh per (weapon, material)
     this.weapons = {};
     for (const id of Object.keys(WEAPONS)) {
@@ -118,7 +119,7 @@ export class Crowd {
   }
 
   begin() {
-    this.n = this.nf = this.nh = this.nhl = this.nhr = this.nw = this.nl = this.na = this.nd = this.nm = this.ns = this.nwf = this.nwt = 0;
+    this.n = this.nf = this.nh = this.nhl = this.nhr = this.nw = this.nl = this.na = this.nd = this.nm = this.nmw = this.ns = this.nwf = this.nwt = 0;
     for (const id in this.weapons) this.wn[id] = 0;
     for (const k of KIND_IDS) this.gn[k] = this.mn[k] = 0;
     for (const k of HELMET_KINDS) this.hn[k] = 0;
@@ -209,13 +210,13 @@ export class Crowd {
     }
     // holes, scorch and dents where rounds struck helmet, vest, pack and limbs (parts solved above)
     if (opts.marks && !opts.far) for (const m of opts.marks) {
-      if (this.nm >= this.cap * 10) break;
+      if (m.w ? this.nmw >= this.cap * 10 : this.nm >= this.cap * 10) break;
       solveLegs(p); solveArms(p);
       const pm = t.multiplyMatrices(world, partMatrix(p, m.id));
       const pos = MP.copy(m.p).applyMatrix4(pm);
       const nw = MN.copy(m.n).transformDirection(pm);
       MQ.setFromUnitVectors(Z, nw); MQ2.setFromAxisAngle(nw, m.r); MQ.premultiply(MQ2);
-      this.mark.setMatrixAt(this.nm++, MM.compose(pos.addScaledVector(nw, 0.004), MQ, MS.setScalar(m.s)));
+      (m.w ? this.markW : this.mark).setMatrixAt(m.w ? this.nmw++ : this.nm++, MM.compose(pos.addScaledVector(nw, 0.004), MQ, MS.setScalar(m.s * (m.w ? 1.5 : 1))));
     }
     // arms reach from the shoulders to the hands (first person too, where the shoulders are below the view)
     solveArms(p);
@@ -253,7 +254,7 @@ export class Crowd {
     fin(this.body, this.n); fin(this.head, this.n); for (const k of HELMET_KINDS) fin(this.helmets[k], this.hn[k]); fin(this.pack, this.n);
     fin(this.boot, this.nf); fin(this.handL, this.nhl); fin(this.handR, this.nhr); fin(this.upperArm, this.nh); fin(this.foreArm, this.nh);
     fin(this.thigh, this.nl); fin(this.shin, this.nl);
-    fin(this.mark, this.nm);
+    fin(this.mark, this.nm); fin(this.markW, this.nmw);
     fin(this.stump, this.ns); fin(this.wreckFace, this.nwf); fin(this.wreckTop, this.nwt);
     fin(this.wound, this.nw); fin(this.dentBody, this.nd);
     const wg = this.wound.geometry.attributes, dg = this.dentBody.geometry.attributes;

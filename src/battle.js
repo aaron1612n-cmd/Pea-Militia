@@ -575,7 +575,7 @@ export class Battle {
         if (this.canRicochet(b, graze, mat)) { this.ricochet(b, d, n, at, mat.fx, col); break; }
         const reach = mat.depth * b.power * Math.min(1, sp / b.mv) * (0.75 + Math.random() * 0.5);
         const thick = chord(hit.prop.box, at, d);
-        this.fx.impactMat(at, n, mat.fx, col);
+        this.fx.impactMat(at, n, mat.fx, col, 1, hit.prop);
         this.audio.play(mat.snd, at, 0.6);
         if (reach < thick) return true; // stopped inside the cover
         const used = thick / reach, exit = at.clone().addScaledVector(d, thick + 0.03);
@@ -584,7 +584,7 @@ export class Battle {
         // the round comes out the far side knocked off line
         const k = 0.02 + used * 0.12;
         v.x += (Math.random() - 0.5) * k * sp; v.y += (Math.random() - 0.5) * k * sp; v.z += (Math.random() - 0.5) * k * sp;
-        this.fx.impactMat(exit, d.clone().negate(), mat.fx, col, 0.5);
+        this.fx.impactMat(exit, d.clone().negate(), mat.fx, col, 0.5, hit.prop);
         o.copy(exit); b.dist += thick; left = Math.max(0, left - thick);
         sp = v.length(); d.copy(v).divideScalar(sp);
         if (b.power < 0.15) return true;
@@ -860,7 +860,7 @@ export class Battle {
         this.fx.impact(hit.point, hit.normal, 'metal');
       } else if (hit.prop) {
         this.damageProp(hit.prop, fd * 0.2, owner);
-        if (i % 2 === 0) this.fx.impactMat(hit.point, hit.normal, materialOf(hit.prop).fx, hit.prop.def?.debris, 0.6);
+        if (i % 2 === 0) this.fx.impactMat(hit.point, hit.normal, materialOf(hit.prop).fx, hit.prop.def?.debris, 0.6, hit.prop);
       } else if (hit.ground && i % 3 === 0) this.fx.impact(hit.point, hit.normal, 'dust');
     }
     for (const u of this.unitGrid.near(from.x, from.z, r * 2, this.tmpA)) if (!u.alive && u.rag && !u.removed && Math.random() < 0.25) {

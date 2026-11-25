@@ -255,7 +255,7 @@ function openMenu() {
 // ---------------- battle ----------------
 function startBattle(s) {
   settings = { ...settings, ...s };
-  fx.gore.clear();
+  fx.gore.clear(); fx.clearMarks();
   battle.dispose();
   battle = new Battle(scene, fx, audio);
   fx.gore.world = battle;

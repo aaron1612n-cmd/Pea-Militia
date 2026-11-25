@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import { height, normalAt } from './terrain.js';
-import { canvasTex, decalMesh, stamp } from './effects.js';
+import { StainSet } from './decals.js';
 import { TEAMS } from './factions.js';
 import { U } from './rig.js';
 import { headGeo, helmetGeo } from './anatomy.js';
@@ -23,7 +23,7 @@ import { rayBox } from './physics.js';
 // All pooled: decal meshes, one droplet mesh, one mesh per kind of gib, the crowd's wound meshes.
 const KEY = 'sm.gore';
 const BLOOD = [new THREE.Color('#4a0a0a'), new THREE.Color('#2a0606')]; // mist: dark, never bright
-const DROP_MAX = 420, HOLD = 50, FADE = 20;
+const DROP_MAX = 700;
 const UP = new THREE.Vector3(0, 1, 0);
 const SLEEVE = TEAMS.map((t) => new THREE.Color(t.body));
 const TROUSER = TEAMS.map((t) => new THREE.Color(t.trim).multiplyScalar(1.15));
@@ -36,130 +36,6 @@ const BRAINC = ['#b58f8c', '#a07a78', '#c4a09a'].map((c) => new THREE.Color(c));
 const BONEC = new THREE.Color('#ffe6dc');
 const DROPC = [new THREE.Color('#5c0c0c'), new THREE.Color('#450909'), new THREE.Color('#6b1010'), new THREE.Color('#380707')];
 const TAU = Math.PI * 2;
-
-function splatTexture(kind) {
-  return canvasTex(128, (g, S) => {
-    const h = S / 2;
-    g.fillStyle = 'rgba(86,9,9,0.94)';
-    if (kind === 'pool') {
-      // wet pool: lobed body, dark rim, bright glossy streak
-      g.beginPath();
-      const n = 22;
-      for (let i = 0; i <= n; i++) {
-        const a = (i / n) * TAU, r = h * (0.62 + 0.25 * Math.sin(a * 3 + 1) * Math.cos(a * 2) + Math.random() * 0.08);
-        g.lineTo(h + Math.cos(a) * r, h + Math.sin(a) * r);
-      }
-      g.closePath(); g.fill();
-      const gr = g.createRadialGradient(h, h, 2, h, h, h * 0.8);
-      gr.addColorStop(0, 'rgba(60,4,4,0.75)'); gr.addColorStop(1, 'rgba(60,4,4,0)');
-      g.fillStyle = gr; g.fillRect(0, 0, S, S);
-      g.fillStyle = 'rgba(255,150,140,0.22)';
-      g.beginPath(); g.ellipse(h - 14, h - 18, 18, 8, -0.5, 0, TAU); g.fill();
-      return;
-    }
-    if (kind === 'streak') {
-      // thrown streak: tapering smear with a tail of drops
-      g.beginPath(); g.moveTo(h, h * 0.2);
-      g.bezierCurveTo(h * 1.5, h * 0.7, h * 1.3, h * 1.3, h, h * 1.75);
-      g.bezierCurveTo(h * 0.7, h * 1.3, h * 0.5, h * 0.7, h, h * 0.2);
-      g.fill();
-      for (let i = 0; i < 7; i++) { g.beginPath(); g.arc(h + (Math.random() - 0.5) * h * 0.7, h * (0.1 + Math.random() * 0.5), 2 + Math.random() * 4, 0, TAU); g.fill(); }
-      return;
-    }
-    // splat: irregular core ringed by satellite drops
-    g.beginPath();
-    const n = 16, r0 = h * 0.42;
-    for (let i = 0; i <= n; i++) {
-      const a = (i / n) * TAU, r = r0 * (0.5 + Math.random() * 0.6);
-      g.lineTo(h + Math.cos(a) * r, h + Math.sin(a) * r);
-    }
-    g.closePath(); g.fill();
-    for (let i = 0; i < 14; i++) {
-      const a = Math.random() * TAU, d = h * (0.4 + Math.random() * 0.5), r = 1.5 + Math.random() * 6;
-      g.beginPath(); g.arc(h + Math.cos(a) * d, h + Math.sin(a) * d, r, 0, TAU); g.fill();
-      if (Math.random() < 0.5) { g.lineWidth = r * 0.8; g.strokeStyle = 'rgba(86,9,9,0.85)'; g.beginPath(); g.moveTo(h + Math.cos(a) * r0, h + Math.sin(a) * r0); g.lineTo(h + Math.cos(a) * d, h + Math.sin(a) * d); g.stroke(); }
-    }
-  });
-}
-
-// a ring of ground decals that hold, then shrink away (pools can also spread out first)
-class DecalSet {
-  constructor(scene, n, tex, rough) {
-    this.n = n;
-    this.mesh = decalMesh(scene, n, tex, rough);
-    this.mesh.receiveShadow = false;
-    this.age = new Float32Array(n).fill(1e9);
-    this.size = new Float32Array(n);
-    this.grow = new Float32Array(n); // target size while spreading
-    this.pos = Array.from({ length: n }, () => new THREE.Vector3());
-    this.quat = Array.from({ length: n }, () => new THREE.Quaternion());
-    this.m = new THREE.Matrix4(); this.s = new THREE.Vector3(); this.p = new THREE.Vector3();
-    this.mesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(n * 3).fill(1), 3);
-    this.tick = 0;
-    this._x = new THREE.Vector3(); this._y = new THREE.Vector3(); this._z = new THREE.Vector3();
-  }
-
-  add(x, z, size, spreadTo = 0, yaw) {
-    const y = height(x, z), nrm = normalAt(x, z);
-    if (nrm.y < 0.7) return -1;
-    const i = this.mesh.userData.next % this.n;
-    stamp(this.mesh, this.p.set(x, y, z), nrm, spreadTo ? size * 0.35 : size);
-    if (yaw !== undefined) {
-      const q = new THREE.Quaternion().setFromUnitVectors(UP, nrm).multiply(new THREE.Quaternion().setFromAxisAngle(UP, yaw));
-      this.mesh.setMatrixAt(i, this.m.compose(this.p.set(x, y, z).addScaledVector(nrm, 0.012), q, this.s.set(spreadTo ? size * 0.35 : size, 1, spreadTo ? size * 0.35 : size)));
-      this.mesh.instanceMatrix.needsUpdate = true;
-    }
-    this.age[i] = 0; this.size[i] = spreadTo ? size * 0.35 : size; this.grow[i] = spreadTo ? size : 0;
-    this.mesh.getMatrixAt(i, this.m);
-    this.m.decompose(this.pos[i], this.quat[i], this.s);
-    return i;
-  }
-
-  // stamp on any surface: normal n, long axis pointing along `dir` (projected onto the surface)
-  addOn(p, n, size, dir, spreadTo = 0) {
-    const i = this.mesh.userData.next++ % this.n;
-    const y = this._y.copy(n), z = this._z.copy(dir);
-    z.addScaledVector(y, -z.dot(y));
-    if (z.lengthSq() < 1e-4) z.set(Math.random() - 0.5, 0, Math.random() - 0.5).addScaledVector(y, 0).cross(y);
-    if (z.lengthSq() < 1e-4) z.set(1, 0, 0);
-    z.normalize();
-    const x = this._x.crossVectors(y, z);
-    this.m.makeBasis(x, y, z);
-    const q = this.quat[i].setFromRotationMatrix(this.m);
-    const sz = spreadTo ? size * 0.35 : size;
-    this.pos[i].copy(p).addScaledVector(n, 0.012);
-    this.mesh.setMatrixAt(i, this.m.compose(this.pos[i], q, this.s.set(sz, 1, sz)));
-    this.mesh.count = Math.min(this.n, Math.max(this.mesh.count, i + 1));
-    this.mesh.instanceMatrix.needsUpdate = true;
-    this.age[i] = 0; this.size[i] = sz; this.grow[i] = spreadTo ? size : 0;
-    return i;
-  }
-
-  clear() { this.age.fill(1e9); this.grow.fill(0); this.mesh.count = 0; this.mesh.userData.next = 0; }
-
-  update(dt) {
-    let dirty = false;
-    this.tick -= dt;
-    const slow = this.tick <= 0;
-    if (slow) this.tick = 0.25;
-    for (let i = 0; i < this.mesh.count; i++) {
-      if (this.age[i] > 1e8) continue;
-      let sz = this.size[i], touch = false;
-      if (this.grow[i] > sz) { sz = this.size[i] = Math.min(this.grow[i], sz + dt * 0.05); touch = true; }
-      if (slow) {
-        this.age[i] += 0.25;
-        // wet blood is dark and glossy; it browns and dulls as it dries
-        const dry = Math.min(1, this.age[i] / 60);
-        this.mesh.instanceColor.setXYZ(i, 1 - 0.25 * dry, 1 - 0.55 * dry, 1 - 0.6 * dry); dirty = true; this.mesh.instanceColor.needsUpdate = true;
-        const over = this.age[i] - HOLD;
-        if (over >= 0) { const k = Math.max(0, 1 - over / FADE); if (!k) this.age[i] = 1e9; sz *= k; touch = true; }
-      } else if (!touch) continue;
-      this.mesh.setMatrixAt(i, this.m.compose(this.pos[i], this.quat[i], this.s.set(sz, 1, sz)));
-      dirty = true;
-    }
-    if (dirty) this.mesh.instanceMatrix.needsUpdate = true;
-  }
-}
 
 const L2 = (g) => g.level === 2;
 const clamp = THREE.MathUtils.clamp;
@@ -186,12 +62,14 @@ export class Gore {
     let lv = 2;
     try { const v = localStorage.getItem(KEY); if (v !== null && +v >= 0 && +v <= 2) lv = +v; } catch {}
     this.level = lv;
-    this.splats = [0, 1, 2].map(() => new DecalSet(scene, 130, splatTexture('splat'), 0.65));
-    this.streaks = new DecalSet(scene, 70, splatTexture('streak'), 0.7);
-    this.pools = new DecalSet(scene, 90, splatTexture('pool'), 0.3);
-    this.walls = new DecalSet(scene, 140, splatTexture('splat'), 0.65);
-    this.wallRuns = new DecalSet(scene, 60, splatTexture('streak'), 0.7);
-    this.sets = [...this.splats, this.streaks, this.pools, this.walls, this.wallRuns];
+    // every stain is wrapped onto the terrain or the prop it landed on (see decals.js)
+    const sp = new StainSet(scene, 380, { kind: 'splat', hold: 60, fade: 25 });
+    this.splats = [sp, sp, sp];
+    this.streaks = new StainSet(scene, 110, { kind: 'streak', hold: 60, fade: 25 });
+    this.pools = new StainSet(scene, 100, { kind: 'pool', hold: 170, fade: 60, off: 0.022 });
+    this.walls = new StainSet(scene, 200, { kind: 'splat', hold: 70, fade: 25 });
+    this.wallRuns = new StainSet(scene, 90, { kind: 'drip', hold: 100, fade: 30 });
+    this.sets = [sp, this.streaks, this.pools, this.walls, this.wallRuns];
     this.world = null; // the battle, set by main: props and soldiers for blood to hit
     this.hitV = new THREE.Vector3(); this.hitN = new THREE.Vector3(); this.hitD = new THREE.Vector3(); this.hitO = new THREE.Vector3(); this.nbuf = []; this.cbuf = [];
     this.si = 0; this.budget = 0;
@@ -224,7 +102,7 @@ export class Gore {
     this.z = new THREE.Vector3(0, 0, 1);
   }
 
-  get decalCount() { return this.sets.reduce((a, d) => a + d.mesh.count, 0); }
+  get decalCount() { return this.sets.reduce((a, d) => a + d.slots.reduce((n, x) => n + (x ? 1 : 0), 0), 0); }
   get gibCount() { return Object.values(this.gs).reduce((a, g) => a + g.mesh.count, 0); }
 
   setLevel(l) {
@@ -294,15 +172,15 @@ export class Gore {
       const seg = _b.length();
       if (seg > 1e-5) {
         _b.divideScalar(seg);
-        let best = null;
-        for (const pr of cands) { const h = rayBox(_a, _b, seg, pr.box); if (h && h.t > 0 && (!best || h.t < best.t)) best = h; }
-        if (best) { out.p.copy(_a).addScaledVector(_b, best.t); out.n.copy(best.n); out.t = s; return true; }
+        let best = null, bp = null;
+        for (const pr of cands) { const h = rayBox(_a, _b, seg, pr.box); if (h && h.t > 0 && (!best || h.t < best.t)) { best = h; bp = pr; } }
+        if (best) { out.p.copy(_a).addScaledVector(_b, best.t); out.n.copy(best.n); out.t = s; out.prop = bp; return true; }
       }
       const gy = height(bx, bz);
       if (by <= gy) {
         const k = clamp((ay - height(ax, az)) / Math.max(1e-4, (ay - height(ax, az)) - (by - gy)), 0, 1);
         const x = ax + (bx - ax) * k, z = az + (bz - az) * k;
-        out.p.set(x, height(x, z), z); out.n.copy(normalAt(x, z)); out.t = s;
+        out.p.set(x, height(x, z), z); out.n.copy(normalAt(x, z)); out.t = s; out.prop = null;
         return out.n.y > 0.5 || true;
       }
       ax = bx; ay = by; az = bz;
@@ -310,10 +188,14 @@ export class Gore {
     return false;
   }
 
-  stain(p, n, dir, size) {
-    const wall = n.y < 0.6, shallow = 1 - Math.abs(dir.dot(n));
-    if (shallow > 0.5 && size > 0.05) (wall ? this.wallRuns : this.streaks).addOn(p, n, size * (1.2 + shallow), dir);
-    else (wall ? this.walls : this.splats[this.si++ % 3]).addOn(p, n, size, dir);
+  // one stain from a thrown drop. Its shape follows how it landed: round on a square hit, a fan when it
+  // came in fast, a tailed streak when it glanced, and on a wall the big ones start to run.
+  stain(p, n, dir, size, prop = null, speed = 6) {
+    const wall = !!prop, shallow = 1 - Math.abs(dir.dot(n)), set = wall ? this.walls : this.splats[0];
+    if (shallow > 0.55 && size > 0.05) set.addOn(p, n, size * (1.1 + shallow), dir, 0, prop, { kind: 'streak', stretch: 1.4 });
+    else if (size > 0.07 && speed > 4 && Math.random() < 0.6) set.addOn(p, n, size * 1.6, dir, 0, prop, { kind: 'spray', stretch: 1.1 });
+    else set.addOn(p, n, size, dir, 0, prop, { stretch: 1 + shallow * 1.2 });
+    if (wall && n.y < 0.6 && size > 0.1 && Math.random() < 0.55) this.wallRuns.addRun(p, n, 0.03 + size * 0.12, 0.25 + size * 3 * Math.random() + Math.random() * 0.3, 0.02 + size * 0.12, prop);
   }
 
   // Forward spatter: fine spots flung out along the bullet's line from an exit wound. A fan about
@@ -324,19 +206,19 @@ export class Gore {
     count = Math.ceil(count * (this.level === 2 ? 1 : 0.5));
     this.budget -= count;
     const w = this.world, cands = w?.propGrid ? w.propGrid.near(pos.x + dir.x * reach * 0.5, pos.z + dir.z * reach * 0.5, reach * 0.5 + 1.2, this.cbuf) : [];
-    const hit = { p: new THREE.Vector3(), n: new THREE.Vector3(), t: 0 }, d = new THREE.Vector3();
+    const hit = { p: new THREE.Vector3(), n: new THREE.Vector3(), t: 0, prop: null }, d = new THREE.Vector3();
     for (let i = 0; i < count; i++) {
       d.copy(dir).add(this.hitV.set(this.rnd(cone), this.rnd(cone * 0.8) - 0.1 - Math.random() * 0.25, this.rnd(cone))).normalize();
       if (!this.cast(pos, d, reach * (0.55 + Math.random() * 0.45), cands, hit)) continue;
       const near = 1 - hit.t / (reach + 0.5);
       const sz = size * (0.35 + Math.random() * 0.9) * (0.5 + near * 0.8);
-      this.stain(hit.p, hit.n, d, sz);
+      this.stain(hit.p, hit.n, d, sz, hit.prop, 8 * (0.5 + near));
       if (Math.random() < 0.55) { // satellites: tiny spots beside it, thrown off the main drop's tail
         const m = 1 + ((Math.random() * 3) | 0);
         for (let k = 0; k < m; k++) {
           const off = this.hitV.set(this.rnd(), this.rnd(), this.rnd()).multiplyScalar(sz * 1.6);
           off.addScaledVector(hit.n, -off.dot(hit.n));
-          this.stain(_c.copy(hit.p).add(off), hit.n, d, sz * (0.25 + Math.random() * 0.25));
+          this.stain(_c.copy(hit.p).add(off), hit.n, d, sz * (0.25 + Math.random() * 0.25), hit.prop, 2);
         }
       }
     }
@@ -414,10 +296,10 @@ export class Gore {
     if (through) {
       if (!head) this.wound(u, d, 0.03 + heavy * 0.022, true, 'exit', depth * 1.8);
       // forward spatter: mist and fine droplets along the line, stains on what is behind
-      const n = 3 + heavy * 4 + (head ? 3 : 0);
-      this.spray(pos, d, n, 2.5, 7 + heavy * 2, 0.3, 0.016);
+      const n = 5 + heavy * 6 + (head ? 4 : 0);
+      this.spray(pos, d, n, 2.5, 7 + heavy * 2, 0.34, 0.017);
       this.mist(pos, d.clone().multiplyScalar(2.2), 0.25 + heavy * 0.2, 1 + (heavy > 1 ? 1 : 0), 0.32);
-      this.spatter(pos, d, 5 + heavy * 5 + (head ? 4 : 0), 2.8 + heavy * 2.4, 0.3, 0.13 + heavy * 0.05);
+      this.spatter(pos, d, 8 + heavy * 7 + (head ? 6 : 0), 3.2 + heavy * 2.8, 0.34, 0.15 + heavy * 0.06);
       if (L === 2 && !dead) this.tissue(pos, d, { lumps: heavy > 0.9 ? 1 : 0, strips: Math.random() < 0.4 ? 1 : 0, shards: head ? 2 : 0 }, 3 + heavy);
     }
   }
@@ -452,14 +334,17 @@ export class Gore {
     const blast = kind === 'blast', plasma = kind === 'plasma';
     const severe = blast || dmg >= 95; // blasts and cannon rounds tear bodies; bullets do not
     const d = h?.dir ? h.dir.clone().normalize() : UP;
-    if (this.bleeders.length < 80) this.bleeders.push({ u, t: 0, drip: 0, kind, pooled: false, size: severe ? 1.35 + Math.random() * 0.3 : plasma ? 0.55 : 0.75 + Math.min(0.3, dmg / 260), severe });
+    if (this.bleeders.length < 100) this.bleeders.push({ u, t: 0, drip: 0, kind, pooled: false, size: severe ? 1.7 + Math.random() * 0.5 : plasma ? 0.55 : 0.9 + Math.min(0.45, dmg / 200), severe });
     if (severe) {
       // the body bursts: a cloud and a radial throw of blood and mist, stains on the ground around it
-      this.spray(c, UP, 14, 2, 7, 1.4, 0.03);
-      this.mist(c, UP.clone().multiplyScalar(1.4), 1.2, 3, 0.5);
-      for (let i = 0; i < 6; i++) { const a = Math.random() * TAU, r = 0.4 + Math.random() * 1.5; this.splat(c.x + Math.cos(a) * r, c.z + Math.sin(a) * r, 0.25 + Math.random() * 0.35); }
+      this.spray(c, UP, 38, 2, 8, 1.6, 0.032);
+      this.mist(c, UP.clone().multiplyScalar(1.4), 1.3, 6, 0.55);
+      for (let i = 0; i < 14; i++) { const a = Math.random() * TAU, r = 0.4 + Math.random() * 2.2; this.splat(c.x + Math.cos(a) * r, c.z + Math.sin(a) * r, 0.25 + Math.random() * 0.4); }
+      // a radial fan of spatter on whatever stands around: walls, cover, ground
+      for (let i = 0; i < 9; i++) { const a = (i / 9) * TAU + Math.random() * 0.5; this.spatter(c.clone().addScaledVector(UP, 0.2), new THREE.Vector3(Math.cos(a), 0.25 + Math.random() * 0.3, Math.sin(a)).normalize(), 6, 3.4 + Math.random() * 2.4, 0.5, 0.22); }
     } else if (!plasma) {
-      this.spray(c, d, 2, 1, 3, 0.5, 0.018); // a bullet death is quiet: the body slumps, the wounds leak
+      this.spray(c, d, 7, 1, 4, 0.7, 0.02); // the body slumps and the wounds pour
+      this.spatter(c, d, 3, 2.2, 0.4, 0.12);
     }
     // blood lands on the soldiers standing close by
     if (world && (blast || dmg >= 60)) {
@@ -573,7 +458,7 @@ export class Gore {
     this.wound(u, d, 0.06 + Math.random() * 0.04, true, Math.random() < 0.6 ? 'open' : 'shred', 0.05);
     this.spray(c, UP, 5, 1.5, 4, 1, 0.025);
     this.splat(c.x + this.rnd(0.8), c.z + this.rnd(0.8), 0.35 + Math.random() * 0.3);
-    this.pools.add(c.x, c.z, 0.9 + Math.random() * 0.4, 1);
+    this.pools.add(c.x, c.z, 0.9 + Math.random() * 0.5, 1, undefined, { stretch: 1 + Math.random() * 0.4 });
   }
 
   // ---- gibs -------------------------------------------------------------------------------------
@@ -614,12 +499,12 @@ export class Gore {
       const seg = o.distanceTo(p);
       if (seg > 1e-5) {
         const ray = this.v.copy(p).sub(o).divideScalar(seg);
-        let best = null;
+        let best = null, bp = null;
         for (const pr of w.propGrid.near(p.x, p.z, 0.8, this.nbuf)) {
           const h = rayBox(o, ray, seg, pr.box);
-          if (h && h.t > 0 && (!best || h.t < best.t)) best = h;
+          if (h && h.t > 0 && (!best || h.t < best.t)) { best = h; bp = pr; }
         }
-        if (best) { p.copy(o).addScaledVector(ray, best.t); N.copy(best.n); this.land(d, sp, N, dir); return true; }
+        if (best) { p.copy(o).addScaledVector(ray, best.t); N.copy(best.n); this.land(d, sp, N, dir, bp); return true; }
       }
     }
     // soldiers: big beads that reach one leave a stain on it
@@ -640,20 +525,22 @@ export class Gore {
     return false;
   }
 
-  land(d, sp, nrm, dir) {
+  land(d, sp, nrm, dir, prop = null) {
     if (!this.level) return;
-    const p = d.p, wall = nrm.y < 0.6;
+    const p = d.p, wall = !!prop && nrm.y < 0.6;
     const cosI = Math.abs(dir.dot(nrm)), shallow = 1 - cosI; // 1 = grazing
     // light beads at slow speed just soak in; big and fast ones spread. Drips that fall a long way splash wider.
     const big = d.big || sp > 6;
     const size = Math.min(0.6, d.size * (2.6 + sp * 0.45) + Math.random() * 0.04);
     if (!big && Math.random() < 0.55) return;
-    const set = wall ? this.walls : this.splats[this.si++ % 3];
+    const set = prop ? this.walls : this.splats[0];
     if (shallow > 0.55 && sp > 4 && size > 0.12) {
-      // a glancing hit smears along its travel
-      (wall ? this.wallRuns : this.streaks).addOn(p, nrm, size * (1.1 + shallow * 0.8), dir);
-    } else set.addOn(p, nrm, size, dir);
-    if (wall && big && size > 0.1) this.wallRuns.addOn(p, nrm, 0.2 + size * 0.7, this.hitV.set(0, -1, 0)); // runs down
+      // a glancing hit smears along its travel: a head, a tail and flicked drops
+      set.addOn(p, nrm, size * (1.2 + shallow * 0.9), dir, 0, prop, { kind: 'streak', stretch: 1.5 });
+    } else if (sp > 7 && size > 0.1 && Math.random() < 0.65) {
+      set.addOn(p, nrm, size * 1.7, dir, 0, prop, { kind: 'spray', stretch: 1 + shallow * 0.8 }); // fast: a fan thrown on along the line
+    } else set.addOn(p, nrm, size, dir, 0, prop, { stretch: 1 + shallow * 1.5 });
+    if (wall && big && size > 0.08) this.wallRuns.addRun(p, nrm, 0.025 + size * 0.14, 0.25 + size * 2.6 + Math.random() * 0.5, 0.025 + size * 0.1, prop); // runs down
     // fast impacts throw satellite droplets back out
     if (sp > 5 && d.big && this.drops.length < DROP_MAX * 0.7) {
       const m = 1 + ((Math.random() * 2) | 0);
@@ -665,7 +552,7 @@ export class Gore {
   }
 
   update(dt) {
-    this.budget = 48;
+    this.budget = 90;
     if (!this.level && !this.active.length && !this.bleeders.length && !this.drops.length && !this.spurts.length) return;
     // gibs: tumble, bounce, trail blood, flatten and smear where they land, settle
     for (let i = this.active.length - 1; i >= 0; i--) {
@@ -700,7 +587,7 @@ export class Gore {
             if (ax.lengthSq() > 1e-4) { this.q.setFromUnitVectors(this.hitD.set(0, 0, 1).applyQuaternion(g.q), ax.normalize()); g.q.premultiply(this.q); }
           }
           // settle: a small pool under a piece that bled
-          if (this.level) { if (g.long || g.set === this.gs.head) this.pools.add(g.p.x, g.p.z, 0.35, 0.9); else if (g.squash) this.splat(g.p.x, g.p.z, 0.1 + Math.random() * 0.06); }
+          if (this.level) { if (g.long || g.set === this.gs.head) this.pools.add(g.p.x, g.p.z, 0.4 + Math.random() * 0.2, 0.9, undefined, { stretch: 1 + Math.random() * 0.5 }); else if (g.squash) this.splat(g.p.x, g.p.z, 0.1 + Math.random() * 0.06); }
         }
       }
       this.writeGib(g);
@@ -775,7 +662,13 @@ export class Gore {
       // the wounds leak: a drop now and then, a small stain beneath
       b.drip -= dt;
       if (b.drip <= 0 && b.t < 4) { b.drip = 0.35 + Math.random() * 0.3; this.spray(bp, UP, 1, 0.3, 1.2, 0.8, 0.018); this.splat(bp.x + this.rnd(0.3), bp.z + this.rnd(0.3), 0.1 + Math.random() * 0.12); }
-      if (!b.pooled && (u.rag.asleep || b.t > 5)) { b.pooled = true; this.pools.add(bp.x, bp.z, b.size * (0.9 + Math.random() * 0.3), 1); this.bleeders.splice(i, 1); }
+      if (!b.pooled && (u.rag.asleep || b.t > 5)) { b.pooled = true;
+        // the main pool under the body, plus smaller ones where the wounds sit and a few drops flung wide
+        this.pools.add(bp.x, bp.z, b.size * (1.05 + Math.random() * 0.35), 1, undefined, { stretch: 1 + Math.random() * 0.45 });
+        const extra = b.severe ? 3 : 1 + ((Math.random() * 2) | 0);
+        for (let k = 0; k < extra; k++) { const a = Math.random() * TAU, r = b.size * (0.45 + Math.random() * 0.5); this.pools.add(bp.x + Math.cos(a) * r, bp.z + Math.sin(a) * r, b.size * (0.35 + Math.random() * 0.35), 0.8, undefined, { stretch: 1 + Math.random() * 0.6 }); }
+        for (let k = 0; k < (b.severe ? 8 : 3); k++) { const a = Math.random() * TAU, r = b.size * (0.8 + Math.random() * 1.6); this.splat(bp.x + Math.cos(a) * r, bp.z + Math.sin(a) * r, 0.08 + Math.random() * 0.16); }
+        this.bleeders.splice(i, 1); }
     }
     // wounded soldiers drip as they move: worse wounds drip faster, leaving a trail of spots
     for (let i = this.live.length - 1; i >= 0; i--) {
