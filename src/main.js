@@ -29,6 +29,8 @@ import { MAX_SPEED } from './unit.js';
 import { Wheel, ORDERS, issue as issueOrder, tick as tickOrders } from './orders.js';
 import { CALLINS, ORDER, RANGE, Reticle, CallinBar } from './callins.js';
 import { CLASSES, CLASS_IDS, useSkill } from './classes.js';
+import { TrimEmpty } from './instcull.js';
+import { Governor } from './governor.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('scene');
@@ -43,7 +45,11 @@ const tier = params.get('q') || (coarse || (navigator.hardwareConcurrency || 8) 
 const usePost = tier === 'high' && (!testing || params.has('post'));
 document.documentElement.dataset.quality = usePost ? 'high' : 'low';
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: testing, powerPreference: 'high-performance' }); // MSAA on phones too: tiled mobile GPUs resolve it on chip, and without it every moving edge crawls
-renderer.setPixelRatio(testing ? 1 : Math.min(devicePixelRatio, tier === 'low' ? 1.5 : 2)); // the check suite renders in software
+const BASE_DPR = testing ? 1 : Math.min(devicePixelRatio, tier === 'low' ? 1.5 : 2); // the check suite renders in software
+renderer.setPixelRatio(BASE_DPR);
+// frame times decide the render scale (see governor.js); the check suite and ?fixed keep full resolution so renders are repeatable
+const gov = testing || params.has('fixed') ? null : new Governor();
+let lastRaf = 0;
 renderer.shadowMap.enabled = true;
 renderer.shadowMap.type = tier === 'low' ? THREE.PCFShadowMap : THREE.PCFSoftShadowMap;
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -100,9 +106,11 @@ const vmCrowd = new Crowd(vmScene, 2);
 let vmOn = false;
 const post = usePost ? new Post(renderer, { samples: 4, reduced }) : null;
 let frameDt = 1 / 60;
+const trim = new TrimEmpty(scene);
 // The shadow map is redrawn every frame on every tier: the shadow box moves with the camera, so a stale
 // map paired with a fresh matrix makes every shadow jump back and forth on the frames in between.
 function renderWorld() {
+  trim.run();
   if (post) {
     post.render(scene, camera, frameDt, { night: atmo.night, wet: Math.min(1, atmo.w.rain), flash: atmo.flash * atmo.flash * 0.18, noBlur: testing || state === 'menu' || cam.frozen });
     // the post pass leaves its own depth behind, so the gun gets a clean depth range on the screen
@@ -858,6 +866,9 @@ function drawUnits() {
   // what the camera or the sun's shadow can reach: everything else is left out of the instance buffers
   view.update(camera, sun, scene.fog.far);
   battle.batch.cull(view);
+  for (const d of battle.decor) if (d.userData.culls) for (const c of d.userData.culls) c.update(view);
+  // machines the camera and the sun's shadow cannot reach (or past the haze) are not sent to the GPU at all
+  for (const v of battle.vehicles) v.group.visible = v.hasPlayer || view.test(v.pos.x, v.pos.y + 3, v.pos.z, 7) > 0;
   const fp = state !== 'menu' && player && cam.mode === '1p' && cam.blend > 0.6;
   const cp = camera.position;
   const us = battle.units;
@@ -895,6 +906,12 @@ let menuT = 0;
 let skipDraw = false;
 function frame(_t, fixedDt) {
   const dt = fixedDt ?? Math.min(clock.getDelta(), 0.05);
+  if (gov && fixedDt === undefined) {
+    const now = performance.now(), ms = lastRaf ? now - lastRaf : 0;
+    lastRaf = now;
+    const k = state === 'pause' ? 0 : gov.sample(ms);
+    if (k) { renderer.setPixelRatio(BASE_DPR * k); resize(); }
+  }
   frameDt = dt;
   { const now = performance.now() / 1000; if (!reduced) sky.material.uniforms.time.value = now; if (!reduced) for (const p of battle.points) p.model.userData.wave?.(now); }
   for (const d of battle.decor) if (d.userData.tick) { d.userData.tick(performance.now() / 1000); d.userData.smoke.material.uniforms.scale.value = smokeScale; }
@@ -1073,7 +1090,7 @@ if (params.has('play')) startBattle({ mode: params.get('play') || 'battle' });
 // Test hooks for the check suite.
 window.__game = { maxSpeed: MAX_SPEED,
   THREE, scene, camera, renderer, cam, input, crowd, fx, SLOTS, U, pose, makePose, solveLegs, solveArms, HOLD, HALF, weaponModel,
-  spec, height, get battle() { return battle; }, get player() { return player; }, get state() { return state; },
+  spec, height, get battle() { return battle; }, get player() { return player; }, get state() { return state; }, gov,
   sandbox, atmo, ambience, envNow: () => updateEnv(1e9, atmo.hour, atmo.weather, true), start: startBattle, openMenu, pause,
   freeze(on = true) { frozen = on; },
   // render one frame now (for screenshots while frozen)

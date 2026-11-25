@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { U, HOLD, setWeaponBounds, solveLegs, solveArms, solveTorso } from './rig.js';
 import { GEAR, MARKS, KIND_IDS, kindKey } from './gear.js';
 import { markMaterial, woundMarkMaterial, partMatrix } from './hitmarks.js';
@@ -39,6 +40,32 @@ const PACK_COL = TEAMS.map((t) => new THREE.Color(t.body).multiplyScalar(0.62));
 const DARK = new THREE.Color('#1d2126');
 const _sp = new THREE.Vector3(), _sq = new THREE.Quaternion(), _ss = new THREE.Vector3(), _sz = new THREE.Vector3(), _sm = new THREE.Matrix4();
 const NECK_UP = new THREE.Matrix4().makeRotationX(-Math.PI / 2), NECK_T = new THREE.Matrix4().makeTranslation(0, 0, 0.012), NECK_S = new THREE.Vector3(0.034, 0.034, 0.034);
+
+
+// ---- guns: parts of different materials share one draw call (see the weapons loop in the constructor)
+const isLit = (m) => !m.isMeshStandardMaterial || m.transparent || m.emissiveIntensity > 0 && (m.emissive.r + m.emissive.g + m.emissive.b) > 0;
+function paintVerts(geo, mat) {
+  const g = geo.index ? geo.toNonIndexed() : geo.clone();
+  for (const k of Object.keys(g.attributes)) if (k !== 'position' && k !== 'normal') g.deleteAttribute(k);
+  const n = g.attributes.position.count, col = new Float32Array(n * 3), mr = new Float32Array(n * 2);
+  for (let i = 0; i < n; i++) { col[i * 3] = mat.color.r; col[i * 3 + 1] = mat.color.g; col[i * 3 + 2] = mat.color.b; mr[i * 2] = mat.roughness; mr[i * 2 + 1] = mat.metalness; }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  g.setAttribute('aMR', new THREE.BufferAttribute(mr, 2));
+  return g;
+}
+let GUN_MAT = null;
+function gunMat() {
+  if (GUN_MAT) return GUN_MAT;
+  GUN_MAT = new THREE.MeshStandardMaterial({ color: '#ffffff', roughness: 1, metalness: 1, vertexColors: true });
+  GUN_MAT.onBeforeCompile = (sh) => {
+    sh.vertexShader = sh.vertexShader.replace('#include <common>', '#include <common>\nattribute vec2 aMR; varying vec2 vMR;').replace('#include <begin_vertex>', '#include <begin_vertex>\nvMR = aMR;');
+    sh.fragmentShader = sh.fragmentShader.replace('#include <common>', '#include <common>\nvarying vec2 vMR;')
+      .replace('#include <roughnessmap_fragment>', 'float roughnessFactor = vMR.x;')
+      .replace('#include <metalnessmap_fragment>', 'float metalnessFactor = vMR.y;');
+  };
+  GUN_MAT.customProgramCacheKey = () => 'gun-merged';
+  return GUN_MAT;
+}
 
 export class Crowd {
   constructor(scene, cap = 600) {
@@ -115,7 +142,13 @@ export class Crowd {
       const { parts, muzzle, box, sight } = weaponParts(id);
       setWeaponBounds(id, box, muzzle, sight);
       const sc = new THREE.Matrix4().makeScale(U.WEAPON_SCALE, U.WEAPON_SCALE, U.WEAPON_SCALE);
-      this.weapons[id] = parts.map(({ geometry, material }) => {
+      // One draw per gun: the dull parts (steel, wood, brass, rubber) are merged into one mesh whose colour,
+      // roughness and metalness ride on the vertices; only a glowing part (the plasma cell) keeps a mesh of its own.
+      const plain = parts.filter(({ material: mt }) => !isLit(mt)), lit = parts.filter(({ material: mt }) => isLit(mt));
+      const list = [];
+      if (plain.length) list.push({ geometry: mergeGeometries(plain.map(({ geometry, material }) => paintVerts(geometry, material)), false), material: gunMat() });
+      list.push(...lit);
+      this.weapons[id] = list.map(({ geometry, material }) => {
         const g = geometry.clone().applyMatrix4(sc);
         const m = mk(g, material, cap, false);
         m.name = `crowd-${id}`;
@@ -322,6 +355,8 @@ export class Crowd {
     const sh = this.snapped ? this.sh : null; this.snapped = false;
     const fin = (m, n, s = n) => {
       m._sc = s;
+      if (m.userData.casts === undefined) m.userData.casts = m.castShadow;
+      m.castShadow = m.userData.casts && s > 0; // an empty shadow draw is still a draw call
       m.count = n;
       m.visible = n > 0; // an empty mesh costs nothing: no draw call, no state changes
       m.instanceMatrix.needsUpdate = true;

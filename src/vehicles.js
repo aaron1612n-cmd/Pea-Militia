@@ -229,7 +229,7 @@ function buildStriderModel(team) {
   const m = modelCache.get(key), def = VEHICLES.walker;
   const root = new THREE.Group();
   root.name = 'vehicle-walker';
-  const mesh = (g, mat = BODY, shadow = true) => { const o = new THREE.Mesh(g, mat); o.castShadow = shadow; o.receiveShadow = true; o.frustumCulled = false; return o; };
+  const mesh = (g, mat = BODY, shadow = true) => { const o = new THREE.Mesh(g, mat); o.castShadow = shadow; o.receiveShadow = true; return o; }; // frustum culled per part: a walker off to the side costs nothing
   const bodyG = new THREE.Group();
   const hull = mesh(m.hull);
   const lamps = mesh(m.glow, new THREE.MeshStandardMaterial({ color: '#ffe9a8', emissive: '#ffd27a', emissiveIntensity: 1.3 }), false);
