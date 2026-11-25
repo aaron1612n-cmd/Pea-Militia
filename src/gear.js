@@ -37,11 +37,23 @@ const PTop = (x, z) => new V(x, PK.top, z); // pack top face
 const PSide = (sx) => (z, y) => new V(sx * PK.hx, y, z);
 const hw = (c, w) => () => [c - w / 2, c + w / 2];
 
+// Pieces that hang loose swing about a pivot in the vertex shader (fabric.js): each is tagged with a
+// swing group and its pivot (aSw = pivot xyz + group). Groups: 1 right hip kit, 2 left hip kit,
+// 3 antennas and cords, 4 loose strap tails, 5 chain and tags. Everything else has group 0.
+export const SWAY_GROUPS = { hipR: 1, hipL: 2, whip: 3, tail: 4, tags: 5 };
+function tagSway(g, grp, pivot) {
+  const n = g.attributes.position.count, a = new Float32Array(n * 4);
+  for (let i = 0; i < n; i++) { a[i * 4] = pivot[0]; a[i * 4 + 1] = pivot[1]; a[i * 4 + 2] = pivot[2]; a[i * 4 + 3] = grp; }
+  g.setAttribute('aSw', new THREE.BufferAttribute(a, 4));
+  return g;
+}
 class Kit {
-  constructor(kind) { this.kind = kind; this.l = []; this.marks = []; this.n = 0; }
+  constructor(kind) { this.kind = kind; this.l = []; this.marks = []; this.n = 0; this.grp = 0; this.pivot = [0, 0, 0]; }
   name(n) { return `${this.kind}:${n || this.n++}`; }
-  add(g, shade, name, at) { g = done(g, shade, at); g.userData.name = this.name(name); this.l.push(g); return g; }
-  mark(g, color, at) { done(g, color, at); this.marks.push(g); return g; }
+  add(g, shade, name, at) { g = done(g, shade, at); g.userData.name = this.name(name); tagSway(g, this.grp, this.pivot); this.l.push(g); return g; }
+  mark(g, color, at) { done(g, color, at); tagSway(g, this.grp, this.pivot); this.marks.push(g); return g; }
+  // pieces added inside fn hang from `pivot` and swing as group `grp` (a key of SWAY_GROUPS)
+  swing(grp, pivot, fn) { const g0 = this.grp, p0 = this.pivot; this.grp = SWAY_GROUPS[grp]; this.pivot = pivot; fn(); this.grp = g0; this.pivot = p0; }
   // flat-ish things grown on a surface
   plate(surf, o, shade, name) { return this.add(patch({ surf, ...o }), shade, name); }
   // a pouch: a puffed body with a flap that comes down over its top and a button. surf/axis as for patch.
@@ -68,12 +80,15 @@ function surfNormal(surf, u, v, flip = false) {
   const n = new V().crossVectors(a, b).normalize();
   return flip ? n.negate() : n;
 }
+const BAND = { rifleman: [0.88, 0.88, 0.8], assault: [0.8, 0.18, 0.1], gunner: [0.9, 0.7, 0.1], mortar: [0.92, 0.46, 0.1], coil: [0.3, 0.9, 0.85], medic: [0.75, 0.05, 0.05] };
 // a shoulder cap: a faceted dome with two lamellae below it, tilted down and out
 function pauldron(k, sx, { r = 1, shade = C.plate, big = false } = {}) {
   const s = r * (big ? 1.15 : 1);
   const at = [sx * 0.157, 0.162, 0.0], rot = [0, 0, -sx * 0.4];
   // the cap: a deep faceted dome that sits over the shoulder joint
   k.add(lathe([[0.056 * s, -0.016], [0.06 * s, -0.004], [0.056 * s, 0.014], [0.042 * s, 0.032], [0.022 * s, 0.045], [0, 0.05]], { n: 12, p: 2.2, sz: 1.1, crease: 40 }), shade, `pauldron${sx}`, { pos: at, rot });
+  // a painted unit band round the cap, in the class colour
+  { const w = s * 0.0595; k.mark(lathe([[w - 0.0012, 0.0], [w + 0.0016, 0.0], [w + 0.0016, 0.0075], [w - 0.0012, 0.0075]], { n: 14, p: 2.2, sz: 1.1 }), BAND[k.kind] || [0.9, 0.9, 0.85], { pos: [at[0], at[1] + 0.001, at[2]], rot }); }
   // two lamellae stepping down the arm, each a shallow shell slightly wider than the last
   for (let i = 1; i <= 2; i++) {
     const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(...rot));
@@ -108,21 +123,23 @@ function base(k, kind) {
   k.ring(BELT_Y - 0.02, BELT_Y + 0.022, 0.003, 0.012, C.web, 'belt', { cols: 40 });
   k.plate(F, { v0: BELT_Y - 0.016, v1: BELT_Y + 0.016, range: hw(0, 0.04), rows: 3, cols: 3, thick: 0.01, off: 0.012, bevel: 0.004 }, C.steel, 'buckle');
   // canteen on the right hip: a felt-covered flask with a cap, cord and a cup beneath
-  {
+  k.swing('hipR', [-(Math.abs(torsoSide(BELT_Y, -0.03)) + 0.006), BELT_Y + 0.02, -0.03], () => {
     const y = BELT_Y - 0.052, z = -0.03, x = -(Math.abs(torsoSide(y, z)) + 0.014);
     k.add(lathe([[0, -0.016], [0.034, -0.016], [0.0385, -0.011], [0.0395, 0.0], [0.0385, 0.011], [0.034, 0.016], [0, 0.016]], { n: 14, sx: 1, sz: 1.22, crease: 45 }), C.olive, 'canteen', { pos: [x, y, z], rot: [0, 0, Math.PI / 2] });
     k.add(lathe([[0, 0], [0.012, 0], [0.013, 0.012], [0.0105, 0.015], [0, 0.015]], { n: 8 }), C.steel, 'canteen-cap', { pos: [x - 0.013, y + 0.04, z], rot: [0, 0, 0.0] });
     k.add(lathe([[0, 0], [0.0095, 0], [0.0095, 0.006], [0, 0.006]], { n: 8 }), C.steel, 'canteen-neck', { pos: [x - 0.003, y + 0.036, z] });
     k.add(tubePath([[x - 0.002, y + 0.044, z], [x + 0.0, y + 0.05, z + 0.03], [x + 0.004, y + 0.04, z + 0.04]], 0.0022, { n: 4, seg: 5 }), C.dark, 'canteen-cord');
     k.add(ribbon([[x - 0.012, y + 0.044, z - 0.012], [x - 0.04, y + 0.0, z - 0.005], [x - 0.012, y - 0.044, z - 0.012]], 0.012, 0.004, [[-1, 0.6, 0], [-1, 0, 0], [-1, -0.6, 0]], { seg: 6 }), C.strap, 'canteen-strap');
-  }
+  });
   // holster on the left hip: tapered, with a retention strap and a pistol grip showing
+  k.swing('hipL', [Math.abs(torsoSide(BELT_Y, 0.03)) + 0.004, BELT_Y + 0.016, 0.03], () => {
   k.plate(Sd(1), { v0: BELT_Y - 0.102, v1: BELT_Y + 0.016, range: (v) => { const t = sstep(BELT_Y - 0.102, BELT_Y + 0.016, v); const w = 0.032 + 0.04 * t; return [0.03 - w / 2, 0.03 + w / 2]; }, rows: 5, cols: 4, thick: 0.03, bevel: 0.009, bulge: 0.3, flip: true, uScale: 1 }, C.leather, 'holster');
   k.plate(Sd(1), { v0: BELT_Y - 0.01, v1: BELT_Y + 0.008, range: hw(0.03, 0.058), rows: 2, cols: 4, off: 0.022, thick: 0.014, bevel: 0.004, flip: true }, C.strap, 'holster-strap');
   {
     const x = Math.abs(torsoSide(BELT_Y + 0.03, 0.03)) + 0.014;
     k.add(loft([ringY(0, 0.01, 0.014, { n: 6, cx: 0, cz: 0 }), ringY(0.03, 0.0095, 0.0135, { n: 6, cz: 0.004 }), ringY(0.05, 0.009, 0.015, { n: 6, cz: 0.012 })], { crease: 40 }), C.dark, 'pistol-grip', { pos: [x, BELT_Y + 0.0, 0.03], rot: [0, 0, 0] });
   }
+  });
   // a pack: frame straps on the back face, lid across the top, side pockets
   k.plate(PTop, { v0: -PK.hz + 0.006, v1: PK.hz - 0.006, range: hw(0, 0.2), rows: 4, cols: 6, off: 0.0, thick: 0.018, bevel: 0.008, bulge: 0.4, flip: true, crease: 45 }, C.canvas, 'lid');
   k.plate(PBack, { v0: PK.top - 0.095, v1: PK.top - 0.012, range: (v) => { const t = sstep(PK.top - 0.095, PK.top - 0.012, v); const w = 0.17 * (0.5 + 0.5 * t); return [-w / 2, w / 2]; }, rows: 4, cols: 5, off: 0.0, thick: 0.014, bevel: 0.006, bulge: 0.3, flip: true }, C.flap, 'lid-flap');
@@ -136,6 +153,22 @@ function base(k, kind) {
   for (const x of [-0.07, 0.07]) k.add(lathe([[0.0305, -0.007], [0.0335, -0.007], [0.0335, 0.007], [0.0305, 0.007]], { n: 12 }), C.strap, `bedroll-strap${x}`, { pos: [x, PK.top + 0.014, PK.z], rot: [0, 0, Math.PI / 2] });
   k.add(rod([0.075, PK.y - 0.06, PK.back - 0.006], [0.075, PK.y + 0.07, PK.back - 0.006], 0.0075, 0.0065, { n: 6 }), C.leather, 'tool-haft');
   k.plate(PBack, { v0: PK.y - 0.11, v1: PK.y - 0.058, range: (v) => { const t = sstep(PK.y - 0.11, PK.y - 0.058, v); const w = 0.012 + 0.052 * t; return [0.075 - w / 2, 0.075 + w / 2]; }, rows: 4, cols: 3, off: 0.004, thick: 0.012, bevel: 0.004, flip: true }, C.steel, 'tool-blade');
+  // the loose end of a pack strap, hanging from its buckle, and a webbing keeper
+  k.swing('tail', [-0.06, PK.bottom + 0.03, PK.back], () => {
+    k.add(ribbon([[-0.06, PK.bottom + 0.03, PK.back - 0.004], [-0.0605, PK.bottom - 0.02, PK.back - 0.0058], [-0.059, PK.bottom - 0.075, PK.back - 0.0062]], 0.02, 0.005, [0, 0, -1], { seg: 6 }), C.strap, 'strap-tail');
+    k.add(plate([[-0.011, 0], [0.011, 0], [0.011, 0.006], [0, 0.011], [-0.011, 0.006]], 0.004, { bevel: 0.001 }), C.strap, 'strap-tip', { pos: [-0.06, PK.bottom - 0.086, PK.back - 0.0085], rot: [0, Math.PI, 0] });
+  });
+  // dog tags on a chain over the collar: the chain hangs from the yoke and the tags swing on it
+  k.swing('tags', [0, HY - 0.012, torsoFront(0, HY - 0.012) + 0.009], () => {
+    const zc = (y) => torsoFront(0, y) + 0.036;
+    k.add(tubePath([[0, HY - 0.012, torsoFront(0, HY - 0.012) + 0.009], [0, 0.17, torsoFront(0, 0.17) + 0.028], [0, 0.125, zc(0.125)]], 0.0013, { n: 4, seg: 8 }), C.steel, 'tag-chain');
+    for (const [i, dx] of [[0, -0.004], [1, 0.004]]) k.add(plate([[-0.0125, -0.008], [0.0125, -0.008], [0.0125, 0.0045], [0.0055, 0.0085], [-0.0055, 0.0085], [-0.0125, 0.0045]], 0.002, { bevel: 0.0006 }), C.steel, `tag${i}`, { pos: [dx, 0.1165, zc(0.1165) - 0.001 + i * 0.0022], rot: [0.0, 0, 0] });
+  });
+  // rivets along the belt and brass keepers on the shoulder straps
+  for (const th of [-1.1, -0.85, -0.6, -0.36, 0.36, 0.6, 0.85, 1.1]) {
+    const q = torsoRadial(th, BELT_Y), n = new V(q.x, 0, q.z).normalize();
+    k.add(aim(lathe([[0, 0], [0.0036, 0], [0.0036, 0.0012], [0.002, 0.0023], [0, 0.0026]], { n: 5 }), q.clone().addScaledVector(n, 0.0118), n), C.brass, `belt-rivet${th}`);
+  }
 }
 
 // per class: kit on top of base()
@@ -146,15 +179,18 @@ const KIND = {
     k.ring(-0.085, -0.025, 0.002, 0.014, C.plate, 'cummerbund');
     k.plate(F, { v0: -0.05, v1: 0.17, range: (v) => { const t = sstep(-0.05, 0.17, v); const w = 0.2 * (0.8 + 0.2 * sstep(0.16, 0.06, v) * 0 + 0.2 * Math.min(1, (v + 0.05) / 0.12)) - 0.03 * sstep(0.12, 0.17, v); return [-w / 2, w / 2]; }, rows: 8, cols: 8, thick: 0.02, bevel: 0.011, bulge: 0.12, off: 0.0 }, C.plate, 'plate');
     k.plate(F, { v0: -0.02, v1: 0.14, range: hw(0, 0.12), rows: 6, cols: 6, thick: 0.01, bevel: 0.007, off: 0.02 }, C.plate2, 'plate-inset');
+    for (const [x, v] of [[-0.088, -0.03], [0.088, -0.03], [-0.066, 0.145], [0.066, 0.145]]) { const n = new V(0, 0, 1); k.add(aim(lathe([[0, 0], [0.0045, 0], [0.0045, 0.0014], [0.0026, 0.0027], [0, 0.003]], { n: 6 }), new V(x, v, torsoFront(x, v) + 0.0165), n), C.brass, `plate-rivet${x}${v}`); }
     for (let i = -1; i <= 1; i += 2) k.pouch(i * 0.052, -0.03, 0.04, 0.062, 0.022, C.pouch, `magpouch${i}`, { surf: F });
     k.pouch(0.0, -0.043, 0.036, 0.046, 0.02, C.pouch, 'magpouch-mid', { surf: F });
     grenade(k, -0.064, 0.108, torsoFront(-0.064, 0.108) + 0.02);
     // radio on the right of the pack: body, dials, a spring antenna
-    k.plate(PSide(-1), { v0: PK.y - 0.01, v1: PK.y + 0.13, range: hw(PK.z, 0.07), rows: 6, cols: 4, off: 0.034 - 0.006, thick: 0.026, bevel: 0.008, bulge: 0.25, flip: false }, C.dark, 'radio');
-    k.add(tubePath(coil([-PK.hx - 0.066, PK.y + 0.125, PK.z + 0.0], [-PK.hx - 0.07, PK.y + 0.34, PK.z - 0.014], 0.006, 9), 0.0016, { n: 4, seg: 70 }), C.steel, 'antenna-coil');
-    k.add(rod([-PK.hx - 0.066, PK.y + 0.13, PK.z], [-PK.hx - 0.07, PK.y + 0.36, PK.z - 0.014], 0.0045, 0.0018, { n: 6 }), C.steel, 'antenna');
-    for (const [i, z] of [[0, -0.016], [1, 0.016]]) k.add(lathe([[0, 0], [0.008, 0], [0.008, 0.007], [0.0055, 0.009], [0, 0.009]], { n: 8 }), C.brass, `dial${i}`, { pos: [-PK.hx - 0.058, PK.y + 0.1, PK.z + z], rot: [0, 0, Math.PI / 2] });
-    k.add(lathe([[0, 0], [0.009, 0], [0.009, 0.006], [0, 0.006]], { n: 8 }), C.steel, 'antenna-base', { pos: [-PK.hx - 0.066, PK.y + 0.126, PK.z], rot: [0, 0, 0] });
+    k.plate(PSide(-1), { v0: PK.y - 0.01, v1: PK.y + 0.13, range: hw(PK.z, 0.07), rows: 6, cols: 4, off: 0.016, thick: 0.026, bevel: 0.008, bulge: 0.25, flip: false }, C.dark, 'radio');
+    k.swing('whip', [-PK.hx - 0.036, PK.y + 0.126, PK.z], () => {
+    k.add(tubePath(coil([-PK.hx - 0.036, PK.y + 0.125, PK.z + 0.0], [-PK.hx - 0.04, PK.y + 0.34, PK.z - 0.014], 0.006, 9), 0.0016, { n: 4, seg: 70 }), C.steel, 'antenna-coil');
+    k.add(rod([-PK.hx - 0.036, PK.y + 0.13, PK.z], [-PK.hx - 0.04, PK.y + 0.36, PK.z - 0.014], 0.0045, 0.0018, { n: 6 }), C.steel, 'antenna');
+    });
+    for (const [i, z] of [[0, -0.016], [1, 0.016]]) k.add(lathe([[0, 0], [0.008, 0], [0.008, 0.007], [0.0055, 0.009], [0, 0.009]], { n: 8 }), C.brass, `dial${i}`, { pos: [-PK.hx - 0.037, PK.y + 0.1, PK.z + z], rot: [0, 0, Math.PI / 2] });
+    k.add(lathe([[0, 0], [0.009, 0], [0.009, 0.006], [0, 0.006]], { n: 8 }), C.steel, 'antenna-base', { pos: [-PK.hx - 0.036, PK.y + 0.126, PK.z], rot: [0, 0, 0] });
   },
   assault: (k) => {
     // light rig: a slim chest panel, big single pauldron, bandolier, handset on the strap, knife
@@ -174,7 +210,7 @@ const KIND = {
     grenade(k, 0.06, 0.04, torsoFront(0.06, 0.04) + 0.014);
     // handset on the left shoulder strap with a coiled cord
     k.add(loft([ringY(0, 0.012, 0.007, { n: 8 }), ringY(0.045, 0.011, 0.008, { n: 8 }), ringY(0.055, 0.015, 0.011, { n: 8 })], { crease: 40 }), C.dark, 'handset', { pos: [0.06, 0.15, torsoFront(0.06, 0.15) + 0.012], rot: [-0.15, 0, 0.0] });
-    k.add(tubePath(coil([0.06, 0.2, 0.045], [0.07, 0.22, -0.02], 0.007, 7), 0.0018, { n: 4, seg: 60 }), C.dark, 'handset-cord');
+    k.swing('whip', [0.06, 0.2, 0.045], () => k.add(tubePath(coil([0.06, 0.2, 0.045], [0.07, 0.22, -0.02], 0.007, 7), 0.0018, { n: 4, seg: 60 }), C.dark, 'handset-cord'));
     // combat knife on the chest strap
     k.add(ribbon([[-0.09, 0.0, torsoFront(-0.09, 0.0) + 0.012], [-0.09, 0.06, torsoFront(-0.09, 0.06) + 0.012]], 0.02, 0.012, [0, 0, 1], { seg: 4 }), C.leather, 'knife-sheath');
   },
@@ -195,7 +231,7 @@ const KIND = {
     // ammo box on the back with a handle and latches
     k.plate(PBack, { v0: PK.y - 0.08, v1: PK.y + 0.07, range: hw(0, 0.18), rows: 6, cols: 6, off: 0.0, thick: 0.05, bevel: 0.014, bulge: 0.0, flip: true, crease: 40 }, C.olive, 'ammo-box');
     k.plate(PBack, { v0: PK.y + 0.02, v1: PK.y + 0.07, range: hw(0, 0.18), rows: 2, cols: 6, off: 0.045, thick: 0.014, bevel: 0.006, flip: true }, C.plate, 'ammo-lid');
-    k.add(tubePath([[-0.035, PK.y + 0.086, PK.back - 0.04], [-0.03, PK.y + 0.1, PK.back - 0.044], [0.03, PK.y + 0.1, PK.back - 0.044], [0.035, PK.y + 0.086, PK.back - 0.04]], 0.0048, { n: 5, seg: 10 }), C.steel, 'ammo-handle');
+    k.add(tubePath([[-0.035, PK.y + 0.064, PK.back - 0.048], [-0.03, PK.y + 0.082, PK.back - 0.052], [0.03, PK.y + 0.082, PK.back - 0.052], [0.035, PK.y + 0.064, PK.back - 0.048]], 0.0048, { n: 5, seg: 10 }), C.steel, 'ammo-handle');
     for (const sx of [-1, 1]) k.plate(PBack, { v0: PK.y - 0.01, v1: PK.y + 0.016, range: hw(sx * 0.07, 0.024), rows: 2, cols: 3, off: 0.044, thick: 0.01, bevel: 0.004, flip: true }, C.steel, `latch${sx}`);
     k.pouch(0.0, -0.06, 0.06, 0.036, 0.018, C.pouch, 'feed-pouch', { surf: F, button: false });
   },
@@ -214,9 +250,9 @@ const KIND = {
     // finned shells on a chest strap
     for (let i = 0; i < 4; i++) {
       const x = -0.075 + i * 0.05, v = 0.055;
-      const z = torsoFront(x, v) + 0.016 + 0.02;
-      k.add(lathe([[0, 0], [0.011, 0], [0.0145, 0.014], [0.016, 0.034], [0.0125, 0.058], [0.004, 0.072], [0, 0.074]], { n: 8, crease: 45 }), C.steel, `shell${i}`, { pos: [x, v - 0.04, z] });
-      for (let f = 0; f < 3; f++) { const a = f * Math.PI * 2 / 3 + 1.0; k.add(plate([[0, 0], [0.012, 0], [0.0085, 0.02], [0.0, 0.02]], 0.0025, { bevel: 0.0005 }), C.steel, `shell${i}fin${f}`, { pos: [x + Math.cos(a) * 0.006, v - 0.043, z + Math.sin(a) * 0.006], rot: [0, a, 0] }); }
+      const z = torsoFront(x, 0.01) + 0.03;
+      k.add(lathe([[0, 0], [0.011, 0], [0.0145, 0.014], [0.016, 0.034], [0.0125, 0.058], [0.004, 0.072], [0, 0.074]], { n: 8, crease: 45 }), C.steel, `shell${i}`, { pos: [x, v - 0.052, z - 0.004] });
+      for (let f = 0; f < 3; f++) { const a = f * Math.PI * 2 / 3 + 1.0; k.add(plate([[0, 0], [0.012, 0], [0.0085, 0.02], [0.0, 0.02]], 0.0025, { bevel: 0.0005 }), C.steel, `shell${i}fin${f}`, { pos: [x + Math.cos(a) * 0.006, v - 0.055, z - 0.004 + Math.sin(a) * 0.006], rot: [0, a, 0] }); }
     }
     k.add(ribbon([[-0.105, 0.015, torsoFront(-0.105, 0.015) + 0.014], [0, 0.0, torsoFront(0, 0) + 0.016], [0.105, 0.015, torsoFront(0.105, 0.015) + 0.014]], 0.026, 0.008, [[-1, 0, 1], [0, 0, 1], [1, 0, 1]], { seg: 10 }), C.strap, 'shell-strap');
     // gas mask canister bag on the left thigh side
@@ -234,9 +270,11 @@ const KIND = {
       k.add(lathe([[0, 0], [0.012, 0], [0.012, 0.012], [0.0, 0.012]], { n: 8 }), C.steel, `cap-terminal${sx}`, { pos: [x, PK.y + 0.1, PK.back - 0.032] });
     }
     k.plate(PBack, { v0: PK.y - 0.11, v1: PK.y + 0.11, range: hw(0, 0.04), rows: 6, cols: 2, thick: 0.01, bevel: 0.004, flip: true, off: 0.002 }, C.plate, 'cap-spine');
-    k.add(rod([0.07, PK.top - 0.01, PK.z], [0.07, PK.top + 0.2, PK.z], 0.0085, 0.0035, { n: 6 }), C.steel, 'antenna');
     k.add(lathe([[0, 0], [0.014, 0], [0.014, 0.014], [0.009, 0.019], [0, 0.019]], { n: 8 }), C.plate, 'antenna-clamp', { pos: [0.07, PK.top - 0.012, PK.z] });
-    k.mark(lathe([[0, -0.007], [0.0075, 0], [0, 0.007]], { n: 6 }), [0.4, 1, 0.9], { pos: [0.07, PK.top + 0.206, PK.z] });
+    k.swing('whip', [0.07, PK.top + 0.004, PK.z], () => {
+      k.add(rod([0.07, PK.top - 0.01, PK.z], [0.07, PK.top + 0.2, PK.z], 0.0085, 0.0035, { n: 6 }), C.steel, 'antenna');
+      k.mark(lathe([[0, -0.007], [0.0075, 0], [0, 0.007]], { n: 6 }), [0.4, 1, 0.9], { pos: [0.07, PK.top + 0.206, PK.z] });
+    });
     // gauge on the chest and cables over each shoulder from the pack
     k.add(lathe([[0, 0], [0.034, 0], [0.037, 0.004], [0.037, 0.016], [0.03, 0.02], [0.0, 0.02]], { n: 14, crease: 40 }), C.plate, 'gauge', { pos: [0, 0.08, torsoFront(0, 0.08) - 0.003], rot: [Math.PI / 2, 0, 0] });
     k.mark(lathe([[0, 0.0], [0.024, 0.0], [0.024, 0.002], [0, 0.002]], { n: 14 }), [0.4, 1, 0.9], { pos: [0, 0.08, torsoFront(0, 0.08) + 0.0165], rot: [Math.PI / 2, 0, 0] });

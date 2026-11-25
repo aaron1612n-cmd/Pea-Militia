@@ -4,6 +4,7 @@ import * as THREE from 'three';
 import { Crowd } from '../src/crowd.js';
 import { pose, makePose, U } from '../src/rig.js';
 import { CLASSES } from '../src/classes.js';
+import { Sway } from '../src/secondary.js';
 
 const W = 900, H = 900;
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -35,7 +36,14 @@ window.shot = ({ kind = 'rifleman', team = 0, view = 'front', mode = 'idle', zoo
   if (mode === 'walk') Object.assign(s, { walk: 1, speed: 1.4, cycle: phase });
   if (mode === 'kneel') Object.assign(s, { kneel: 1 });
   if (mode === 'low') Object.assign(s, { ready: 0 });
+  if (mode === 'prone') Object.assign(s, { prone: 1 });
+  if (mode === 'dead') Object.assign(s, { dead: 1 });
+  if (mode === 'sprint') Object.assign(s, { walk: 1, speed: 6, cycle: phase, free: 1 });
+  if (mode === 'reload') Object.assign(s, { reload: 0.5 });
+  if (mode === 'fire') Object.assign(s, { recoil: 0.6 });
   const p = pose(s, makePose());
+  // loose kit: run a few seconds of the soldier's motion through the springs so the shot catches it mid-swing
+  if (s.walk > 0) { const sw = new Sway(); for (let i = 0; i < 90; i++) sw.update(1 / 60, 0, s.speed, 0, (phase + i * s.speed * 0.4 / 60 / (0.45 + 0.32 * s.speed)) % 1, 1, 0, p.sway); }
   const world = new THREE.Matrix4();
   crowd.begin();
   crowd.add(world, p, team, { weapon: WEAPON[kind], seed: 2, kind });

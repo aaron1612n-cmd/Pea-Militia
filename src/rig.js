@@ -12,7 +12,9 @@ export const U = {
   LIFT: 0.47, // torso bottom (the pelvis) above the ground when standing
   FOOT: [0.08, 0.04, 0.2], FOOT_X: 0.09, // boot: width, sole thickness, length
   LEG: [0.225, 0.215], HIP_X: 0.085, // thigh and shin, hip to ankle (see solveLegs)
-  ARM: [0.22, 0.21], SH_X: 0.168, SH_Y: 0.15, // upper arm and forearm; shoulder joint from the torso centre
+  ARM: [0.22, 0.17], SH_X: 0.168, SH_Y: 0.15, // upper arm and forearm (elbow to wrist); shoulder joint from the torso centre
+  WRIST: [0, -0.012, -0.058], // the wrist, in the hand's own frame (the hand mesh carries the glove cuff around it)
+  BALL: 0.07, // ball of the foot, ahead of the boot origin: the toe box hinges here
   HAND: [0.055, 0.05, 0.06],
   PACK: [0.24, 0.27, 0.1], PACK_Y: 0.7,
   EYE: 0.975,
@@ -76,6 +78,18 @@ function compose(out, x, y, z, rx = 0, ry = 0, rz = 0) {
   return out.compose(P.set(x, y, z), Q, S1);
 }
 
+// a boot at (x, y, z) pitched by rx: toe up turns about the origin (the caller lifts it off the heel); toe
+// down turns about the ball of the foot, so the toes stay planted while the heel rises
+const FV = new THREE.Vector3();
+function footMat(out, x, y, z, rx) {
+  if (rx > 0) {
+    E.set(rx, 0, 0, 'YXZ'); Q.setFromEuler(E);
+    FV.set(0, 0, U.BALL).sub(T.set(0, 0, U.BALL).applyQuaternion(Q));
+    return out.compose(P.set(x, y + FV.y, z + FV.z), Q, S1);
+  }
+  return compose(out, x, y, z, rx);
+}
+
 // head and pack ride on the body
 export function attachToBody(out, headYaw = 0, headPitch = 0) {
   M.copy(out.body);
@@ -89,6 +103,11 @@ export function attachToBody(out, headYaw = 0, headPitch = 0) {
 export function makePose() {
   return {
     body: new THREE.Matrix4(), head: new THREE.Matrix4(), pack: new THREE.Matrix4(),
+    pelvis: new THREE.Matrix4(), neck: new THREE.Matrix4(), toes: [new THREE.Matrix4(), new THREE.Matrix4()], delts: [new THREE.Matrix4(), new THREE.Matrix4()],
+    spine: [0, 0, 0], // pelvis against the chest: yaw, pitch, roll (rad)
+    toeRel: [0, 0], // toe box against the rest of the boot (rad, positive tips the toe down)
+    curl: [1, 1], trig: 0, // fingers: 0 open .. 1 closed on the gun; the trigger finger of the right hand straight (1) or on the trigger (0)
+    sway: new Float32Array(10), // secondary motion of worn kit: [x, z] swing of hip kit (right, left), antennas, straps, tags
     feet: [new THREE.Matrix4(), new THREE.Matrix4()], hands: [new THREE.Matrix4(), new THREE.Matrix4()],
     legs: [[new THREE.Matrix4(), new THREE.Matrix4()], [new THREE.Matrix4(), new THREE.Matrix4()]],
     arms: [[new THREE.Matrix4(), new THREE.Matrix4()], [new THREE.Matrix4(), new THREE.Matrix4()]],
@@ -112,7 +131,6 @@ function poseCore(s, out) {
   out.gait = g;
 
   // ---- feet: planted while they carry the body, lifted and swung through between strikes
-  const sx = [0, 0], sy = [0, 0], sz = [0, 0], srx = [0, 0];
   if (dead < 0) {
     for (let i = 0; i < 2; i++) {
       const side = i === 0 ? -1 : 1;
@@ -122,8 +140,8 @@ function poseCore(s, out) {
       z += mz * FO.along * w;
       y += FO.lift * w * (1 - 0.45 * kneel);
       rx = -FO.pitch * w * Math.max(0, mz);
-      // the foot rolls about its heel at touchdown and its toe at push-off, never into the ground
-      { const pt = -rx; y += pt > 0 ? 0.085 * Math.sin(pt) : 0.135 * Math.sin(-pt); }
+      // the foot rolls about its heel at touchdown; at push-off it pivots about the ball of the foot (see footMat)
+      if (rx < 0) y += 0.085 * Math.sin(-rx);
       // in the air the legs tuck on the way up and reach for the ground on the way down
       if (air > 0) {
         const rise = s.rise || 0;
@@ -133,12 +151,15 @@ function poseCore(s, out) {
       // kneel: one foot forward, the other tucked back up on its toe
       if (kneelStill > 0) {
         z = lerp(z, i ? 0.25 : -0.26, kneelStill);
-        y = lerp(y, i ? 0 : 0.108, kneelStill);
-        rx = lerp(rx, i ? 0 : 0.9, kneelStill);
+        y = lerp(y, 0, kneelStill);
+        rx = lerp(rx, i ? 0 : 0.95, kneelStill);
       }
-      sx[i] = x; sy[i] = y; sz[i] = z; srx[i] = rx;
+      // the heel comes up about the ball of the foot while the toe box stays flat on the ground (it hinges)
+      const flat = Math.min(1, Math.max(0, 1 - y / 0.05));
+      out.toeRel[i] = rx > 0 ? -rx * 0.97 * flat + 0.2 * (1 - flat) * Math.min(rx, 0.6) / 0.6 : 0;
+      footMat(out.feet[i], x, y, z, rx);
     }
-  }
+  } else out.toeRel[0] = out.toeRel[1] = 0;
 
   // ---- body: breathes at rest, bobs and dips with the stride, leans into the run, sinks on landing
   const breathe = Math.sin(t * 1.7) * 0.006 * (1 - walk);
@@ -153,15 +174,22 @@ function poseCore(s, out) {
   const rollLean = -lean * (w > 0.05 ? mx : 0) * 0.7 + sway;
   // the shoulders turn against the hips as the arms swing
   const yaw = -Math.sin(cyc * Math.PI * 2) * g.twist * w * ground * Math.max(0, mz);
+  // the pelvis turns, tips and rolls against the chest: the lower spine takes up part of every lean and twist
+  const alive = dead < 0;
+  out.spine[0] = alive ? -1.3 * yaw : 0;
+  out.spine[1] = alive ? -0.4 * pitchLean : 0;
+  out.spine[2] = alive ? -0.8 * rollLean : 0;
+  out.curl[0] = out.curl[1] = 1; out.trig = 0;
   let by = U.BODY_Y + bobY + breathe - drop;
   // never ask a leg to reach further than it can: lower the hips until both feet are in reach
   if (dead < 0) {
     let hip = by - U.H / 2 + HIP_UP;
     for (let i = 0; i < 2; i++) {
       const hx = (i === 0 ? -1 : 1) * U.HIP_X;
-      const dx = sx[i] - hx, dz = sz[i];
+      T.set(0, ANKLE, -0.004).applyMatrix4(out.feet[i]); // where the ankle actually is, with the foot rolled
+      const dx = T.x - hx, dz = T.z;
       const reach = (U.LEG[0] + U.LEG[1]) * 0.985;
-      const lim = sy[i] + ANKLE + Math.sqrt(Math.max(0, reach * reach - dx * dx - dz * dz));
+      const lim = T.y + Math.sqrt(Math.max(0, reach * reach - dx * dx - dz * dz));
       if (lim < hip) hip = lim;
     }
     by = hip + U.H / 2 - HIP_UP;
@@ -195,7 +223,7 @@ function poseCore(s, out) {
       // lying on its back: the legs stretch out ahead of the hips, toes up
       const k = smooth(0, 1, dead);
       compose(out.feet[i], side * U.FOOT_X * lerp(1, 1.25, k), lerp(0, 0.055, k), lerp(0, 0.36, k), -k * 1.25, 0, 0);
-    } else compose(out.feet[i], sx[i], sy[i], sz[i], srx[i], 0, 0);
+    }
   }
 
   // ---- weapon and hands
@@ -207,6 +235,7 @@ function poseCore(s, out) {
   if (dead >= 0) {
     const k = smooth(0, 1, dead);
     for (let i = 0; i < 2; i++) compose(out.hands[i], (i ? -1 : 1) * lerp(0.2, 0.24, k), lerp(0.62, 0.035, k), lerp(0.1, 0.0, k), 0, 0, 0);
+    out.curl[0] = out.curl[1] = 1 - 0.8 * k; // the grip loosens
     out.weapon.copy(out.hands[1]);
     return out;
   }
@@ -223,6 +252,7 @@ function poseCore(s, out) {
     }
     compose(out.hands[1], rx, ry - bodyDrop, rz, -0.3, 0, 0);
     compose(out.hands[0], lx, ly - bodyDrop, lz, 0, 0, 0);
+    out.curl[0] = 0.45;
     out.weapon.multiplyMatrices(out.hands[1], compose(M, 0, 0.0, 0.03, -Math.PI / 2 + 0.4, 0, 0));
     out.muzzle.setFromMatrixPosition(out.hands[1]);
     return out;
@@ -256,6 +286,8 @@ function poseCore(s, out) {
   out.hands[1].multiplyMatrices(out.weapon, compose(M, 0, -0.032, -0.006));
   const fz = lerp(h.fore, h.anim.hand[1], rk), fy = lerp(h.foreY, h.anim.hand[0], rk);
   out.hands[0].multiplyMatrices(out.weapon, compose(M, 0, fy, fz));
+  // the trigger finger lies along the frame until the gun fires; the support hand closes on the fore-end or the magazine
+  out.trig = ready > 0.5 && recoil < 0.05 && rk < 0.05 ? 1 : 0;
   return out;
 }
 
@@ -302,6 +334,7 @@ function freeArm(s, out) {
   M2.decompose(FH, FQ2, FS);
   FP.lerp(FH, k); FQ.slerp(FQ2, k);
   h.compose(FP, FQ, S1);
+  out.curl[0] = lerp(1, 0.5, k);
 }
 
 // Crawling on the belly: the feet take turns pushing, and a downed soldier hauls forward on one hand.
@@ -359,26 +392,35 @@ function postures(s, out) {
   return out;
 }
 
-// ---- legs: two-segment IK from the hips to the feet -----------
+// ---- legs and arms: two-segment IK from the root joint to the end joint -----------
 // Segment matrices come out in the same frame as the pose (unit-local, or world for ragdolls):
-// origin at the segment's middle, +z along it, length scaled to fit. Reach is stretched, never
-// broken, so a limb always joins its hand or foot to the body.
+// origin at the segment's middle, +z along it, +y the front of a leg (the knee side) or the top of
+// an arm, length scaled to fit. The roll about the bone is set, not left to chance: a bend plane
+// from the pole, and a twist toward the foot or hand at the far end of the limb. Reach is
+// stretched, never broken, so a limb always joins its hand or foot to the body.
 const _s = new THREE.Vector3(), _t = new THREE.Vector3(), _k = new THREE.Vector3(), _d = new THREE.Vector3();
 const _pole = new THREE.Vector3(), _bq = new THREE.Quaternion(), _bs = new THREE.Vector3(), _bp = new THREE.Vector3();
-const _a = new THREE.Vector3(), _up = new THREE.Vector3(), _m = new THREE.Matrix4(), _q = new THREE.Quaternion();
-const _z = new THREE.Vector3(0, 0, 1);
-function segment(out, a, b, over) {
+const _a = new THREE.Vector3(), _up = new THREE.Vector3();
+const _x = new THREE.Vector3(), _y = new THREE.Vector3(), _zz = new THREE.Vector3(), _mid = new THREE.Vector3(), _y1 = new THREE.Vector3(), _tw = new THREE.Vector3();
+export const SEG_LEN = 0.2; // nominal length the limb geometry is built at
+function segment(out, a, b, over, yHint) {
   _d.subVectors(b, a);
   const len = _d.length();
   if (len < 1e-5) return out.identity();
-  _d.multiplyScalar(1 / len);
-  _q.setFromUnitVectors(_z, _d);
-  return out.compose(_k.addVectors(a, b).multiplyScalar(0.5), _q, _bs.set(1, 1, (len + over) / SEG_LEN));
+  _zz.copy(_d).multiplyScalar(1 / len);
+  _y.copy(yHint).addScaledVector(_zz, -yHint.dot(_zz));
+  if (_y.lengthSq() < 1e-8) { _y.set(0, 1, 0).addScaledVector(_zz, -_zz.y); if (_y.lengthSq() < 1e-8) _y.set(0, 0, 1); }
+  _y.normalize();
+  _x.crossVectors(_y, _zz);
+  const sz = (len + over) / SEG_LEN;
+  _mid.addVectors(a, b).multiplyScalar(0.5);
+  return out.set(_x.x, _y.x, _zz.x * sz, _mid.x, _x.y, _y.y, _zz.y * sz, _mid.y, _x.z, _y.z, _zz.z * sz, _mid.z, 0, 0, 0, 1);
 }
-export const SEG_LEN = 0.2; // nominal length the limb geometry is built at
-// joint(out2, root, target, l1, l2, pole): returns the stretch factor used
-const _e = new THREE.Vector3();
-function joint(out, root, target, l1, l2, pole, over) {
+// joint(out, root, target, l1, l2, pole, over, sgn, twist, k): returns the stretch factor used.
+// sgn: +1 puts +y on the bend side (legs, the knee), -1 on the outside of the bend (arms, the elbow
+// point). twist: unit vector the far segment's +y turns toward, by k (the shin toward the toes,
+// the forearm toward the back of the hand).
+function joint(out, root, target, l1, l2, pole, over, sgn, twist, k) {
   _d.subVectors(target, root);
   let d = _d.length();
   const reach = l1 + l2;
@@ -394,36 +436,75 @@ function joint(out, root, target, l1, l2, pole, over) {
   _up.normalize();
   _a.copy(root).addScaledVector(_d, x).addScaledVector(_up, h);
   const full = target.distanceTo(root) > d + 1e-4;
-  _e.copy(root).addScaledVector(_d, d); // reachable end (target when within reach)
-  segment(out[0], root, _a, over);
-  segment(out[1], _a, full ? _e : target, over);
+  _k.copy(root).addScaledVector(_d, d); // reachable end (target when within reach)
+  _y1.copy(_up).multiplyScalar(sgn);
+  segment(out[0], root, _a, over, _y1);
+  if (twist && k > 0) { _tw.copy(_y1).multiplyScalar(1 - k).addScaledVector(twist, k); if (_tw.lengthSq() > 1e-6) _y1.copy(_tw); }
+  segment(out[1], _a, full ? _k : target, over, _y1);
   return stretch;
 }
 export const SEG_OVER = 0.0; // limb segments overlap their joints by this much
 const _ank = new THREE.Vector3(0, 0.092, -0.004);
-export function solveLegs(p) {
-  M.copy(p.body);
-  M.decompose(_bp, _bq, _bs);
-  p.legStretch = 1;
+const _tz = new THREE.Vector3();
+
+// pelvis, neck and toe boxes: the parts that hang off the others
+const _tq = new THREE.Quaternion(), _tq2 = new THREE.Quaternion(), _tp = new THREE.Vector3(), _ts = new THREE.Vector3();
+export function solveTorso(p) {
+  // the pelvis sits at the hip line and takes its own yaw, pitch and roll against the chest
+  compose(M2, 0, -U.H / 2 + HIP_UP, 0, p.spine[1], p.spine[0], p.spine[2]);
+  p.pelvis.multiplyMatrices(p.body, M2);
+  // the neck is the head's yaw and tip, halfway: it carries the head on the shoulders
+  p.body.decompose(_tp, _tq, _ts);
+  p.head.decompose(_tp, _tq2, _ts);
+  _tq.slerp(_tq2, 0.55);
+  p.neck.compose(_tp, _tq, S1);
+  // each boot's toe box hinges at the ball of the foot
   for (let i = 0; i < 2; i++) {
-    const side = i === 0 ? -1 : 1; // feet[0] is the right foot (-x)
-    _s.set(side * U.HIP_X, -U.H / 2 + 0.035, 0).applyMatrix4(p.body);
-    _t.copy(_ank).applyMatrix4(p.feet[i]);
-    _pole.set(side * 0.12, 0, 1).applyQuaternion(_bq);
-    p.legStretch = Math.max(p.legStretch, joint(p.legs[i], _s, _t, U.LEG[0], U.LEG[1], _pole, 0.02));
+    const a = p.toeRel[i];
+    if (Math.abs(a) < 1e-3) { p.toes[i].copy(p.feet[i]); continue; }
+    E.set(a, 0, 0, 'YXZ'); Q.setFromEuler(E);
+    FV.set(0, 0, U.BALL).sub(T.set(0, 0, U.BALL).applyQuaternion(Q));
+    p.toes[i].multiplyMatrices(p.feet[i], M.compose(P.set(0, FV.y, FV.z), Q, S1));
   }
   return p;
 }
-// arms: shoulder joint to the hand, elbows down and out. hands[0] is the left (support) hand at +x.
+export function solveLegs(p) {
+  solveTorso(p);
+  p.pelvis.decompose(_bp, _bq, _bs);
+  p.legStretch = 1;
+  const e = p.feet;
+  for (let i = 0; i < 2; i++) {
+    const side = i === 0 ? -1 : 1; // feet[0] is the right foot (-x)
+    _s.set(side * U.HIP_X, 0, 0).applyMatrix4(p.pelvis);
+    _t.copy(_ank).applyMatrix4(e[i]);
+    _pole.set(side * 0.12, 0, 1).applyQuaternion(_bq);
+    // the shin turns toward the way the foot points
+    _tz.set(e[i].elements[8], 0, e[i].elements[10]);
+    p.legStretch = Math.max(p.legStretch, joint(p.legs[i], _s, _t, U.LEG[0], U.LEG[1], _pole, 0.02, 1, _tz.lengthSq() > 1e-4 ? _tz.normalize() : null, 0.45));
+  }
+  return p;
+}
+// arms: shoulder joint to the wrist, elbows down and out. hands[0] is the left (support) hand at +x.
+// The shoulder girdle rides with the arm: reaching forward rolls the shoulder out, raising the hand shrugs it up.
+const _h = new THREE.Vector3(), _hy = new THREE.Vector3(), _bi = new THREE.Matrix4();
 export function solveArms(p) {
-  M.copy(p.body);
-  M.decompose(_bp, _bq, _bs);
+  p.body.decompose(_bp, _bq, _bs);
+  _bi.copy(p.body).invert();
   for (let i = 0; i < 2; i++) {
     const side = i === 0 ? 1 : -1;
-    _s.set(side * U.SH_X, U.SH_Y, -0.005).applyMatrix4(p.body);
-    _t.setFromMatrixPosition(p.hands[i]);
+    const hm = p.hands[i];
+    _h.setFromMatrixPosition(hm).applyMatrix4(_bi);
+    const reachF = THREE.MathUtils.clamp((_h.z - 0.12) / 0.3, 0, 1), raise = THREE.MathUtils.clamp((_h.y - (U.SH_Y - 0.3)) / 0.3, 0, 1);
+    _s.set(side * (U.SH_X - 0.006 * reachF), U.SH_Y + 0.016 * raise, -0.005 + 0.022 * reachF).applyMatrix4(p.body);
+    _t.set(...U.WRIST).applyMatrix4(hm);
     _pole.set(side * 0.7, -1, -0.5).applyQuaternion(_bq);
-    joint(p.arms[i], _s, _t, U.ARM[0], U.ARM[1], _pole, 0.02);
+    _hy.set(hm.elements[4], hm.elements[5], hm.elements[6]).normalize();
+    joint(p.arms[i], _s, _t, U.ARM[0], U.ARM[1], _pole, 0.02, -1, _hy, 0.6);
+    // the deltoid ball that closes the shoulder: the upper arm's frame, unstretched, at the joint
+    const d = p.delts[i], a0 = p.arms[i][0].elements, zl = Math.hypot(a0[8], a0[9], a0[10]) || 1;
+    d.copy(p.arms[i][0]);
+    d.elements[8] /= zl; d.elements[9] /= zl; d.elements[10] /= zl;
+    d.elements[12] = _s.x; d.elements[13] = _s.y; d.elements[14] = _s.z;
   }
   return p;
 }

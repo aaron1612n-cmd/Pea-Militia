@@ -3,7 +3,7 @@ import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeom
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import { U, SEG_LEN } from './rig.js';
 import { mergeByPosition } from './geo.js';
-import { loftY, loftZ, lathe, plate, rod, patch, done, sstep } from './shapes.js';
+import { loftY, loftZ, lathe, plate, rod, patch, done, sstep, tubePath, ribbon } from './shapes.js';
 
 // The soldier's body, built once and drawn instanced. Every part is a shaped, welded mesh: a
 // torso that narrows at the waist and slopes into the neck, a head with a face under a steel
@@ -220,6 +220,19 @@ function wrapLimb(st, z0, z1, range, o = {}) {
   return done(g, o.shade ?? 0.5);
 }
 const band = (z, w, k) => 1 - k * (1 - sstep(w, 0, Math.abs(z)));
+// where a limb's section is at z: [half width x, half depth y, centre shift y]
+function limbAt(st, z) { let i = 1; while (i < st.length - 1 && z > st[i][0]) i++; const a = st[i - 1], b = st[i], k = Math.min(1, Math.max(0, (z - a[0]) / (b[0] - a[0]))); return [a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k, (a[3] || 0) + ((b[3] || 0) - (a[3] || 0)) * k]; }
+// raised piping down the side of a limb (a seam), sunk into the cloth so it can't float
+function seam(st, z0, z1, side, shade = 0.62, w = 0.0065) {
+  const pts = [], ups = [];
+  for (let i = 0; i <= 6; i++) { const z = z0 + (z1 - z0) * i / 6, [rx, , cy] = limbAt(st, z); pts.push([side * (rx - 0.0004), cy, z]); ups.push([side, 0, 0]); }
+  return done(ribbon(pts, w, 0.0045, ups, { seg: 10, edge: 0.7 }), shade);
+}
+// a stitched hem: a thin raised ring round the limb at z
+function hem(st, z, shade = 0.5) {
+  const [rx, ry, cy] = limbAt(st, z);
+  return done(loftZ([{ t: z - 0.0035, rx: rx + 0.0003, ry: ry + 0.0003, cy }, { t: z - 0.002, rx: rx + 0.0018, ry: ry + 0.0018, cy }, { t: z + 0.002, rx: rx + 0.0018, ry: ry + 0.0018, cy }, { t: z + 0.0035, rx: rx + 0.0003, ry: ry + 0.0003, cy }], { n: 12 }, { crease: 30 }), shade);
+}
 const TH = [[-0.1, 0.058, 0.061, 0.0], [-0.07, 0.061, 0.067, 0.004], [-0.02, 0.058, 0.064, 0.004], [0.04, 0.05, 0.054, 0.002], [0.08, 0.043, 0.046, 0.0], [0.1, 0.042, 0.044, 0.0]];
 const SH = [[-0.1, 0.043, 0.045, 0.0], [-0.07, 0.044, 0.047, 0.0], [-0.03, 0.042, 0.049, -0.004], [0.03, 0.036, 0.04, -0.002], [0.075, 0.033, 0.034, 0.0], [0.1, 0.031, 0.032, 0.0]];
 const UA = [[-0.1, 0.04, 0.042, 0.0], [-0.065, 0.043, 0.045, 0.002], [-0.02, 0.038, 0.04, 0.002], [0.04, 0.032, 0.033, 0.0], [0.09, 0.03, 0.031, 0.0], [0.1, 0.03, 0.031, 0.0]];
@@ -232,21 +245,29 @@ function limb(kind) {
     l.push(limbSolid(TH, { shade: (x, y, z) => (z > 0.066 && z < 0.082 ? 0.6 : 1) }));
     l.push(wrapLimb(TH, -0.062, 0.05, taper(-0.062, 0.05, 0.85, 0.55), { thick: 0.009, shade: 0.55, rows: 6 }));
     l.push(wrapLimb(TH, 0.066, 0.082, () => [-2.6, 2.6], { thick: 0.004, bevel: 0.002, shade: 0.5, cols: 12, rows: 2, bulge: 0 })); // knee strap
+    for (const sd of [-1, 1]) l.push(seam(TH, -0.075, 0.062, sd));
+    l.push(hem(TH, -0.052, 0.55)); // the ring of stitching where the trouser leg is gathered into the hip
   } else if (kind === 'shin') {
     // knee to ankle: kneecap guard over the joint, calf behind, a greave down the front, trouser bottom at the boot
     l.push(limbSolid(SH, { shade: (x, y, z) => 0.82 + 0.18 * sstep(-0.1, -0.06, z) }));
     l.push(cupY([[0, 0.0], [0.033, 0.0], [0.038, 0.006], [0.034, 0.014], [0.021, 0.021], [0, 0.023]], { n: 10, sx: 1, sz: 1.15, shade: 0.4, pos: [0, 0.03, -0.098] }));
     l.push(wrapLimb(SH, -0.04, 0.078, taper(-0.04, 0.078, 1.0, 0.62), { thick: 0.008, shade: 0.52, rows: 6 }));
     l.push(wrapLimb(SH, 0.066, 0.092, () => [-2.6, 2.6], { thick: 0.0045, bevel: 0.002, shade: 0.34, cols: 12, rows: 2, bulge: 0 })); // ankle strap
+    for (const sd of [-1, 1]) l.push(seam(SH, -0.03, 0.062, sd));
+    l.push(hem(SH, 0.097, 0.4)); // trouser hem blousing over the boot
   } else if (kind === 'upperArm') {
     // shoulder to elbow: deltoid and biceps, a guard plate on top and a cuff just above the elbow
     l.push(limbSolid(UA, { n: 9, shade: (x, y, z) => (z > 0.05 && z < 0.068 ? 0.6 : 1) }));
     l.push(wrapLimb(UA, -0.058, 0.034, taper(-0.058, 0.034, 0.8, 0.5), { thick: 0.007, shade: 0.55, bevel: 0.004 }));
+    for (const sd of [-1, 1]) l.push(seam(UA, -0.05, 0.085, sd, 0.64, 0.005));
+    l.push(hem(UA, 0.07, 0.5)); // elbow-pad stitching
   } else {
     // elbow to wrist: forearm swell with a bracer on the top, a strap and a glove cuff; the elbow guard sits on the outer elbow
     l.push(limbSolid(FA, { n: 9, shade: (x, y, z) => (z > 0.07 ? 0.4 : 1) }));
     l.push(wrapLimb(FA, -0.03, 0.062, taper(-0.03, 0.062, 0.85, 0.6), { thick: 0.0065, shade: 0.5, bevel: 0.0035 }));
     l.push(cupY([[0, 0.0], [0.026, 0.0], [0.031, 0.006], [0.027, 0.013], [0.017, 0.018], [0, 0.02]], { n: 10, sx: 1, sz: 1.2, shade: 0.4, pos: [0, -0.029, -0.096], flipY: true }));
+    for (const sd of [-1, 1]) l.push(seam(FA, -0.05, 0.08, sd, 0.64, 0.0045));
+    l.push(hem(FA, 0.088, 0.45)); // sleeve cuff
   }
   return merge(l);
 }
@@ -255,26 +276,53 @@ for (const k of ['thigh', 'shin', 'upperArm', 'foreArm']) LIMB[k] = limb(k);
 
 // ---- boot: origin on the sole under the middle of the foot, toe toward +z, shaft up to the ankle.
 // A laced combat boot built from a lofted upper (heel, arch, vamp, toe), a tread sole with a heel
-// block, a padded shaft and cuff, a toe cap and laces.
+// block, a padded shaft and cuff, a toe cap and laces. It comes in two pieces that hinge at the
+// ball of the foot (U.BALL): the heel-and-shaft, and the toe box, which stays flat on the ground
+// while the heel rises at push-off.
 export const BOOT_TOP = 0.15;
-const BOOT = { leather: [0.17, 0.135, 0.1], cap: [0.2, 0.158, 0.115], cuff: [0.09, 0.075, 0.06], sole: [0.045, 0.042, 0.04], heel: [0.035, 0.033, 0.03], tongue: [0.24, 0.2, 0.15], lace: [0.5, 0.46, 0.38] };
-export function bootGeo() {
-  const l = [];
-  const upper = [[-0.086, 0.03, 0.026, 0.044], [-0.07, 0.036, 0.03, 0.047], [-0.03, 0.039, 0.03, 0.047], [0.02, 0.043, 0.027, 0.043], [0.07, 0.043, 0.023, 0.037], [0.108, 0.038, 0.02, 0.032], [0.128, 0.028, 0.017, 0.029], [0.139, 0.014, 0.012, 0.027], [0.145, 0.004, 0.004, 0.026]];
-  l.push(done(loftZ(upper.map(([t, rx, ry, cy]) => ({ t, rx, ry, cy, p: 3.2 })), { n: 12 }, { crease: 0 }), BOOT.leather));
+const BOOT = { leather: [0.17, 0.135, 0.1], cap: [0.2, 0.158, 0.115], cuff: [0.09, 0.075, 0.06], sole: [0.045, 0.042, 0.04], heel: [0.035, 0.033, 0.03], tongue: [0.24, 0.2, 0.15], lace: [0.5, 0.46, 0.38], stitch: [0.3, 0.26, 0.19] };
+// stations cut at z0..z1 (keeps the shape exactly: a station is added where the cut falls)
+function cutStations(tab, z0, z1) {
+  const at = (z) => { let i = 1; while (i < tab.length - 1 && z > tab[i][0]) i++; const a = tab[i - 1], b = tab[i], k = Math.min(1, Math.max(0, (z - a[0]) / (b[0] - a[0]))); return [z, ...a.slice(1).map((v, j) => v + (b[j + 1] - v) * k)]; };
+  return [at(z0), ...tab.filter(([z]) => z > z0 + 1e-5 && z < z1 - 1e-5), at(z1)];
+}
+const UPPER = [[-0.086, 0.03, 0.026, 0.044], [-0.07, 0.036, 0.03, 0.047], [-0.03, 0.039, 0.03, 0.047], [0.02, 0.043, 0.027, 0.043], [0.07, 0.043, 0.023, 0.037], [0.108, 0.038, 0.02, 0.032], [0.128, 0.028, 0.017, 0.029], [0.139, 0.014, 0.012, 0.027], [0.145, 0.004, 0.004, 0.026]];
+const SOLE = [[-0.092, 0.032, 0.012, 0.014], [-0.07, 0.04, 0.013, 0.014], [0.02, 0.048, 0.013, 0.014], [0.09, 0.047, 0.013, 0.014], [0.124, 0.036, 0.013, 0.015], [0.146, 0.018, 0.011, 0.016], [0.152, 0.006, 0.006, 0.016]];
+const stationsZ = (tab, p) => tab.map(([t, rx, ry, cy]) => ({ t, rx, ry, cy, p }));
+export function bootGeo(part = 'foot') {
+  const l = [], ZB = U.BALL, toe = part === 'toe';
+  const z0 = toe ? ZB : -1, z1 = toe ? 1 : ZB;
+  const cut = (tab) => cutStations(tab, Math.max(z0, tab[0][0]), Math.min(z1, tab[tab.length - 1][0]));
+  l.push(done(loftZ(stationsZ(cut(UPPER), 3.2), { n: 12 }, { crease: 0 }), BOOT.leather));
   // sole: a slightly wider slab that follows the same plan, with a cleat ridge
-  const sole = [[-0.092, 0.032, 0.012, 0.014], [-0.07, 0.04, 0.013, 0.014], [0.02, 0.048, 0.013, 0.014], [0.09, 0.047, 0.013, 0.014], [0.124, 0.036, 0.013, 0.015], [0.146, 0.018, 0.011, 0.016], [0.152, 0.006, 0.006, 0.016]];
-  l.push(done(loftZ(sole.map(([t, rx, ry, cy]) => ({ t, rx, ry, cy, p: 3.4 })), { n: 12 }, { crease: 30 }), BOOT.sole));
-  l.push(done(loftZ([{ t: -0.088, rx: 0.031, ry: 0.016, cy: 0.032, p: 3 }, { t: -0.066, rx: 0.037, ry: 0.016, cy: 0.032, p: 3 }, { t: -0.032, rx: 0.036, ry: 0.016, cy: 0.032, p: 3 }, { t: -0.024, rx: 0.03, ry: 0.012, cy: 0.032, p: 3 }], { n: 10 }, { crease: 30 }), BOOT.heel)); // heel block
-  // toe cap: a lighter domed patch over the toe
-  l.push(done(loftZ([{ t: 0.085, rx: 0.039, ry: 0.0205, cy: 0.0365, p: 3 }, { t: 0.108, rx: 0.0385, ry: 0.0215, cy: 0.0335, p: 3 }, { t: 0.13, rx: 0.029, ry: 0.0185, cy: 0.03, p: 3 }, { t: 0.142, rx: 0.012, ry: 0.013, cy: 0.028, p: 3 }, { t: 0.147, rx: 0.003, ry: 0.004, cy: 0.027, p: 3 }], { n: 10 }, { crease: 0 }), BOOT.cap));
-  // shaft: tapers from the ankle up to a padded cuff, a little long at the back
-  const shaft = [[0.045, 0.039, 0.043, -0.012], [0.08, 0.037, 0.04, -0.014], [0.118, 0.036, 0.039, -0.014], [0.14, 0.039, 0.042, -0.012], [0.15, 0.04, 0.043, -0.012], [0.153, 0.036, 0.039, -0.012]];
-  l.push(done(loftY(shaft.map(([t, rx, rz, cz]) => ({ t, rx, rz, cz, p: 2.2 })), { n: 12 }, { crease: 0 }), (x, y) => (y > 0.136 ? BOOT.cuff : BOOT.leather)));
-  // tongue and laces up the front, then straps round the ankle
-  l.push(done(plate([[-0.012, 0], [0.012, 0], [0.01, 0.07], [-0.01, 0.07]], 0.006, { bevel: 0.0015 }), BOOT.tongue, { pos: [0, 0.052, 0.02], rot: [-0.82, 0, 0] }));
-  for (let i = 0; i < 4; i++) l.push(done(rod([-0.017, 0.058 + i * 0.0155, 0.035 - i * 0.012], [0.017, 0.058 + i * 0.0155, 0.035 - i * 0.012], 0.0028, 0.0028, { n: 5 }), BOOT.lace, { pos: [0, 0.0, 0.0] }));
+  l.push(done(loftZ(stationsZ(cut(SOLE), 3.4), { n: 12 }, { crease: 30 }), BOOT.sole));
+  if (!toe) {
+    l.push(done(loftZ([{ t: -0.088, rx: 0.031, ry: 0.016, cy: 0.032, p: 3 }, { t: -0.066, rx: 0.037, ry: 0.016, cy: 0.032, p: 3 }, { t: -0.032, rx: 0.036, ry: 0.016, cy: 0.032, p: 3 }, { t: -0.024, rx: 0.03, ry: 0.012, cy: 0.032, p: 3 }], { n: 10 }, { crease: 30 }), BOOT.heel)); // heel block
+    // shaft: tapers from the ankle up to a padded cuff, a little long at the back
+    const shaft = [[0.045, 0.039, 0.043, -0.012], [0.08, 0.037, 0.04, -0.014], [0.118, 0.036, 0.039, -0.014], [0.14, 0.039, 0.042, -0.012], [0.15, 0.04, 0.043, -0.012], [0.153, 0.036, 0.039, -0.012]];
+    l.push(done(loftY(shaft.map(([t, rx, rz, cz]) => ({ t, rx, rz, cz, p: 2.2 })), { n: 12 }, { crease: 0 }), (x, y) => (y > 0.136 ? BOOT.cuff : BOOT.leather)));
+    // tongue and laces up the front, then straps round the ankle
+    l.push(done(plate([[-0.012, 0], [0.012, 0], [0.01, 0.07], [-0.01, 0.07]], 0.006, { bevel: 0.0015 }), BOOT.tongue, { pos: [0, 0.052, 0.02], rot: [-0.82, 0, 0] }));
+    for (let i = 0; i < 4; i++) l.push(done(rod([-0.017, 0.058 + i * 0.0155, 0.035 - i * 0.012], [0.017, 0.058 + i * 0.0155, 0.035 - i * 0.012], 0.0028, 0.0028, { n: 5 }), BOOT.lace, { pos: [0, 0.0, 0.0] }));
+    // pull loop on the heel
+    l.push(done(tubePath([[-0.007, 0.15, -0.05], [-0.007, 0.162, -0.052], [0.007, 0.162, -0.052], [0.007, 0.15, -0.05]], 0.0025, { n: 4, seg: 8 }), BOOT.stitch));
+    // welt stitching along the upper edge of the sole
+    for (const sx of [-1, 1]) l.push(done(tubePath(welt(-0.07, 0.065, sx), 0.0014, { n: 3, seg: 10 }), BOOT.stitch));
+  } else {
+    // toe cap: a lighter domed patch over the toe, a toe bumper on the sole, and the stitched seam behind it
+    l.push(done(loftZ([{ t: 0.085, rx: 0.039, ry: 0.0205, cy: 0.0365, p: 3 }, { t: 0.108, rx: 0.0385, ry: 0.0215, cy: 0.0335, p: 3 }, { t: 0.13, rx: 0.029, ry: 0.0185, cy: 0.03, p: 3 }, { t: 0.142, rx: 0.012, ry: 0.013, cy: 0.028, p: 3 }, { t: 0.147, rx: 0.003, ry: 0.004, cy: 0.027, p: 3 }], { n: 10 }, { crease: 0 }), BOOT.cap));
+    for (const sx of [-1, 1]) l.push(done(tubePath(welt(0.075, 0.138, sx), 0.0014, { n: 3, seg: 8 }), BOOT.stitch));
+    for (let i = 0; i < 3; i++) l.push(done(loftZ([{ t: 0.082 + i * 0.019, rx: 0.045, ry: 0.0035, cy: 0.0125, p: 3 }, { t: 0.087 + i * 0.019, rx: 0.0455, ry: 0.0045, cy: 0.0125, p: 3 }, { t: 0.091 + i * 0.019, rx: 0.045, ry: 0.0035, cy: 0.0125, p: 3 }], { n: 8 }, { crease: 30 }), BOOT.sole)); // tread blocks
+  }
   return merge(l);
+}
+const C_BRASS = [0.62, 0.5, 0.2];
+// a path round the foot just above the sole, on the right side and over the toe, between two z positions
+function welt(z0, z1, sx = 1, y = 0.026) {
+  const out = [], n = 14;
+  const at = (z) => { let i = 1; while (i < UPPER.length - 1 && z > UPPER[i][0]) i++; const a = UPPER[i - 1], b = UPPER[i], k = Math.min(1, Math.max(0, (z - a[0]) / (b[0] - a[0]))); return [a[1] + (b[1] - a[1]) * k, a[3] + (b[3] - a[3]) * k]; };
+  for (let i = 0; i <= n; i++) { const z = z0 + (z1 - z0) * i / n, [rx] = at(z); out.push([sx * rx * 0.995, y * 0.9, z]); }
+  return out;
 }
 function stripAttrs(g) {
   const n = g.index ? g.toNonIndexed() : g.clone();
@@ -293,11 +341,16 @@ export function packGeo() {
   ];
   return done(loftY(st, { n: 20, p: 5 }, { crease: 38 }), 1);
 }
-// ---- hand: a gloved fist with a palm, four fingers in two knuckled segments and a thumb. Origin
-// where the gun is held; the palm cradles under it and the fingers wrap up and over the near side.
-// side +1 is the left hand (+x, the support hand), -1 the right.
-const GLOVE = [0.085, 0.075, 0.062], GLOVE_DK = [0.05, 0.045, 0.04], CUFF = [0.15, 0.13, 0.1];
-function handBuild(side) {
+// ---- hand: a gloved hand with a palm, four fingers in three knuckled segments each, and a thumb.
+// Origin where the gun is held; the palm cradles under it and the fingers wrap up and over the near
+// side. side +1 is the left hand (+x, the support hand), -1 the right. It comes in grips: open (the
+// fingers hang), relaxed, closed on the gun, and (right hand) closed with the trigger finger straight
+// along the frame. The wrist ball and glove cuff sit behind the palm where the forearm ends (U.WRIST).
+const GLOVE = [0.085, 0.075, 0.062], GLOVE_DK = [0.05, 0.045, 0.04], CUFF = [0.15, 0.13, 0.1], KNUCKLE = [0.1, 0.09, 0.075], STITCH = [0.2, 0.18, 0.14];
+// finger heading (rad, in the xy plane, from straight up round toward the palm) for each segment
+const OPEN_H = [2.9, 2.75, 2.6, 2.5], GRIP_H = [0.0, 0.8, 1.5, 2.6], STRAIGHT_H = [0.0, 0.03, 0.06, 0.06];
+const SEG_LEN_F = [0.018, 0.016, 0.016, 0.018];
+function handBuild(side, curl, trigger) {
   const l = [];
   const X = (x) => x * side;
   l.push(bake(new RoundedBoxGeometry(0.052, 0.02, 0.058, 1, 0.008), GLOVE, [0, -0.024, 0.0])); // palm cradling the gun
@@ -305,19 +358,84 @@ function handBuild(side) {
   // four fingers: knuckle on the outside, over the top of the grip and back to the palm
   for (let i = 0; i < 4; i++) {
     const z = -0.0195 + i * 0.013, rr = 0.0068 - (i === 3 ? 0.0006 : 0);
-    const path = [[X(0.03), -0.012, z], [X(0.031), 0.006, z], [X(0.02), 0.019, z + 0.001], [X(0.004), 0.021, z + 0.001], [X(-0.012), 0.012, z]];
-    l.push(...tubeAlong(path, [rr, rr, rr * 0.95, rr * 0.9, rr * 0.82], 5, 5, GLOVE_DK));
+    const straight = trigger && i === 3;
+    let x = 0.03, y = -0.012;
+    const path = [[X(x), y, z]], rad = [rr * 1.05];
+    for (let j = 0; j < 4; j++) {
+      const a = straight ? STRAIGHT_H[j] : OPEN_H[j] + (GRIP_H[j] - OPEN_H[j]) * curl;
+      const len = SEG_LEN_F[j] * (straight ? 1.15 : 1);
+      x -= Math.sin(a) * len; y += Math.cos(a) * len;
+      path.push([X(x), y, z + (j === 0 ? 0 : 0.001)]); rad.push(rr * (1 - 0.06 * (j + 1)));
+    }
+    l.push(...tubeAlong(path, rad, 5, 4, GLOVE_DK));
+    for (let j = 0; j < 3; j++) l.push(bake(blob(rad[j] * 1.22, rad[j] * 1.22, rad[j] * 1.22, 5, 3), KNUCKLE, path[j])); // knuckles
   }
-  // thumb folds across from the palm to lie along the top of the gun
-  l.push(...tubeAlong([[X(-0.012), -0.02, 0.018], [X(-0.016), -0.004, 0.03], [X(-0.008), 0.014, 0.028], [X(0.002), 0.02, 0.014]], [0.0088, 0.008, 0.0075, 0.0068], 5, 5, GLOVE_DK));
-  // gauntlet cuff where the glove meets the sleeve
-  l.push(bake(new THREE.CylinderGeometry(0.0285, 0.03, 0.03, 12), CUFF, [0, -0.012, -0.045], [Math.PI / 2, 0, 0]));
-  const out = merge(l);
-  return out;
+  // thumb: from the palm across to lie along the top of the gun (grip), or out and forward (open)
+  const T0 = [[-0.012, -0.02, 0.018], [-0.016, -0.004, 0.03], [-0.008, 0.014, 0.028], [0.002, 0.02, 0.014]];
+  const T1 = [[-0.012, -0.02, 0.018], [-0.02, -0.014, 0.036], [-0.026, -0.006, 0.05], [-0.028, 0.0, 0.062]];
+  const tp = T0.map((p, k) => p.map((v, a) => T1[k][a] + (v - T1[k][a]) * curl));
+  l.push(...tubeAlong(tp.map((p) => [X(p[0]), p[1], p[2]]), [0.0088, 0.008, 0.0075, 0.0068], 5, 5, GLOVE_DK));
+  for (let k = 1; k < 3; k++) l.push(bake(blob(0.0088, 0.0088, 0.0088, 5, 3), KNUCKLE, [X(tp[k][0]), tp[k][1], tp[k][2]]));
+  // the wrist: a ball joint under the glove cuff, a strap and a stitched hem, so the forearm turns on the hand
+  const wz = U.WRIST[2], wy = U.WRIST[1];
+  l.push(bake(blob(0.0265, 0.0265, 0.0265, 8, 5), CUFF, [0, wy, wz + 0.002]));
+  l.push(bake(new THREE.CylinderGeometry(0.0285, 0.03, 0.034, 10), CUFF, [0, wy, wz + 0.016], [Math.PI / 2, 0, 0]));
+  l.push(bake(new THREE.CylinderGeometry(0.0305, 0.0305, 0.007, 10), GLOVE_DK, [0, wy, wz + 0.016], [Math.PI / 2, 0, 0])); // wrist strap
+  l.push(bake(new THREE.CylinderGeometry(0.0293, 0.0293, 0.0025, 10), STITCH, [0, wy, wz + 0.001], [Math.PI / 2, 0, 0])); // cuff hem
+  l.push(bake(new RoundedBoxGeometry(0.014, 0.0035, 0.01, 1, 0.0015), KNUCKLE, [X(0.0), wy + 0.0307, wz + 0.016])); // strap buckle
+  return merge(l);
 }
+export const GRIPS = ['open', 'relax', 'grip'];
 export function handGeos() {
-  return { left: handBuild(1), right: handBuild(-1) };
+  const make = (side) => ({ open: handBuild(side, 0, false), relax: handBuild(side, 0.5, false), grip: handBuild(side, 1, false), gripT: handBuild(side, 1, true) });
+  return { left: make(1), right: make(-1) };
 }
-export const fistGeo = () => handGeos().left;
+export const fistGeo = () => handGeos().left.grip;
+
+// ---- pelvis: origin at the hip line (the hip joints sit at x = +-U.HIP_X), +y up, +z forward.
+// Hips, seat and crotch in trouser cloth with a waistband, belt loops and a fly seam; the legs hang
+// from it and it turns against the chest. The upper edge hides inside the torso's rounded bottom.
+export function pelvisGeo() {
+  const l = [];
+  const st = [
+    { t: -0.118, rx: 0.052, rz: 0.05, cz: 0.0 }, { t: -0.1, rx: 0.088, rz: 0.07, cz: -0.004 }, { t: -0.06, rx: 0.12, rz: 0.083, cz: -0.008 }, { t: -0.015, rx: 0.132, rz: 0.088, cz: -0.008 },
+    { t: 0.02, rx: 0.12, rz: 0.086, cz: -0.004 }, { t: 0.05, rx: 0.106, rz: 0.08, cz: -0.002 },
+  ];
+  l.push(done(loftY(st.map((q) => ({ ...q, p: 2.4 })), { n: 20 }, { crease: 0 }), 1));
+  // hip joint covers: a rounded cap where each thigh swings in
+  for (const sx of [-1, 1]) l.push(bake(blob(0.066, 0.064, 0.066, 12, 8), 1, [sx * U.HIP_X, -0.004, 0]));
+  // waistband and belt loops
+  l.push(done(loftY([{ t: 0.004, rx: 0.123, rz: 0.0885, cz: -0.005, p: 2.4 }, { t: 0.007, rx: 0.1255, rz: 0.0905, cz: -0.005, p: 2.4 }, { t: 0.034, rx: 0.1255, rz: 0.0905, cz: -0.004, p: 2.4 }, { t: 0.037, rx: 0.123, rz: 0.0885, cz: -0.004, p: 2.4 }], { n: 20 }, { crease: 35 }), 0.62));
+  for (let i = 0; i < 7; i++) { const a = (i / 7) * Math.PI * 2 + 0.2; l.push(done(plate([[-0.006, 0], [0.006, 0], [0.006, 0.04], [-0.006, 0.04]], 0.004, { bevel: 0.001 }), 0.5, { pos: [Math.sin(a) * 0.1262, 0.0, Math.cos(a) * 0.0912 - 0.005], rot: [0, a, 0] })); }
+  // fly and side seams as raised piping
+  l.push(done(tubePath([[0, 0.004, 0.0905], [0.0, -0.04, 0.0845], [0.002, -0.085, 0.072]], 0.0017, { n: 4, seg: 10 }), 0.62));
+  for (const sx of [-1, 1]) l.push(done(tubePath([[sx * 0.1262, 0.004, -0.004], [sx * 0.1338, -0.04, -0.005], [sx * 0.1208, -0.08, -0.008]], 0.0018, { n: 4, seg: 10 }), 0.62));
+  return merge(l);
+}
+
+// ---- neck: origin at the base of the neck (the head's origin), +y up. A padded collar standing on the
+// shoulders and a gaiter-wrapped neck; it turns halfway between the chest and the head.
+export function neckGeo() {
+  const l = [];
+  const dark = 0.1;
+  l.push(done(loftY([
+    { t: -0.034, rx: 0.088, rz: 0.062, cz: -0.004, p: 2.4 }, { t: -0.022, rx: 0.07, rz: 0.056, cz: -0.004, p: 2.4 }, { t: -0.006, rx: 0.052, rz: 0.052, cz: -0.003 },
+    { t: 0.02, rx: 0.042, rz: 0.044, cz: -0.002 }, { t: 0.05, rx: 0.04, rz: 0.043, cz: 0.0 },
+  ], { n: 16 }, { crease: 0 }), (x, y) => (y < -0.012 ? 0.72 : dark)));
+  // collar band with stitched edge
+  l.push(done(loftY([{ t: -0.02, rx: 0.073, rz: 0.058, cz: -0.004, p: 2.4 }, { t: -0.017, rx: 0.0745, rz: 0.0595, cz: -0.004, p: 2.4 }, { t: -0.008, rx: 0.0555, rz: 0.0545, cz: -0.003, p: 2.4 }], { n: 16 }, { crease: 30 }), 0.5));
+  // gaiter folds: soft rings stacked up the neck
+  for (const y of [0.0, 0.017, 0.034]) l.push(done(loftY([{ t: y - 0.005, rx: 0.0405, rz: 0.0425 }, { t: y, rx: 0.0455, rz: 0.0475 }, { t: y + 0.005, rx: 0.0405, rz: 0.0425 }], { n: 14 }, { crease: 0 }), dark * 1.2));
+  return merge(l);
+}
+
+// ---- deltoid: origin at the shoulder joint, +z down the upper arm. A rounded sleeve cap with a seam
+// ring, so the shoulder stays closed however the arm swings.
+export function deltGeo() {
+  const l = [];
+  l.push(bake(blob(0.047, 0.05, 0.05, 14, 9), 1, [0, 0.002, 0.002]));
+  l.push(done(loftZ([{ t: 0.026, rx: 0.0455, ry: 0.0475, cy: 0.002 }, { t: 0.029, rx: 0.0475, ry: 0.049, cy: 0.002 }, { t: 0.036, rx: 0.0475, ry: 0.049, cy: 0.002 }, { t: 0.039, rx: 0.0445, ry: 0.0465, cy: 0.002 }], { n: 14 }, { crease: 30 }), 0.55)); // sleeve seam
+  return merge(l);
+}
 
 export { merge as mergeParts, bake as bakePart, blob, tubeAlong };
