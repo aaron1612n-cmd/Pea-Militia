@@ -13,11 +13,11 @@ export function liteGeos() {
   const hands = build(0.3, handGeos);
   cache = {
     helmets: build(0.25, () => Object.fromEntries(HELMET_KINDS.map((k) => [k, helmetGeo(k)]))),
-    limbs: build(0.3, () => ({ thigh: limbGeo('thigh'), shin: limbGeo('shin'), upperArm: limbGeo('upperArm'), foreArm: limbGeo('foreArm') })),
+    limb: build(0.3, () => limbGeo('thigh')), // the one tube every lite limb segment is scaled from
     boot: build(0.2, () => mergeGeometries([bootGeo('foot'), bootGeo('toe')], false)), // one piece: no toe hinge at a distance
     pelvis: build(0.3, pelvisGeo),
     delt: build(0.3, deltGeo),
-    hands: { L: hands.left, R: hands.right, G: hands.leftGrip, oL: hands.openL, oR: hands.openR },
+    hand: hands.right, // a mitten for every grip: past ~16 m a thumb is under a pixel
     // kit: the big pieces only (plates, belt, pouches, straps); buckles, cartridges and the like are under a pixel here
     gear: Object.fromEntries(KIND_IDS.map((k) => [k, build(0.2, () => {
       const keep = gearPieces(k).pieces.filter((g) => { g.computeBoundingBox(); const b = g.boundingBox; return Math.max(b.max.x - b.min.x, b.max.y - b.min.y, b.max.z - b.min.z) >= 0.06; });

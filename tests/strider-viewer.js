@@ -2,6 +2,9 @@
 import * as THREE from 'three';
 import { Vehicle } from '../src/vehicles.js';
 import { propModel, PROPS } from '../src/props.js';
+import { VARIANTS } from '../src/propbuild.js';
+import { buildScene, SCENE_VARIANTS } from '../src/scenebuild.js';
+import { instance } from '../src/models.js';
 
 const W = 1000, H = 800;
 const renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -60,10 +63,10 @@ window.shot = ({ view = 'q3', zoom = 'full', target = null, dist = null } = {}) 
 };
 // a prop on its own, any angle (view: front, q3, side, back, top)
 let prop = null;
-window.showProp = (type, view = 'q3') => {
+window.showProp = (type, view = 'q3', variant = 0, lite = false) => {
   if (v) { scene.remove(v.group); v = null; }
   if (prop) scene.remove(prop);
-  prop = propModel(type); scene.add(prop);
+  prop = type.startsWith('scene.') ? instance(buildScene(type.slice(6), variant).bake(), type) : propModel(type, variant, lite); scene.add(prop);
   const box = new THREE.Box3().setFromObject(prop), c = box.getCenter(new THREE.Vector3()), r = box.getSize(new THREE.Vector3()).length();
   const a = ANG[view] ?? 0.8, d = r * 1.3;
   camera.position.set(c.x + Math.sin(a) * d, c.y + d * 0.35, c.z + Math.cos(a) * d);
@@ -71,4 +74,5 @@ window.showProp = (type, view = 'q3') => {
   renderer.render(scene, camera);
   return true;
 };
+window.variantCount = (t) => (t.startsWith('scene.') ? SCENE_VARIANTS[t.slice(6)] : VARIANTS[t]) || 1;
 window.ready = true;
