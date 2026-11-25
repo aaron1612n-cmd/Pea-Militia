@@ -238,7 +238,6 @@ const BUILD = {
         }
         plain(k, new THREE.BoxGeometry(0.2, 0.055, 0.004), '#c8b46a', 0.9, 0, { pos: [-0.02, 0.27, d / 2 + 0.0005] });   // stencilled marking
         plain(k, new THREE.BoxGeometry(0.06, 0.012, 0.004), '#9c2a24', 0.9, 0, { pos: [0.18, 0.205, d / 2 + 0.0005] });
-        for (const s of [-1, 1]) for (const yy of [0.09, 0.36]) plain(k, new THREE.CylinderGeometry(0.008, 0.008, 0.008, 5), '#2a2a28', 0.6, 0.7, { pos: [s * 0.0, yy, 0], rot: [0, 0, 0], scale: 0.0001 });
       }
     } else {
       // a steel ammunition case: olive paint, ribs, latches and a handle at each end
@@ -302,7 +301,6 @@ const BUILD = {
     put(k, ring(0.058, 0.008, 12), 'metal', '#74777a', 0.7, { pos: [0.11, 0.568, 0.02], rot: [Math.PI / 2, 0, 0] });
     put(k, turnedY([[0, 0], [0.028, 0], [0.028, 0.016], [0, 0.016]], 8), 'metal', '#8a8e90', 0.7, { pos: [-0.1, 0.56, -0.07] });
     put(k, ring(0.034, 0.005, 10), 'metal', '#74777a', 0.7, { pos: [-0.1, 0.564, -0.07], rot: [Math.PI / 2, 0, 0] });
-    if (v === 1) put(k, jbox(0.22, 0.2, 0.012, rnd, 0.1), 'metal', '#8a3a2a', 0.9, { pos: [0, 0.3, 0.253], rot: [0, 0, 0.0], scale: 0.0001 });
     // a dented patch of lighter paint and a hazard band
     plain(k, new THREE.CylinderGeometry(0.2495, 0.2495, 0.03, 20, 1, true), v === 2 ? '#d8c43a' : '#c8c2b0', 0.55, 0.2, { pos: [0, 0.34, 0] });
   },

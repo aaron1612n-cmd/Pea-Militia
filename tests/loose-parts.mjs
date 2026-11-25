@@ -79,7 +79,10 @@ for (const [type0, v, lite] of jobs) {
   const main = [...comps.values()].sort((x, y) => y.n - x.n)[0];
   const loose = floating.filter((c) => c !== main);
   for (const c of loose) { const s = c.box.getSize(new THREE.Vector3()), m = c.box.getCenter(new THREE.Vector3()); console.log(`  ${type}: FLOATING ${c.n} piece(s) ${s.toArray().map((v) => v.toFixed(2)).join('x')} at ${m.toArray().map((v) => v.toFixed(2)).join(',')} (bottom ${c.box.min.y.toFixed(2)})`); }
-  console.log(`${type}: ${P.length} pieces, ${comps.size} groups, ${loose.length} floating`);
-  bad += loose.length;
+  // a model that dips below its origin pokes through the ground; trees sink their roots, wrecks settle into the mud
+  const low = [...comps.values()].filter((c) => c.box.min.y < -(/^scene:(fir|leaf|birch|dead)/.test(type) ? 0.6 : /Hulk/.test(type) ? 0.4 : 0.2));
+  for (const c of low) console.log(`  ${type}: BELOW GROUND ${c.n} piece(s) down to ${c.box.min.y.toFixed(2)}`);
+  console.log(`${type}: ${P.length} pieces, ${comps.size} groups, ${loose.length} floating, ${low.length} below ground`);
+  bad += loose.length + low.length;
 }
 process.exit(bad ? 1 : 0);
