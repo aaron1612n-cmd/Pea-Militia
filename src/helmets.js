@@ -257,4 +257,16 @@ HELMET.medic = () => {
 };
 
 export const HELMET_KINDS = Object.keys(HELMET);
-export function helmetGeo(kind = 'rifleman') { return (HELMET[kind] || HELMET.rifleman)(); }
+// chin strap: webbing from each ear, under the jaw, with a buckle, on every helmet
+function strapGeo() {
+  const l = [];
+  const path = (s) => [[s * 0.0885, 0.085, -0.004], [s * 0.082, 0.045, 0.0], [s * 0.062, 0.012, 0.012], [s * 0.034, -0.002, 0.04], [s * 0.008, -0.004, 0.056]];
+  for (const s of [-1, 1]) {
+    l.push(done(ribbon(path(s), 0.014, 0.004, [[s, 0, 0], [s, 0.2, 0.2], [s * 0.4, 0.6, 0.4], [0, 1, 0.3], [0, 1, 0.2]], { seg: 12 }), 0.22));
+    l.push(done(plate([[-0.006, -0.005], [0.006, -0.005], [0.006, 0.005], [-0.006, 0.005]], 0.004, { bevel: 0.001 }), 0.6, { pos: [s * 0.0885, 0.082, -0.004 - 0.002], rot: [0, s * Math.PI / 2, 0] })); // rivet plate where it joins the shell
+  }
+  l.push(done(plate([[-0.011, -0.006], [0.011, -0.006], [0.011, 0.006], [-0.011, 0.006]], 0.005, { bevel: 0.0012 }), 0.7, { pos: [0, -0.002, 0.0575], rot: [Math.PI / 2 + 0.2, 0, 0] })); // buckle
+  return merge(l);
+}
+let _strap = null;
+export function helmetGeo(kind = 'rifleman') { return merge([(HELMET[kind] || HELMET.rifleman)(), (_strap ||= strapGeo()).clone()]); }

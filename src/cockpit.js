@@ -51,6 +51,12 @@ const BUILDERS = {
     k.rect(-1.1, -0.44, 1.1, -0.4, BRASS);
     k.ring(0.7, -0.66, 0.12, 0.016, BRASS); k.disc(0.7, -0.66, 0.1, '#1a3a38');
     k.ring(-0.7, -0.66, 0.09, 0.016, BRASS); k.disc(-0.7, -0.66, 0.07, '#d8d2b8');
+    // more of the console: a third dial, a bank of toggles, rivets along the sill and a pressure gauge needle
+    k.ring(0.0, -0.7, 0.07, 0.014, BRASS); k.disc(0.0, -0.7, 0.055, '#1a3a38');
+    for (let i = 0; i < 6; i++) { k.rect(-0.38 + i * 0.075, -0.74, -0.34 + i * 0.075, -0.6, i % 2 ? IRON : DARK); k.disc(-0.36 + i * 0.075, -0.6, 0.012, i === 2 ? accent : BRASS); }
+    for (let i = 0; i < 14; i++) k.disc(-1.2 + i * 0.185, -0.42, 0.011, STEEL);
+    k.poly([[0.69, -0.66], [0.71, -0.66], [0.74, -0.58], [0.72, -0.58]], '#e8dca8');
+    k.poly([[-0.71, -0.66], [-0.69, -0.66], [-0.66, -0.74], [-0.68, -0.74]], '#7a2a1a');
   },
 };
 

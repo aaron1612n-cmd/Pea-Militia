@@ -25,7 +25,7 @@ export const STYLE_CAP = 6; // classes: rifleman, assault, gunner, mortar, coil,
 let _id = 0;
 // opts: { style: per-instance style attribute (iStyle), camo, dirt: [base, along z, below y=0], wear, bump, sway }
 export function detail(mat, opts = {}) {
-  const o = { style: true, camo: false, dirt: [0, 0, 0], wear: 0, bump: 0.5, sway: false, grain: 1, ...opts };
+  const o = { style: true, camo: false, dirt: [0, 0, 0], wear: 0, bump: 0.5, sway: false, grain: 1, scale: 1, ...opts };
   const key = `fabric${++_id}`;
   mat.customProgramCacheKey = () => key;
   const prev = mat.onBeforeCompile;
@@ -34,6 +34,7 @@ export function detail(mat, opts = {}) {
     shader.uniforms.uDirt = { value: new THREE.Vector3(...o.dirt) };
     shader.uniforms.uBump = { value: o.bump };
     shader.uniforms.uWear = { value: o.wear };
+    shader.uniforms.uScale = { value: o.scale };
     const styled = o.style;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', `#include <common>
@@ -57,11 +58,11 @@ ${o.sway ? 'if (swG > 0.5) transformed = aSw.xyz + swR * (position - aSw.xyz);' 
       .replace('#include <common>', `#include <common>
 varying vec3 vOP;
 ${styled ? 'varying float vStyle;' : ''}
-uniform vec3 uDirt; uniform float uBump; uniform float uWear;
+uniform vec3 uDirt; uniform float uBump; uniform float uWear; uniform float uScale;
 ${NOISE}`)
       .replace('#include <color_fragment>', `#include <color_fragment>
 ${styled ? 'if (vStyle >= 0.0) {' : '{'}
-  vec3 p = vOP;
+  vec3 p = vOP * uScale;
   float foot = length(fwidth(p));
   float sd = ${styled ? 'fract(vStyle) * 41.0 + 3.0' : '3.0'};
   float cls = ${styled ? 'floor(vStyle + 0.01)' : '0.0'};
@@ -108,9 +109,10 @@ ${styled ? 'if (vStyle >= 0.0) {' : '{'}
 }`)
       .replace('#include <normal_fragment_maps>', `#include <normal_fragment_maps>
 ${styled ? 'if (vStyle >= 0.0)' : ''} {
-  float fw = length(fwidth(vOP));
+  vec3 bp = vOP * uScale;
+  float fw = length(fwidth(bp));
   float f1 = 1.0 - smoothstep(0.0012, 0.005, fw), f2 = 1.0 - smoothstep(0.01, 0.04, fw);
-  float bh = fbm2(vOP * 190.0 + ${styled ? 'vStyle' : '0.0'}) * 0.55 * f1 + (fbm2(vOP * vec3(34.0, 34.0, 12.0) + ${styled ? 'vStyle' : '0.0'}) - 0.5) * 1.6 * f2;
+  float bh = fbm2(bp * 190.0 + ${styled ? 'vStyle' : '0.0'}) * 0.55 * f1 + (fbm2(bp * vec3(34.0, 34.0, 12.0) + ${styled ? 'vStyle' : '0.0'}) - 0.5) * 1.6 * f2;
   vec3 sx = normalize(dFdx(-vViewPosition)), sy = normalize(dFdy(-vViewPosition));
   vec3 r1 = cross(sy, normal), r2 = cross(normal, sx);
   float det = dot(sx, r1) * faceDirection;
