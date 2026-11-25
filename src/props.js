@@ -98,13 +98,16 @@ function masonry(k, x0, x1, thick, top, seed) {
 
 // Bent reinforcing bar sticking out of broken concrete: a thin rod with a kink near the tip.
 function rebar(k, x, y, z, len, lean, yaw = 0) {
+  // the bent tip starts exactly where the rod ends, whichever way the rod leans
+  const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(lean, yaw, lean * 0.6));
   const rod = new THREE.CylinderGeometry(0.011, 0.011, len, 5);
   rod.translate(0, len / 2, 0);
-  k.add(rod, PM.iron, { pos: [x, y, z], rot: [lean, yaw, lean * 0.6] });
+  k.add(rod, PM.iron, { pos: [x, y, z], rot: new THREE.Euler().setFromQuaternion(q).toArray().slice(0, 3) });
   const tip = new THREE.CylinderGeometry(0.011, 0.011, len * 0.35, 5);
-  tip.translate(0, len * 0.17, 0);
-  const ex = x + Math.sin(lean * 0.6) * len * -0.9, ez = z + Math.sin(lean) * len * 0.9;
-  k.add(tip, PM.iron, { pos: [ex, y + len * 0.93, ez], rot: [lean + 0.7, yaw, lean * 0.6 + 0.4] });
+  tip.translate(0, len * 0.175, 0);
+  const end = new THREE.Vector3(0, len * 0.985, 0).applyQuaternion(q).add(new THREE.Vector3(x, y, z));
+  const qt = q.clone().multiply(new THREE.Quaternion().setFromEuler(new THREE.Euler(0.7, 0, 0.4)));
+  k.add(tip, PM.iron, { pos: end.toArray(), rot: new THREE.Euler().setFromQuaternion(qt).toArray().slice(0, 3) });
 }
 // broken concrete chunk: a flat shard
 function chunk(k, x, y, z, s, seed) {
@@ -119,11 +122,12 @@ const BUILD = {
     masonry(k, -2.0, 2.0, 0.44, top, 101);
     k.add(block(1.6, 0.9, 0.02, 0.01, 0.004), PLASTER, { pos: [-1.1, 1.05, 0.235] });
     k.add(block(1.1, 0.5, 0.02, 0.01, 0.004), PLASTER, { pos: [0.6, 0.55, -0.235] });
-    k.add(block(1.5, 0.12, 0.5, 0.02, 0.01), CHAR, { pos: [-1.0, 1.92, 0] });
+    k.add(block(0.7, 0.12, 0.5, 0.02, 0.01), CHAR, { pos: [-1.6, 2.04, 0] }); // the scorched lintel rests on the tall end of the wall
     k.add(block(4.1, 0.14, 0.52, 0.03, 0.012), STONE[1], { pos: [0, 0.03, 0] }); // footing
     // the roof is gone: charred rafters stick out of the wall, one has fallen across the rubble
     for (const [x, len, tilt] of [[-1.55, 0.9, -0.5], [-0.8, 1.1, -0.4], [0.25, 0.7, 0.35]]) {
-      k.add(block(0.09, len, 0.12, 0.01, 0.005), CHARWOOD, { pos: [x, top(x) + 0.05 + len * 0.35, 0.1], rot: [0, 0, tilt * 0.5] });
+      const base = Math.floor((top(x) + 0.02) / 0.25) * 0.25; // the top of the last whole course under this spot
+      k.add(block(0.09, len, 0.12, 0.01, 0.005), CHARWOOD, { pos: [x, base - 0.04 + (len / 2) * Math.cos(tilt * 0.5), 0.1], rot: [0, 0, tilt * 0.5] });
     }
     k.add(block(0.1, 1.9, 0.14, 0.01, 0.005), CHARWOOD, { pos: [0.9, 0.3, 0.75], rot: [1.25, 0.2, 0] });
     // floor slab and tile where the room used to be, a window hole's worth of broken lintel stones

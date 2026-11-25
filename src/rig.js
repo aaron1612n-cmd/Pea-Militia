@@ -179,6 +179,7 @@ function poseCore(s, out) {
       footAt((cyc + (i ? 0.5 : 0)) % 1, g, FO);
       let x = side * lerp(U.FOOT_X, 0.065, g.run * w), y = 0, z = 0, rx = 0;
       x += mx * FO.along * w * 0.7; // side steps are shorter
+      x = side < 0 ? Math.min(x, -0.055) : Math.max(x, 0.055); // a foot never crosses the midline: the legs would scissor through each other
       z += mz * FO.along * w;
       y += FO.lift * w * (1 - 0.45 * kneel);
       if (limp && side === Math.sign(s.limp)) { z *= 1 - 0.4 * limp; y *= 1 - 0.55 * limp; } // the hurt leg takes a short, flat step
@@ -332,6 +333,14 @@ function poseCore(s, out) {
   // the grip sits a little forward and below the shoulder line; recoil kicks it back
   P.set(0, 0, -recoil * h.anim.kick).applyQuaternion(Q).add(T);
   out.weapon.compose(P, Q, S1);
+  // a crouched or running body leans its chest into the grip: ride the gun out in front of the chest, never in it
+  M.copy(out.body).invert();
+  T.set(out.weapon.elements[12], out.weapon.elements[13], out.weapon.elements[14]).applyMatrix4(M);
+  const need = (U.D / 2 + 0.045) - T.z;
+  if (need > 0 && Math.abs(T.y) < U.H / 2 + 0.05) {
+    const k = Math.min(need, 0.07);
+    out.weapon.elements[12] += out.body.elements[8] * k; out.weapon.elements[13] += out.body.elements[9] * k; out.weapon.elements[14] += out.body.elements[10] * k;
+  }
   out.muzzle.copy(h.muzzle).applyMatrix4(out.weapon);
   // both hands ride anchors on the gun: the trigger hand on the grip, the support hand on this gun's
   // fore-end, foregrip or handle, sliding to the magazine mid-reload
@@ -449,7 +458,7 @@ function postures(s, out) {
     for (const f of out.feet) { f.premultiply(R); f.elements[13] -= 0.03 * k * k * k; } // toes rest on the ground
     // the head and neck lift to look where the gun points, instead of pressing the face into the dirt
     HP.setFromMatrixPosition(out.head);
-    out.head.premultiply(HL.makeTranslation(-HP.x, -HP.y, -HP.z)).premultiply(HR.makeRotationX(-th * 0.9)).premultiply(HL.makeTranslation(HP.x, HP.y, HP.z));
+    out.head.premultiply(HL.makeTranslation(-HP.x, -HP.y, -HP.z)).premultiply(HR.makeRotationX(-th * 0.9)).premultiply(HL.makeTranslation(HP.x, HP.y + 0.012 * k, HP.z + 0.05 * k)); // lifted forward of the pack, so the helmet's back clears it
     // the gun keeps its aim; it moves out past the head, butt just clear of it, low to the ground,
     G.setFromMatrixPosition(out.weapon);
     let headZ = -Infinity;
@@ -487,11 +496,36 @@ function segment(out, a, b, over, yHint) {
   _mid.addVectors(a, b).multiplyScalar(0.5);
   return out.set(_x.x, _y.x, _zz.x * sz, _mid.x, _x.y, _y.y, _zz.y * sz, _mid.y, _x.z, _y.z, _zz.z * sz, _mid.z, 0, 0, 0, 1);
 }
+// An elbow can swing about the shoulder-to-wrist line without changing either segment's length: turn it
+// the least that keeps the upper arm and forearm out of the chest (a rounded block in body space).
+const _y2 = new THREE.Vector3(), _sd = new THREE.Vector3(), _ep = new THREE.Vector3(), _bl = new THREE.Vector3(), _sp = new THREE.Vector3();
+const SWING = [0, 0.2, -0.2, 0.4, -0.4, 0.65, -0.65, 0.9, -0.9, 1.2, -1.2];
+function torsoDepth(inv, p, r) {
+  _bl.copy(p).applyMatrix4(inv);
+  const qx = Math.abs(_bl.x) - (U.W / 2 - U.R), qy = Math.abs(_bl.y) - (U.H / 2 - U.R), qz = Math.abs(_bl.z) - (U.D / 2 - U.R);
+  const d = Math.hypot(Math.max(qx, 0), Math.max(qy, 0), Math.max(qz, 0)) + Math.min(Math.max(qx, qy, qz), 0) - U.R;
+  return Math.max(0, r - d);
+}
+function swingClear(inv, root, target, x, h) {
+  _sd.crossVectors(_d, _up); // the way the elbow turns
+  const up0 = _y2.copy(_up), ctr = _sp.copy(root).addScaledVector(_d, x);
+  let best = Infinity, bestA = 0;
+  for (const a of SWING) {
+    const c = Math.cos(a), s = Math.sin(a);
+    _ep.copy(ctr).addScaledVector(up0, c * h).addScaledVector(_sd, s * h);
+    let pen = 0;
+    for (const t of [0.5, 0.75, 1]) pen = Math.max(pen, torsoDepth(inv, _k.lerpVectors(root, _ep, t), 0.04) - 0.012);
+    for (const t of [0.15, 0.35, 0.55, 0.75]) pen = Math.max(pen, torsoDepth(inv, _k.lerpVectors(_ep, target, t), 0.033) - 0.012);
+    if (pen < best - 1e-4) { best = pen; bestA = a; }
+    if (pen <= 0) break;
+  }
+  if (bestA) { const c = Math.cos(bestA), s = Math.sin(bestA); _up.copy(up0).multiplyScalar(c).addScaledVector(_sd, s); }
+}
 // joint(out, root, target, l1, l2, pole, over, sgn, twist, k): returns the stretch factor used.
 // sgn: +1 puts +y on the bend side (legs, the knee), -1 on the outside of the bend (arms, the elbow
 // point). twist: unit vector the far segment's +y turns toward, by k (the shin toward the toes,
 // the forearm toward the back of the hand).
-function joint(out, root, target, l1, l2, pole, over, sgn, twist, k) {
+function joint(out, root, target, l1, l2, pole, over, sgn, twist, k, avoid = null) {
   _d.subVectors(target, root);
   let d = _d.length();
   const reach = l1 + l2;
@@ -505,6 +539,7 @@ function joint(out, root, target, l1, l2, pole, over, sgn, twist, k) {
   _up.copy(pole).addScaledVector(_d, -pole.dot(_d));
   if (_up.lengthSq() < 1e-6) _up.set(0, 0, 1).addScaledVector(_d, -_d.z);
   _up.normalize();
+  if (avoid) swingClear(avoid, root, target, x, h);
   _a.copy(root).addScaledVector(_d, x).addScaledVector(_up, h);
   // a knee or elbow of a body lying down can't sink into the ground (p.floor is set for ragdolls)
   if (FLOOR) { const g = FLOOR(_a.x, _a.z, _a.y) + 0.05; if (_a.y < g) _a.y = g; }
@@ -576,7 +611,7 @@ export function solveArms(p) {
     _t.set(...U.WRIST).applyMatrix4(hm);
     _pole.set(side * 0.7, -1, -0.5).applyQuaternion(_bq);
     _hy.set(hm.elements[4], hm.elements[5], hm.elements[6]).normalize();
-    joint(p.arms[i], _s, _t, U.ARM[0], U.ARM[1], _pole, 0.02, -1, _hy, 0.6);
+    joint(p.arms[i], _s, _t, U.ARM[0], U.ARM[1], _pole, 0.02, -1, _hy, 0.6, _bi);
     // the deltoid ball that closes the shoulder: the upper arm's frame, unstretched, at the joint
     const d = p.delts[i], a0 = p.arms[i][0].elements, zl = Math.hypot(a0[8], a0[9], a0[10]) || 1;
     d.copy(p.arms[i][0]);
