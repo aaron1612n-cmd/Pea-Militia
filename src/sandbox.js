@@ -22,9 +22,11 @@ const ICON = {
   walker: '<path d="M7 4h10v6H7zM9 10l-2 5-2 5h4M15 10l2 5 2 5h-4M12 6h6"/>',
   tank: '<path d="M3 15h18l-2 4H5zM7 15v-4h8v4M15 12h6"/><circle cx="7" cy="17" r="0.6"/><circle cx="12" cy="17" r="0.6"/><circle cx="17" cy="17" r="0.6"/>',
   command: '<path d="M6 21V4M6 4h11l-3 4 3 4H6"/>',
+  drop: '<path d="M3 11a9 8 0 0 1 18 0zM3 11l8 8M21 11l-8 8M12 11v8"/><rect x="10.2" y="19" width="3.6" height="3" rx="0.8"/>',
 };
 const UNIT_ITEMS = [...Object.entries(KINDS).map(([k, v]) => ({ id: k, name: v.name, icon: 'unit', kind: 'unit' })),
-  { id: 'squad', name: 'Squad ×6', icon: 'squad', kind: 'group', n: 6 }, { id: 'platoon', name: 'Platoon ×24', icon: 'platoon', kind: 'group', n: 24 }];
+  { id: 'squad', name: 'Squad ×6', icon: 'squad', kind: 'group', n: 6 }, { id: 'platoon', name: 'Platoon ×24', icon: 'platoon', kind: 'group', n: 24 },
+  { id: 'exoDrop', name: 'Exo drop ×6', icon: 'drop', kind: 'drop', n: 6 }, { id: 'exoDrop12', name: 'Exo drop ×12', icon: 'drop', kind: 'drop', n: 12 }];
 const VEHICLE_ITEMS = [
   { id: 'walker', name: 'Strider', icon: 'walker', kind: 'vehicle', vkind: 'walker', crew: true },
   { id: 'walkerEmpty', name: 'Strider (empty)', icon: 'walker', kind: 'vehicle', vkind: 'walker', crew: false },
@@ -140,6 +142,7 @@ export class Sandbox {
     const touch = this.input.touch;
     let h = touch ? 'Pick a tool, then tap the field. Drag to pan.' : 'Pick a tool, then click the field. Drag to pan, wheel to zoom, right-drag to turn.';
     if (it?.kind === 'unit' || it?.kind === 'group' || it?.kind === 'vehicle') h = `${touch ? 'Tap' : 'Click'} to place ${it.name.toLowerCase()} for ${TEAMS[this.team].name}.`;
+    else if (it?.kind === 'drop') h = `${touch ? 'Tap' : 'Click'} to mark the landing zone. A transport flies in and ${it.n} exo operators jump and glide down.`;
     else if (it?.kind === 'prop') h = `${touch ? 'Tap' : 'Click'} to place. ${touch ? '' : 'R turns it.'}`;
     else if (it?.hint) h = this.picked ? `${touch ? 'Tap' : 'Click'} where it goes.` : it.hint;
     this.hintEl.textContent = h;
@@ -206,6 +209,8 @@ export class Sandbox {
         const at = p.clone().add(new THREE.Vector3(Math.sin(face + Math.PI / 2) * (r - (rows - 1) / 2) * 7, 0, Math.cos(face + Math.PI / 2) * (r - (rows - 1) / 2) * 7));
         b.spawnSquad(this.team, at, Array.from({ length: Math.min(6, it.n - r * 6) }, (_, i) => mix[(i + r) % mix.length]), face);
       }
+    } else if (it.kind === 'drop') {
+      b.callDrop(this.team, p, it.n);
     } else if (it.kind === 'vehicle') {
       b.addVehicle(it.vkind, this.team, p.x, p.z, face, { crew: it.crew });
     } else if (it.kind === 'prop') {

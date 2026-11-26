@@ -9,6 +9,7 @@ import { Nav } from './nav.js';
 import { Vehicle } from './vehicles.js';
 import { VehicleBrain } from './vehicleai.js';
 import { CallIns } from './callins.js';
+import { Paradrops } from './paradrop.js';
 import { projectileModel, WEAPONS } from './weapons.js';
 import { hostile, TEAMS } from './factions.js';
 import { HALF, pointMarker, ammoCrate } from './world.js';
@@ -135,6 +136,7 @@ export class Battle {
     this.propVer = 0;
     this.navBudget = 0;
     this.callins = new CallIns(this);
+    this.drops = new Paradrops(this);
   }
 
   // a walking route, or null when there is none (grid rebuilt when props changed)
@@ -197,6 +199,15 @@ export class Battle {
     this.units.push(u);
     u.animate(0);
     return u;
+  }
+
+  // an elite squad (or two) jumps over `at` from a transport that arrives from the army's own side
+  callDrop(team, at, count = 6, kind = 'exo') {
+    const base = this.teams[team]?.base || baseAt(team, Math.max(2, this.teams.length));
+    const dir = new THREE.Vector3(at.x - base.x, 0, at.z - base.z);
+    if (dir.lengthSq() < 4) dir.set(0, 0, -1);
+    const planes = Math.ceil(count / 6);
+    for (let i = 0; i < planes; i++) this.drops.call(team, at, dir, Array.from({ length: Math.min(6, count - i * 6) }, () => kind), { lateral: (i - (planes - 1) / 2) * 34 });
   }
 
   freeSquad(team, pos) {
@@ -321,6 +332,7 @@ export class Battle {
     this.batch.clear();
     for (const v of [...this.vehicles]) this.removeVehicle(v);
     this.callins.dispose();
+    this.drops.dispose();
   }
 
   // ---------- queries ----------
@@ -1161,7 +1173,7 @@ export class Battle {
     if (!this.aiFrozen) {
       for (const c of this.commanders) c.update(dt);
       for (const s of this.squads) s.update(dt);
-      for (const u of this.units) if (u !== this.player && u.brain && u.alive && !u.vehicle) u.brain.update(dt);
+      for (const u of this.units) if (u !== this.player && u.brain && u.alive && !u.vehicle && !u.drop) u.brain.update(dt);
       for (const v of this.vehicles) v.brain?.update(dt);
     }
     for (const v of this.vehicles) v.update(dt, this);
@@ -1187,6 +1199,7 @@ export class Battle {
     this.updateProjectiles(dt);
     this.updateBullets(dt);
     this.callins.update(dt);
+    this.drops.update(dt);
     this.updatePoints(dt);
     this.updateTeams(dt);
     {

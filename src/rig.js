@@ -257,6 +257,7 @@ function poseCore(s, out) {
   const w = walk;
   const ground = 1 - air;
   const limp = Math.abs(s.limp || 0);
+  const chute = s.chute || 0; // under a canopy: hanging from the risers
   const kneelStill = kneel * (1 - w); // one knee down; moving crouched is a walk with bent legs
   const prone = s.prone || 0;
   const dirK = 0.25 + 0.75 * Math.max(0, mz); // the stride's twist and lean follow the way you face, less when sidestepping or backing
@@ -290,6 +291,10 @@ function poseCore(s, out) {
         const up = smooth(-0.5, 0.5, s.rise || 0); // 1 rising, 0 falling
         const az = lerp(i ? -0.04 : 0.1, i ? -0.1 : 0.07, up), ay = lerp(lerp(0.02, 0.08, i), lerp(0.17, 0.1, i), up) + 0.03;
         x += (side * 0.01) * air; z = lerp(z, az, air); y = lerp(y, ay, air); rx = lerp(rx, lerp(i ? 0.25 : 0.3, i ? 0.5 : -0.2, up), air);
+        if (chute > 0) { // hanging: legs together and a little ahead, toes pointed, swinging gently with the canopy
+          const sw = Math.sin(t * 1.7) * 0.025;
+          x = lerp(x, side * D.FOOT_X * 0.8, chute); z = lerp(z, (i ? 0.1 : 0.07) + sw, chute); y = lerp(y, 0.0, chute); rx = lerp(rx, 0.3, chute);
+        }
       }
       // kneel: one foot forward, the other tucked back up on its toe
       if (kneelStill > 0) {
@@ -374,9 +379,9 @@ function poseCore(s, out) {
   const lean = g.lean * w * ground + 0.12 * kneel + (s.flinch || 0) * -0.1;
   // lean toward the move direction (pitch for forward/back, roll for sideways)
   const mzf = w > 0.05 ? (mz > 0 ? mz : mz * 0.3) : 1;
-  const pitchLean = lean * mzf + 0.05 * air * (s.rise || 0) + g.bounce * w * ground * dirK + curve(IDLE.breathe, ph, true) * 0.01 * idle + hx + tb.pitch - 0.14 * stag;
+  const pitchLean = -0.03 * chute + lean * mzf + 0.05 * air * (s.rise || 0) + g.bounce * w * ground * dirK + curve(IDLE.breathe, ph, true) * 0.01 * idle + hx + tb.pitch - 0.14 * stag;
   const limpRoll = limp * w * ground * Math.sign(s.limp || 0) * 0.1 * (0.5 + 0.5 * Math.cos((cyc - (s.limp > 0 ? 0.5 : 0)) * Math.PI * 2));
-  const rollLean = -lean * (w > 0.05 ? mx : 0) * 0.7 + g.chestRoll * w * ground + limpRoll + 0.018 * shift + hz + 0.09 * stag * Math.sin(t * 10.5);
+  const rollLean = 0.05 * chute * Math.sin(t * 1.3) - lean * (w > 0.05 ? mx : 0) * 0.7 + g.chestRoll * w * ground + limpRoll + 0.018 * shift + hz + 0.09 * stag * Math.sin(t * 10.5);
   // the shoulders turn against the hips as the arms swing
   const yaw = g.twist * w * ground * dirK + tb.yaw + 0.07 * stag * Math.sin(t * 7.3);
   // the pelvis turns, tips and rolls against the chest: the lower spine takes up part of every lean and twist
@@ -521,7 +526,24 @@ function poseCore(s, out) {
   if (reload >= 0) reloadHand(out, h, id, reload, s.rack || 0); else out.hands[0].multiplyMatrices(out.weapon, h.lhA.m);
   // the trigger finger lies along the frame until the gun fires; the support hand closes on the fore-end or the magazine
   out.trig = ready > 0.5 && recoil < 0.05 && rk < 0.05 ? 1 : 0;
+  if (chute > 0.001) chuteHands(out, chute, t);
   return out;
+}
+// hands up on the risers while a canopy is open; the gun is slung (hidden) until the soldier lands
+const _hq = new THREE.Quaternion(), _hq2 = new THREE.Quaternion(), _hp = new THREE.Vector3(), _hp2 = new THREE.Vector3(), _hs = new THREE.Vector3(), _hm = new THREE.Matrix4();
+function chuteHands(out, k, t) {
+  const sw = Math.sin(t * 1.3) * 0.02;
+  for (let i = 0; i < 2; i++) {
+    const side = i === 0 ? 1 : -1; // hands[0] is the left (+x) hand
+    compose(_hm, side * 0.17 + sw, 0.46, 0.04, -0.3, side * 0.2, side * 0.18);
+    _hm.premultiply(out.body);
+    out.hands[i].decompose(_hp, _hq, _hs);
+    _hm.decompose(_hp2, _hq2, _hs);
+    _hp.lerp(_hp2, k); _hq.slerp(_hq2, k);
+    out.hands[i].compose(_hp, _hq, S1);
+  }
+  out.curl[0] = out.curl[1] = lerp(out.curl[0], 0.9, k);
+  out.showWeapon = k < 0.5 && out.showWeapon;
 }
 
 // Posture on top of the stance: lean (Q/E) rolls the upper body about the hips; prone lays the
