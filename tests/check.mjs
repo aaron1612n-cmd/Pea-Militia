@@ -110,7 +110,7 @@ try {
   check('feet on the ground (never below it; one planted unless jumping)', feet.length === 0, feet.slice(0, 4).map((r) => `${r.name}: ${r.minY.toFixed(3)}`).join('; '));
 
   // ---- start a battle from the setup screen (real click)
-  await P.click('#deploy');
+  P.evaluate(() => document.getElementById('deploy').click()).catch(() => {}); // a real click waits for the page to be idle, and the first battle compiles shaders for a long while on a software renderer
   await P.waitForFunction(() => window.__game.state === 'play', null, { timeout: 120000 });
   const st = await P.evaluate(() => ({ n: window.__game.battle.units.length, size: window.__game.battle.settings.size, teams: window.__game.battle.teams.length, hud: !document.getElementById('hud').hidden, lock: window.__lockAsked || 0 }));
   check('Deploy starts a battle with full armies', st.n === st.size * st.teams && st.hud, JSON.stringify(st));
