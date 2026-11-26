@@ -537,10 +537,11 @@ export class Brain {
     this.badUntil = 0;
     this.skill = rand(0.75, 1.2);
     this.blocked = false;
+    if (unit.elite) { this.skill = rand(1.5, 1.8); } // trained to a standard the rest of the army is not, and not easily shaken
     unit.ctrl.turnRate = 2.8 * this.skill;
     // morale: 1 is cool and steady, 0 is gone. Nerve is how well this soldier takes it.
-    this.nerve = rand(0.85, 1.2);
-    this.morale = rand(0.85, 1);
+    this.nerve = unit.elite ? 3 : rand(0.85, 1.2);
+    this.morale = unit.elite ? 1 : rand(0.85, 1);
     this.broken = false;
     this.state = 'steady'; // steady | shaken | cower | retreat | rout | surrender
     this.diveUntil = 0;
@@ -690,9 +691,31 @@ export class Brain {
     if (w.time < this.diveUntil && st !== 'surrender') { c.prone = true; c.fire = false; c.sprint = false; }
   }
 
+  // an operator carrying every class's gun picks the one that suits the range, and the heavy one for armour or a bunched-up enemy
+  pickGun() {
+    const u = this.u, w = this.w, t = this.target;
+    if (this.nade || u.busy || u.weapon.id === 'grenade' || w.time < (this.gunT || 0)) return;
+    const d = t && t.alive && this.seen ? t.pos.distanceTo(u.pos) : 30;
+    let cluster = 0;
+    if (t && t.alive && !t.isVehicle) for (const e of w.nearUnits(t.pos.x, t.pos.z, 3.5)) if (e.alive && e.team === t.team) cluster++;
+    let best = u.wi, bs = 1e9;
+    u.weapons.forEach((g, i) => {
+      const id = g.id;
+      if (id === 'grenade' || (g.mag <= 0 && g.reserve <= 0)) return;
+      const [lo, hi] = g.def.ideal || [8, 30];
+      let pen = d < lo ? lo - d : d > hi ? d - hi : 0;
+      if (id === 'launcher') pen += t?.isVehicle ? -25 : cluster >= 3 ? -3 : 40;
+      if (id === 'mg' && this.seen) pen -= 2;
+      if (i !== u.wi) pen += 4; // don't flicker between two guns
+      if (pen < bs) { bs = pen; best = i; }
+    });
+    if (best !== u.wi) { u.setWeapon(best); u.cool = Math.max(u.cool, 0.25); this.gunT = w.time + 2.5; }
+  }
+
   // ---- slow decisions ----
   think() {
     const u = this.u, w = this.w, sq = this.squad;
+    if (u.elite) this.pickGun();
     const def = u.weapon.def;
     // too hurt to fight: crawl to a medic, or away from the fire
     if (u.down) {

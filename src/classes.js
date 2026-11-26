@@ -14,8 +14,15 @@ export const CLASSES = {
     brief: 'Energy bolts, overheats' },
   medic: { name: 'Medic', loadout: ['smg'], hp: 95, speed: 1.08, skill: { name: 'Heal pulse', blurb: 'Heal friends within 7m', dur: 0, cd: 14, pulse: 7 },
     brief: 'Heals the squad' },
+  // The elite exoskeleton operator: every class's weapon in one kit, powered armour that shrugs off most of a rifle round, a stride
+  // well past a runner's, and a field mend. Not offered in the class picker; the sandbox drops whole squads of them from a plane.
+  exo: { name: 'Exo operator', elite: true, loadout: ['rifle', 'smg', 'plasma', 'mg', 'launcher', 'grenade'], hp: 320, speed: 1.32, regen: 3, jump: 1.35, tough: 0.35,
+    mod: { dmgIn: 0.5, dmgOut: 1.3, spread: 0.6, rate: 1.15 },
+    skill: { name: 'Overdrive', blurb: 'Near-immune, faster, harder, 6s', dur: 6, cd: 15, mod: { dmgIn: 0.15, dmgOut: 1.6, spread: 0.3, rate: 1.5, speed: 1.3, noTire: true } },
+    brief: 'Elite exoskeleton squad' },
 };
-export const CLASS_IDS = Object.keys(CLASSES);
+export const CLASS_IDS = Object.keys(CLASSES).filter((id) => !CLASSES[id].elite);
+export const baseMod = (cls) => (cls?.mod ? { ...NEUTRAL, ...cls.mod } : NEUTRAL);
 export const NEUTRAL = { spread: 1, speed: 1, rate: 1, dmgIn: 1, dmgOut: 1 };
 
 // Start a soldier's ability. Returns true if it fired.
@@ -34,7 +41,7 @@ export function useSkill(u, world) {
   }
   u.skillT = s.dur;
   u.skillMax = s.dur;
-  u.mod = { ...NEUTRAL, ...s.mod };
+  u.mod = { ...u.baseMod, ...s.mod };
   if (s.mod.noBurn) u.burn = 0;
   return true;
 }

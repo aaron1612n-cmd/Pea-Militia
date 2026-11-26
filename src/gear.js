@@ -285,6 +285,43 @@ const KIND = {
     }
     for (const sx of [-1, 1]) k.mark(lathe([[0, 0], [0.0125, 0], [0.0125, 0.003], [0, 0.003]], { n: 8 }), [0.4, 1, 0.9], { pos: [sx * 0.162, 0.165 + 0.0395, 0], rot: [0, 0, -sx * 0.5] });
   },
+  exo: (k) => {
+    // powered armour over the issue kit: slab pauldrons with a glowing strip, a deep chest plate round a reactor, ribbed abdomen guard,
+    // twin power cells and thrusters on the pack, hip actuators and a medic satchel; the legs wear their own frame (see crowd.js)
+    for (const sx of [-1, 1]) {
+      pauldron(k, sx, { big: true, shade: C.plate2 });
+      k.mark(lathe([[0.0, 0], [0.0125, 0], [0.0125, 0.003], [0, 0.003]], { n: 8 }), [3.0, 1.3, 0.3], { pos: [sx * 0.1762, 0.208, 0], rot: [0, 0, -sx * 0.4] });
+    }
+    k.ring(-0.085, -0.02, 0.002, 0.016, C.plate, 'cummerbund');
+    k.plate(F, { v0: -0.05, v1: 0.17, range: (v) => { const w = 0.23 - 0.05 * sstep(0.11, 0.17, v); return [-w / 2, w / 2]; }, rows: 8, cols: 8, thick: 0.026, bevel: 0.014, bulge: 0.14 }, C.plate, 'chest');
+    k.plate(F, { v0: -0.02, v1: 0.15, range: hw(0, 0.15), rows: 6, cols: 6, thick: 0.014, bevel: 0.008, off: 0.026, bulge: 0.1 }, C.plate2, 'chest-inset');
+    // the reactor: a ring with a bright core, centred high on the chest
+    k.add(lathe([[0, 0], [0.036, 0], [0.04, 0.004], [0.04, 0.012], [0.033, 0.016], [0.0, 0.016]], { n: 14, crease: 40 }), C.steel, 'reactor-ring', { pos: [0, 0.07, torsoFront(0, 0.07) + 0.034], rot: [Math.PI / 2, 0, 0] });
+    k.mark(lathe([[0, 0], [0.025, 0], [0.025, 0.002], [0, 0.002]], { n: 14 }), [3.0, 1.3, 0.3], { pos: [0, 0.07, torsoFront(0, 0.07) + 0.0508], rot: [Math.PI / 2, 0, 0] });
+    // abdomen guard: three overlapping ribs
+    for (let i = 0; i < 3; i++) k.plate(F, { v0: -0.108 + i * 0.028, v1: -0.074 + i * 0.028, range: hw(0, 0.15 - i * 0.012), rows: 2, cols: 6, off: 0.006 + i * 0.002, thick: 0.01, bevel: 0.005, bulge: 0.1 }, i % 2 ? C.plate2 : C.plate, `abs${i}`);
+    for (const [x, v] of [[-0.088, 0.08], [0.088, 0.08]]) k.pouch(x * 1.0, v - 0.12, 0.04, 0.058, 0.022, C.pouch, `mag${x}`, { surf: F });
+    grenade(k, -0.06, -0.02, torsoFront(-0.06, -0.02) + 0.034);
+    grenade(k, 0.06, -0.02, torsoFront(0.06, -0.02) + 0.034, 'grenade2');
+    // the pack: twin power cells with banded ends, a spine, two thruster nozzles under glowing vents
+    for (const sx of [-1, 1]) {
+      const x = sx * 0.07;
+      k.add(lathe([[0, -0.12], [0.034, -0.12], [0.038, -0.114], [0.038, 0.1], [0.034, 0.106], [0, 0.106]], { n: 12, crease: 40 }), C.plate, `cell${sx}`, { pos: [x, PK.y, PK.back - 0.034] });
+      for (const dy of [-0.07, 0.0, 0.07]) k.add(lathe([[0.036, -0.007], [0.0415, -0.007], [0.0415, 0.007], [0.036, 0.007]], { n: 12 }), C.steel, `cellband${sx}${dy}`, { pos: [x, PK.y + dy, PK.back - 0.034] });
+      k.mark(lathe([[0, 0], [0.02, 0], [0.02, 0.003], [0, 0.003]], { n: 10 }), [3.0, 1.3, 0.3], { pos: [x, PK.y + 0.1066, PK.back - 0.034] });
+      // thruster nozzle: a bell hung below the cell
+      k.add(lathe([[0.012, -0.05], [0.026, -0.05], [0.032, -0.03], [0.026, -0.0], [0.012, 0.004]], { n: 12, crease: 40 }), C.steel, `nozzle${sx}`, { pos: [x, PK.y - 0.118, PK.back - 0.034] });
+      k.mark(lathe([[0, 0], [0.02, 0], [0.02, 0.002], [0, 0.002]], { n: 10 }), [3.0, 1.3, 0.3], { pos: [x, PK.y - 0.166, PK.back - 0.034], rot: [Math.PI, 0, 0] });
+    }
+    k.plate(PBack, { v0: PK.y - 0.1, v1: PK.y + 0.1, range: hw(0, 0.05), rows: 8, cols: 2, thick: 0.014, bevel: 0.005, flip: true, off: 0.004 }, C.plate2, 'spine');
+    // medic satchel on the left hip, with a cross, and a coiled-cable radio whip
+    k.pouch(0.0, -0.1, 0.06, 0.05, 0.022, C.white, 'med-pouch', { surf: Sd(1) });
+    k.swing('whip', [0.07, PK.top + 0.004, PK.z], () => {
+      k.add(rod([0.07, PK.top - 0.01, PK.z], [0.07, PK.top + 0.22, PK.z], 0.0085, 0.0035, { n: 6 }), C.steel, 'antenna');
+      k.mark(lathe([[0, -0.007], [0.0075, 0], [0, 0.007]], { n: 6 }), [3.0, 1.3, 0.3], { pos: [0.07, PK.top + 0.226, PK.z] });
+    });
+    k.add(lathe([[0, 0], [0.014, 0], [0.014, 0.014], [0.009, 0.019], [0, 0.019]], { n: 8 }), C.plate, 'antenna-clamp', { pos: [0.07, PK.top - 0.012, PK.z] });
+  },
   medic: (k) => {
     // field medic: a pale satchel across the front, canister bag, stretcher poles, crosses
     k.ring(-0.085, -0.03, 0.002, 0.012, C.plate, 'cummerbund');

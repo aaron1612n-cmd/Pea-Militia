@@ -5,8 +5,9 @@ import { Planter } from './planter.js';
 import { strideLength, dirScale } from './clips.js';
 import { WEAPONS, makeWeapon } from './weapons.js';
 import { wrap } from './physics.js';
+import { HALF } from './world.js';
 import { Ragdoll } from './ragdoll.js';
-import { CLASSES, NEUTRAL } from './classes.js';
+import { CLASSES, NEUTRAL, baseMod } from './classes.js';
 
 export const RADIUS = U.RADIUS;
 export const WALK = 2.2; // m/s
@@ -14,6 +15,7 @@ export const SPRINT = 1.9; // a real sprint: with the stride in gait.js this rea
 const GRAVITY = 17;
 const lerp = THREE.MathUtils.lerp;
 const JUMP_V = 4.8;
+const BACK_K = 0.55, SIDE_K = 0.78; // backpedal and sidestep speed against walking forward
 // The fastest any soldier can run on their own: walk pace times the sprint multiplier. One source
 // of truth; weapon, stance and suppression modifiers only ever slow a soldier from here.
 export const MAX_SPEED = WALK * SPRINT * 1.75; // fastest class (assault) mid-dash
@@ -51,8 +53,10 @@ export class Unit {
     this.maxHp = cls?.hp ?? 100;
     this.hp = this.maxHp;
     this.speedK = cls?.speed ?? 1;
-    this.mod = NEUTRAL; this.skillT = 0; this.skillCd = 0; this.skillMax = 1; this.skillFlash = 0;
+    this.baseMod = baseMod(cls); this.mod = this.baseMod; this.elite = !!cls?.elite; this.tough = cls?.tough ?? 1; this.regen = cls?.regen || 0; this.jumpK = cls?.jump ?? 1;
+    this.skillT = 0; this.skillCd = 0; this.skillMax = 1; this.skillFlash = 0;
     this.alive = true;
+    this.drop = null; this.chuteK = 0; // paratrooper state (updateDrop)
     this.deadT = 0;
     this.lastHurt = -99;
     this.burn = 0;
@@ -176,7 +180,7 @@ export class Unit {
     if (zone === 'torso' && kind !== 'fire' && dmg > 20) this.clutch = 1; // a hand goes to the wound
     // Rounds taken in a burst add up: nobody stays on his feet after a handful in a few seconds.
     if (kind !== 'fire') { this.trauma += dealt; this.hitN++; this.traumaT = 3; }
-    const burst = !this.isPlayer && kind !== 'fire' && this.hitN >= 5;
+    const burst = !this.isPlayer && kind !== 'fire' && this.hitN >= (this.elite ? 14 : 5);
     // A body hit rarely drops a man on the spot: he staggers, clutches the wound and goes down a
     // moment later. Only the head, a blast, fire, a very heavy round or a burst kills outright.
     if (burst && this.hp > 0) this.hp = 0;
@@ -194,10 +198,11 @@ export class Unit {
     }
     if (this.hp > 0 && kind !== 'fire') {
       // wounds keep bleeding until somebody bandages them; hits to the limbs cripple
-      this.bleed = Math.min(4, this.bleed + dmg * (kind === 'blast' ? 0.05 : 0.035));
-      if (zone === 'leg' && dmg > 14) this.leg = Math.min(1, this.leg + 0.55 + dmg / 120);
-      if (zone === 'arm' && dmg > 14) this.arm = Math.min(1, this.arm + 0.6);
-      if (dmg > 18) this.stagger = Math.min(1.1, Math.max(this.stagger, dmg / 70));
+      const fx = dmg * this.tough; // powered armour spreads a hit: it hurts the wearer's footing and limbs far less
+      this.bleed = Math.min(4, this.bleed + fx * (kind === 'blast' ? 0.05 : 0.035));
+      if (zone === 'leg' && fx > 14) this.leg = Math.min(1, this.leg + 0.55 + fx / 120);
+      if (zone === 'arm' && fx > 14) this.arm = Math.min(1, this.arm + 0.6);
+      if (fx > 18) this.stagger = Math.min(1.1, Math.max(this.stagger, fx / 70));
       if (!this.isPlayer && !this.down && (this.hp < this.maxHp * 0.3 && (zone === 'leg' || zone === 'torso' || kind === 'blast') || this.leg >= 1 || (this.trauma > this.maxHp * 0.5 && this.hp < this.maxHp * 0.55))) this.goDown(world);
       if (world?.audio && this.cry <= 0) { this.cry = 1.2 + Math.random(); world.audio.play(this.hp < this.maxHp * 0.35 ? 'scream' : 'grunt', this.center(), 1); }
     }
@@ -310,9 +315,10 @@ export class Unit {
     this.wref = world;
     if (!this.alive) return this.updateDead(dt, world);
     this.rag = null;
+    if (this.drop) return this.updateDrop(dt, world);
     const c = this.ctrl;
     this.cool -= dt * this.mod.rate;
-    if (this.skillT > 0) { this.skillT -= dt; if (this.skillT <= 0) this.mod = NEUTRAL; if (this.mod.noBurn) this.burn = 0; }
+    if (this.skillT > 0) { this.skillT -= dt; if (this.skillT <= 0) this.mod = this.baseMod; if (this.mod.noBurn) this.burn = 0; }
     this.skillCd = Math.max(0, this.skillCd - dt);
     this.skillFlash = Math.max(0, this.skillFlash - dt);
     if (this.mod.quick && this.reloadT > 0.3) this.reloadT = 0.3;
@@ -343,6 +349,9 @@ export class Unit {
       this.bleed = this.bleed > 0.25 ? this.bleed * Math.exp(-dt * 0.012) : Math.max(0, this.bleed - dt * 0.004);
       if (this.hp <= 0) { this.lastHit = null; this.die(null, world); return; }
       if (this.down && Math.random() < dt * 0.35 && world?.audio) world.audio.play('moan', this.center(), 1);
+    }
+    if (this.regen && this.alive && !this.dying) { // the suit seals wounds and mends its wearer
+      this.bleed *= Math.exp(-dt * 3); if (this.hp < this.maxHp) this.hp = Math.min(this.maxHp, this.hp + this.regen * dt);
     }
     if (this.bandageT > 0) {
       this.bandageT -= dt;
@@ -415,7 +424,19 @@ export class Unit {
     const def = this.weapon.def;
     // stamina: sprinting drains it; once spent you jog until it's a third back
     if (this.stamina === undefined) { this.stamina = 1; this.winded = false; }
-    let sprint = c.sprint && !c.fire && !this.busy && Math.hypot(c.wx, c.wz) > 0.3 && !this.winded && this.leg < 0.5 && !this.down && this.bandageT <= 0;
+    // Moving across or against the way the body faces is slow: a backpedal is about half a walk and a sidestep about three quarters.
+    // (A soldier walking where they look turns to face it, so only aimed or fixed-facing movement is limited.)
+    let dirK = 1, fwdK = 1;
+    {
+      const wl = Math.hypot(c.wx, c.wz);
+      if (wl > 0.05 && (aiming || c.faceYaw !== undefined)) {
+        const fy = c.faceYaw ?? this.facing;
+        fwdK = (c.wx * Math.sin(fy) + c.wz * Math.cos(fy)) / wl;
+        const sd = (c.wx * Math.cos(fy) - c.wz * Math.sin(fy)) / wl, fp = Math.max(fwdK, 0), fn = Math.max(-fwdK, 0);
+        dirK = 1 / Math.sqrt(fp * fp + (fn / BACK_K) ** 2 + (sd / SIDE_K) ** 2);
+      }
+    }
+    let sprint = c.sprint && fwdK > 0.5 && !c.fire && !this.busy && Math.hypot(c.wx, c.wz) > 0.3 && !this.winded && this.leg < 0.5 && !this.down && this.bandageT <= 0;
     if (sprint) { if (!this.mod.noTire) this.stamina -= dt / 7; this.restT = 0.9; if (this.stamina <= 0) { this.stamina = 0; this.winded = true; sprint = false; } }
     else { this.restT = Math.max(0, (this.restT || 0) - dt); if (this.restT <= 0) this.stamina = Math.min(1, this.stamina + dt / 5); }
     if (this.winded && this.stamina > 0.35) this.winded = false;
@@ -429,7 +450,7 @@ export class Unit {
     this.leanK = (this.leanK || 0) + (lean - (this.leanK || 0)) * (1 - Math.exp(-10 * dt));
     const kneel = (c.kneel || rising || this.dying || this.bandageT > 0 || this.tendT > 0) && !sprint && !prone ? 1 : 0;
     this.kneelK += (kneel - this.kneelK) * (1 - Math.exp(-9 * dt));
-    const speed = WALK * this.speedK * this.mod.speed * (c.speed ?? 1) * (def.move || 1) * (sprint ? SPRINT : 1) * (1 - 0.6 * this.kneelK) * (1 - 0.72 * this.proneK) * (1 - 0.5 * Math.abs(this.leanK)) * (1 - 0.25 * this.suppression) * (1 - 0.28 * this.ads) * (this.reloadT > 0 ? 0.82 : 1) * (1 - 0.12 * this.recoilBuild) * (1 - 0.55 * this.leg) * (this.down ? 0.28 : 1) * (this.stagger > 0 ? 0.45 : 1) * (this.dying ? 0.55 : 1) * (this.shock > 0 && !this.isPlayer ? 0.2 : 1) * (this.bandageT > 0 ? 0.2 : 1);
+    const speed = dirK * WALK * this.speedK * this.mod.speed * (c.speed ?? 1) * (def.move || 1) * (sprint ? SPRINT : 1) * (1 - 0.6 * this.kneelK) * (1 - 0.72 * this.proneK) * (1 - 0.5 * Math.abs(this.leanK)) * (1 - 0.25 * this.suppression) * (1 - 0.28 * this.ads) * (this.reloadT > 0 ? 0.82 : 1) * (1 - 0.12 * this.recoilBuild) * (1 - 0.55 * this.leg) * (this.down ? 0.28 : 1) * (this.stagger > 0 ? 0.45 : 1) * (this.dying ? 0.55 : 1) * (this.shock > 0 && !this.isPlayer ? 0.2 : 1) * (this.bandageT > 0 ? 0.2 : 1);
     this.sprinting = sprint;
     this.move(dt, c.wx, c.wz, c.jump && this.proneK < 0.3 && this.leg < 0.5 && !this.down, speed, world, aiming || c.faceYaw !== undefined);
     c.jump = false;
@@ -495,7 +516,7 @@ export class Unit {
     this.buffer = Math.max(0, this.buffer - dt);
     this.coyote = this.grounded ? 0.1 : Math.max(0, this.coyote - dt);
     if (this.buffer > 0 && this.coyote > 0) {
-      this.vel.y = JUMP_V; this.grounded = false; this.coyote = 0; this.buffer = 0; this.jumps++;
+      this.vel.y = JUMP_V * this.jumpK; this.grounded = false; this.coyote = 0; this.buffer = 0; this.jumps++;
     }
 
     if (!this.grounded) this.vel.y -= GRAVITY * dt;
@@ -635,6 +656,40 @@ export class Unit {
     }
   }
 
+  // a paratrooper: free fall off the ramp, the canopy opens, a glide down to the landing spot, then a normal soldier (see paradrop.js)
+  updateDrop(dt, world) {
+    const d = this.drop, V = this.vel;
+    d.t += dt;
+    const gy = world.groundAt(this.pos.x, this.pos.z, this.pos.y + 1);
+    if (d.phase === 'fall') {
+      // the ramp's speed bleeds off in the slipstream while the fall builds toward terminal speed
+      const k = Math.exp(-dt / 0.9);
+      V.x *= k; V.z *= k; V.y = Math.max(-30, V.y - 16 * dt);
+      if (d.t > 2.6 || this.pos.y - gy < 46) { d.phase = 'chute'; d.open = 0; world.audio?.play('clank', this.pos, 0.35); }
+    } else {
+      d.open += dt;
+      // the opening shock takes most of the fall speed in under a second, then a steady sink
+      V.y += (-5.2 - V.y) * (1 - Math.exp(-dt * (d.open < 0.9 ? 3.2 : 5)));
+      const dx = d.goal.x - this.pos.x, dz = d.goal.z - this.pos.z, dist = Math.hypot(dx, dz);
+      const sp = dist > 0.8 ? Math.min(8.5, 1.2 + dist * 0.8) : 0;
+      const a = 1 - Math.exp(-dt * (d.open < 0.9 ? 0.8 : 1.8));
+      V.x += ((dist > 0.8 ? dx / dist * sp : 0) - V.x) * a; V.z += ((dist > 0.8 ? dz / dist * sp : 0) - V.z) * a;
+      if (Math.hypot(V.x, V.z) > 0.6) { const f = Math.atan2(V.x, V.z); this.facing = wrap(this.facing + wrap(f - this.facing) * (1 - Math.exp(-dt * 3))); this.aimYaw = this.facing; }
+    }
+    this.chuteK += ((d.phase === 'chute' ? 1 : 0) - this.chuteK) * (1 - Math.exp(-dt * (d.phase === 'chute' ? 5 : 8)));
+    this.pos.addScaledVector(V, dt);
+    this.pos.x = THREE.MathUtils.clamp(this.pos.x, -HALF + 0.6, HALF - 0.6); this.pos.z = THREE.MathUtils.clamp(this.pos.z, -HALF + 0.6, HALF - 0.6);
+    this.grounded = false;
+    const ground = world.groundAt(this.pos.x, this.pos.z, this.pos.y + 0.3);
+    if (this.pos.y <= ground) {
+      // down: a flare of the knees, the canopy lets go
+      this.pos.y = ground; V.set(0, 0, 0); this.grounded = true; this.landK = d.phase === 'chute' ? 0.55 : 1; this.landT = 0;
+      this.drop = null; this.chuteK = 0; this.ready = 0; this.coyote = 0;
+      world.fx?.dust?.(this.pos, 6, 0.7);
+    }
+    this.animate(dt);
+  }
+
   animate(dt) {
     this.springs(dt);
     const speed = Math.hypot(this.vel.x, this.vel.z);
@@ -669,7 +724,7 @@ export class Unit {
     const land = this.landK * (lt < 0.05 ? lt / 0.05 : 1 - THREE.MathUtils.smoothstep(lt, 0.05, 0.34));
     const s = this.poseState;
     s.t = this.t; s.walk = this.walk; s.cycle = this.cycle; s.stride = this.stride ?? 0.3; s.speed = this.gspeed || 0; s.free = this.freeK; s.down = this.down;
-    s.mx = this.mx; s.mz = this.mz; s.air = this.air; s.rise = THREE.MathUtils.clamp(this.vel.y / JUMP_V, -1, 1);
+    s.chute = this.chuteK; s.mx = this.mx; s.mz = this.mz; s.air = this.air; s.rise = THREE.MathUtils.clamp(this.vel.y / JUMP_V, -1, 1);
     s.land = land; s.kneel = Math.max(this.kneelK, this.alive ? kneelBump(this.proneK || 0) : 0); s.aimPitch = THREE.MathUtils.clamp(this.aimPitch, -0.9, 0.9);
     s.twist = this.twist; s.ready = Math.min(this.ready, 1 - this.wallK * 0.85); s.recoil = this.recoil;
     s.reload = this.reloadT > 0 ? 1 - this.reloadT / this.reloadDur : -1;

@@ -4,7 +4,7 @@ import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js
 import { U, HOLD, setWeaponBounds, solveLegs, solveArms, solveTorso } from './rig.js';
 import { GEAR, MARKS, KIND_IDS, kindKey } from './gear.js';
 import { markMaterial, woundMarkMaterial, partMatrix } from './hitmarks.js';
-import { torsoGeo, headGeo, helmetGeo, HELMET_KINDS, bootGeo, handGeos, packGeo, pelvisGeo, neckGeo, deltGeo, LIMB, HEAD_COLORS } from './anatomy.js';
+import { torsoGeo, headGeo, helmetGeo, HELMET_KINDS, bootGeo, handGeos, packGeo, pelvisGeo, neckGeo, deltGeo, LIMB, EXO_LIMB, HEAD_COLORS } from './anatomy.js';
 import { detail, instAttr } from './fabric.js';
 import { WEAPONS, weaponParts, weaponSlotMatrix } from './weapons.js';
 import { TEAMS } from './factions.js';
@@ -46,6 +46,7 @@ const BODY_COL = TEAMS.map((t) => new THREE.Color(t.body).multiplyScalar(1.45));
 const TRIM_COL = TEAMS.map((t) => new THREE.Color(t.trim));
 const PACK_COL = TEAMS.map((t) => new THREE.Color(t.body).multiplyScalar(0.62));
 const DARK = new THREE.Color('#1d2126');
+const _xm = new THREE.Matrix4();
 const _sp = new THREE.Vector3(), _sq = new THREE.Quaternion(), _ss = new THREE.Vector3(), _sz = new THREE.Vector3(), _sm = new THREE.Matrix4();
 const NECK_UP = new THREE.Matrix4().makeRotationX(-Math.PI / 2), NECK_T = new THREE.Matrix4().makeTranslation(0, 0, 0.012), NECK_S = new THREE.Vector3(0.034, 0.034, 0.034);
 
@@ -124,6 +125,10 @@ export class Crowd {
     this.foreArm = mks(LIMB.foreArm, cloth({ dirt: [0.08, 0.5, 0] }), cap * 2, true);
     this.thigh = mks(LIMB.thigh, cloth({ dirt: [0.08, 0.55, 0] }), cap * 2, true);
     this.shin = mks(LIMB.shin, cloth({ dirt: [0.18, 0.8, 0] }), cap * 2, true);
+    // exoskeleton frames on the legs of elite operators (drawn near and mid, never far)
+    const exoMat = detail(std({ color: '#ffffff', roughness: 0.5, metalness: 0.3, vertexColors: true }), { dirt: [0.06, 0.4, 0], wear: 0.3, bump: 0.3 });
+    this.exoThigh = mks(EXO_LIMB.thigh, exoMat, cap * 2, true); this.exoShin = mks(EXO_LIMB.shin, exoMat, cap * 2, true);
+    this.exoThigh.name = 'crowd-exo-thighs'; this.exoShin.name = 'crowd-exo-shins'; this.nx = 0;
     // class kit (instance colour = army accent), fixed-colour marks, and the legs
     const gearMat = detail(std({ color: '#ffffff', roughness: 0.65, metalness: 0.1, vertexColors: true }), { sway: true, dirt: [0.05, 0, 0.45], wear: 0.3, bump: 0.45 });
     const markMat = detail(std({ color: '#ffffff', roughness: 0.5, metalness: 0.05, vertexColors: true, emissive: '#ffffff', emissiveIntensity: 0.18 }), { sway: true, style: false, grain: 0, bump: 0 });
@@ -225,7 +230,7 @@ export class Crowd {
   }
 
   begin() {
-    this.n = this.nf = this.nh = this.nw = this.nl = this.na = this.nd = this.nm = this.nmw = this.ns = this.nwf = this.nwt = 0;
+    this.nx = this.n = this.nf = this.nh = this.nw = this.nl = this.na = this.nd = this.nm = this.nmw = this.ns = this.nwf = this.nwt = 0;
     for (const id in this.weapons) this.wn[id] = this.wnL[id] = 0;
     for (const k of KIND_IDS) this.gn[k] = this.mn[k] = 0;
     for (const k of HELMET_KINDS) this.hn[k] = 0;
@@ -303,7 +308,7 @@ export class Crowd {
       this.style(this.pack, i, sv);
       const lost = opts.lost || 0;
       if (!opts.far) {
-        const kk = kindKey(opts.kind), gm = L ? L.gear : this.gear[kk], gi = L ? L.gn++ : this.gn[kk]++;
+        const kk = kindKey(opts.kind), gm = L && kk !== 'exo' ? L.gear : this.gear[kk], gi = L && kk !== 'exo' ? L.gn++ : this.gn[kk]++;
         gm.setMatrixAt(gi, t.multiplyMatrices(world, p.body));
         const ac = UI_COL[team];
         gm.instanceColor.setXYZ(gi, ac.r, ac.g, ac.b);
@@ -311,6 +316,7 @@ export class Crowd {
         if (this.marks[kk]) { const mi = this.mn[kk]++; this.marks[kk].setMatrixAt(mi, t); this.swayTo(this.marks[kk], mi, sw); }
       }
       solveLegs(p);
+      const exo = opts.kind === 'exo';
       const tc = TROUSER[team];
       // pelvis and neck: the joints between the chest, the hips and the head
       const pm = L ? L.pelvis : this.pelvis, pi = L ? L.np++ : this.np++;
@@ -320,6 +326,13 @@ export class Crowd {
       if (!L) { if (!(hl & LOST.HEAD)) { this.neck.setMatrixAt(pi, t.multiplyMatrices(world, p.neck)); this.neck.instanceColor.setXYZ(pi, sk.r * 1.6, sk.g * 1.6, sk.b * 1.6); } else this.neck.setMatrixAt(pi, ZERO); }
       for (let k = 0; k < 2; k++) {
         if (lost & (LOST.LEG << k)) { this.addStump(world, p.legs[k][0], 0.056, tc, 0.03); continue; } // torn off at the hip: leg, shin and boot go together
+        if (exo && !opts.far && this.nx < this.cap * 2) { // the frame rides on the limb: thigh, and shin unless torn off at the knee
+          const j = this.nx++, ac = UI_COL[team];
+          this.exoThigh.setMatrixAt(j, _xm.multiplyMatrices(world, p.legs[k][0])); this.exoThigh.instanceColor.setXYZ(j, ac.r, ac.g, ac.b); this.style(this.exoThigh, j, sv);
+          if (lost & (LOST.SHIN << k)) this.exoShin.setMatrixAt(j, ZERO);
+          else { this.exoShin.setMatrixAt(j, _xm.multiplyMatrices(world, p.legs[k][1])); this.exoShin.instanceColor.setXYZ(j, ac.r, ac.g, ac.b); }
+          this.style(this.exoShin, j, sv);
+        }
         if (L) { // lite: both segments go into the one limb mesh, scaled to the segment's girth
           if (L.nlimb + 2 > this.cap * 8) continue;
           this.limb(L, t.multiplyMatrices(world, p.legs[k][0]), LIMB_R.thigh, tc, sv);
@@ -409,7 +422,7 @@ export class Crowd {
   // mesh's list then starts with those, and the shadow pass draws just that front part.
   snap() {
     const c = this.sh;
-    c.n = this.n; c.nf = this.nf; c.nh = this.nh; c.nl = this.nl; c.nd = this.nd; c.nm = this.nm; c.nmw = this.nmw; c.ns = this.ns; c.nwf = this.nwf; c.nwt = this.nwt;
+    c.nx = this.nx; c.n = this.n; c.nf = this.nf; c.nh = this.nh; c.nl = this.nl; c.nd = this.nd; c.nm = this.nm; c.nmw = this.nmw; c.ns = this.ns; c.nwf = this.nwf; c.nwt = this.nwt;
     for (const k in this.gn) c.gn[k] = this.gn[k];
     for (const k in this.mn) c.mn[k] = this.mn[k];
     for (const k in this.hn) c.hn[k] = this.hn[k];
@@ -440,6 +453,7 @@ export class Crowd {
     for (const g in this.hands) fin(this.hands[g], this.hn2[g], S(sh?.hn2[g], this.hn2[g]));
     fin(this.upperArm, this.nh, S(sh?.nh, this.nh)); fin(this.foreArm, this.nh, S(sh?.nh, this.nh));
     fin(this.thigh, this.nl, S(sh?.nl, this.nl)); fin(this.shin, this.nl, S(sh?.nl, this.nl));
+    fin(this.exoThigh, this.nx, S(sh?.nx, this.nx)); fin(this.exoShin, this.nx, S(sh?.nx, this.nx));
     const L = this.lite, ls = sh?.lite;
     for (const k of HELMET_KINDS) fin(L.helmets[k], L.hn[k], S(ls?.hn[k], L.hn[k]));
     fin(L.pelvis, L.np, S(ls?.np, L.np)); fin(L.boot, L.nf, S(ls?.nf, L.nf)); fin(L.delt, L.nh, S(ls?.nh, L.nh)); fin(L.limb, L.nlimb, S(ls?.nlimb, L.nlimb));

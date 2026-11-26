@@ -275,6 +275,35 @@ function limb(kind) {
 }
 export const LIMB = {};
 for (const k of ['thigh', 'shin', 'upperArm', 'foreArm']) LIMB[k] = limb(k);
+// ---- exoskeleton leg frames: armour shells and actuator hubs that ride on a thigh and a shin (same frame as the limbs).
+// Drawn only on exo operators, over the trouser leg: a front plate and two side plates wrapped on the limb, a hub at each joint on
+// both sides (where the actuators sit) with a glowing core, and a piston rod down each side between the hubs.
+const EXO_GLOW = [3.0, 1.3, 0.3];
+function hub(z, x, r = 0.03) {
+  const sx = Math.sign(x);
+  const l = [done(lathe([[0, 0], [r, 0], [r + 0.004, 0.003], [r + 0.004, 0.012], [r - 0.004, 0.016], [0, 0.017]], { n: 12, crease: 40 }), 0.5, { pos: [x - sx * 0.004, 0, z], rot: [0, 0, -sx * Math.PI / 2] })];
+  l.push(done(lathe([[0, 0], [r * 0.5, 0], [r * 0.5, 0.0025], [0, 0.0025]], { n: 10 }), EXO_GLOW, { pos: [x + sx * 0.0125, 0, z], rot: [0, 0, -sx * Math.PI / 2] }));
+  return l;
+}
+function exoLimb(kind) {
+  const l = [], th = kind === 'thigh', st = th ? TH : SH;
+  const a = th ? -0.06 : -0.04, b = th ? 0.052 : 0.076;
+  // front plate and the two side plates
+  l.push(wrapLimb(st, a, b, taper(a, b, 1.05, 0.7), { thick: 0.012, bevel: 0.006, shade: 0.72, rows: 5, cols: 10, bulge: 0.003, off: 0.012, crease: 80 }));
+  for (const sd of [-1, 1]) l.push(wrapLimb(st, a + 0.012, b - 0.01, () => (sd < 0 ? [-2.0, -1.2] : [1.2, 2.0]), { thick: 0.012, bevel: 0.006, shade: 0.4, rows: 5, cols: 6, bulge: 0.002, crease: 80 }));
+  if (!th) l.push(wrapLimb(st, -0.04, 0.05, () => [Math.PI - 0.8, Math.PI + 0.8], { thick: 0.012, bevel: 0.006, shade: 0.45, rows: 5, cols: 8, bulge: 0.004, crease: 80 })); // calf guard
+  // hubs: hip and knee on the thigh, knee and ankle on the shin; pistons run between them down the outside
+  const z0 = -0.095, z1 = th ? 0.095 : 0.092, rr = th ? 0.062 : 0.05;
+  for (const sx of [-1, 1]) {
+    const x = sx * (rr + 0.005);
+    l.push(...hub(z0, x, th ? 0.033 : 0.03), ...hub(z1, x, th ? 0.03 : 0.026));
+    l.push(done(rod([x, 0, z0 + 0.01], [x, 0, z1 - 0.01], 0.0075, 0.0075, { n: 6 }), 0.7));
+    l.push(done(rod([x, 0, z0 + 0.03], [x, 0, z0 + 0.12], 0.0105, 0.0105, { n: 8 }), 0.42)); // the cylinder body around the piston
+  }
+  return merge(l);
+}
+export const EXO_LIMB = { thigh: exoLimb('thigh'), shin: exoLimb('shin') };
+
 export const limbGeo = limb;
 
 // ---- boot: origin on the sole under the middle of the foot, toe toward +z, shaft up to the ankle.
