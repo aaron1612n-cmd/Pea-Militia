@@ -62,7 +62,7 @@ export const SLOTS = ['rifle', 'smg', 'mg', 'plasma', 'launcher', 'grenade'];
 // reload and the shot. weaponSlotMatrix writes the offset of one slot in hold units; `reload` is
 // the progress of the reload (-1 when not reloading), `rack` how far the charging handle is pulled
 // (an empty gun) and `recoil` the kick of the last shot.
-const MAG_DIR = { rifle: [0.0, -1, 0.12, 0.13], smg: [0.0, -1, 0.1, 0.17], mg: [0.1, -1, 0.0, 0.15], plasma: [0, -1, 0.1, 0.11] };
+export const MAG_DIR = { rifle: [0.0, -1, 0.12, 0.13], smg: [0.0, -1, 0.1, 0.17], mg: [0.1, -1, 0.0, 0.15], plasma: [0, -1, 0.1, 0.11] };
 const BOLT_BACK = { rifle: 0.075, smg: 0.055, mg: 0.05 };
 const smoothS = (a, b, x) => { const t = Math.min(1, Math.max(0, (x - a) / (b - a))); return t * t * (3 - 2 * t); };
 const _hid = new THREE.Matrix4().makeScale(0, 0, 0);
