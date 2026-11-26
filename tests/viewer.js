@@ -25,7 +25,7 @@ const ground = new THREE.Mesh(new THREE.CircleGeometry(4, 40), new THREE.MeshSta
 ground.rotation.x = -Math.PI / 2; ground.receiveShadow = true; scene.add(ground);
 const crowd = new Crowd(scene, 8);
 const camera = new THREE.PerspectiveCamera(30, 1, 0.05, 30);
-const WEAPON = { rifleman: 'rifle', assault: 'smg', gunner: 'mg', mortar: 'launcher', coil: 'plasma', medic: 'smg' };
+const WEAPON = { rifleman: 'rifle', assault: 'smg', gunner: 'mg', mortar: 'launcher', coil: 'plasma', medic: 'smg', exo: 'rifle' };
 const ANG = { front: 0, q3: Math.PI / 4, side: Math.PI / 2, back: Math.PI, q3b: -3 * Math.PI / 4, left: -Math.PI / 2 };
 // zoom targets: [centre y, camera distance]
 const ZOOM = { full: [0.62, 3.4], upper: [0.82, 1.6], head: [0.99, 0.75], legs: [0.3, 1.5], boots: [0.08, 0.8], torso: [0.72, 1.1], hands: [0.74, 1.3, -0.08, 0.38] };
@@ -47,7 +47,7 @@ window.shot = ({ kind = 'rifleman', team = 0, view = 'front', mode = 'idle', zoo
   if (s.walk > 0) { const sw = new Sway(); for (let i = 0; i < 90; i++) sw.update(1 / 60, 0, s.speed, 0, (phase + i * s.speed * 0.4 / 60 / (0.45 + 0.32 * s.speed)) % 1, 1, 0, p.sway); }
   const world = new THREE.Matrix4();
   crowd.begin();
-  crowd.add(world, p, team, { weapon: WEAPON[kind], seed: 2, kind, lite: !!s.lite, far: !!s.far });
+  crowd.add(world, p, team, { weapon: s.weapon, seed: 2, kind, lite: !!s.lite, far: !!s.far });
   crowd.end();
   const [cy, d, lx = 0, lz = 0] = ZOOM[zoom] || ZOOM.full;
   const a = ANG[view] ?? 0;

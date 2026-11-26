@@ -224,6 +224,39 @@ HELMET.coil = () => {
   return merge(l);
 };
 
+// ---- exo: sealed operator helmet, a narrow glowing visor band, cheek armour, a dorsal crest and sensor pods ----------------
+HELMET.exo = () => {
+  const st = [
+    { t: 0.01, rx: 0.06, rz: 0.066, cz: -0.004 }, { t: 0.04, rx: 0.088, rz: 0.098, cz: -0.006 }, { t: 0.08, rx: 0.1, rz: 0.11, cz: -0.008 }, { t: 0.12, rx: 0.102, rz: 0.114, cz: -0.008 },
+    { t: 0.158, rx: 0.09, rz: 0.1, cz: -0.008 }, { t: 0.186, rx: 0.062, rz: 0.07, cz: -0.008 }, { t: 0.202, rx: 0.028, rz: 0.034, cz: -0.008 }, { t: 0.2045, rx: 0.003, rz: 0.003, cz: -0.008 },
+  ];
+  const E = envelope(st), l = [];
+  l.push(done(loftY(st, { n: 24, p: 2.1, sub: 3 }, { crease: 58, cap0: false }), SHELL_COL));
+  // gorget: two ribbed seal rings at the neck
+  for (const [y, r] of [[0.008, 0.054], [0.021, 0.06]]) l.push(done(loftY([{ t: y - 0.006, rx: r - 0.006, rz: r - 0.004 }, { t: y, rx: r + 0.004, rz: r + 0.006 }, { t: y + 0.006, rx: r - 0.006, rz: r - 0.004 }], { n: 14 }, { crease: 40, cap0: false, cap1: false }), 0.3));
+  // the visor: a wide, shallow band of glowing glass in a dark frame
+  const VE = (y) => { const e = E(y); return { rx: e.rx, rz: e.rz, cz: e.cz }; };
+  l.push(done(onShell(VE, { y0: 0.05, y1: 0.118, range: (y) => { const w = 1.15 * Math.sqrt(Math.max(0, 1 - ((y - 0.084) / 0.036) ** 2 * 0.8)); return [-w, w]; }, off: 0.006, thick: 0.014, bevel: 0.006, bulge: 0.008, cols: 16, rows: 6, k: 1.0 }), 0.16));
+  l.push(done(onShell(VE, { y0: 0.062, y1: 0.106, range: (y) => { const w = 1.0 * Math.sqrt(Math.max(0, 1 - ((y - 0.084) / 0.03) ** 2)); return [-w, w]; }, off: 0.016, thick: 0.004, bevel: 0.002, bulge: 0.003, cols: 16, rows: 5 }), [2.6, 1.25, 0.3]));
+  // brow and chin armour
+  l.push(done(onShell(VE, { y0: 0.118, y1: 0.152, range: () => [-1.05, 1.05], off: 0.01, thick: 0.014, bevel: 0.006, bulge: 0.01, cols: 14, rows: 3 }), 0.62));
+  l.push(done(onShell(VE, { y0: 0.014, y1: 0.05, range: (y) => { const w = 0.95 - 0.35 * (0.05 - y) / 0.036; return [-w, w]; }, off: 0.008, thick: 0.014, bevel: 0.006, bulge: 0.008, cols: 12, rows: 3 }), 0.56));
+  // cheek pods: a vented armour cap over each ear with a sensor lens
+  for (const s of [-1, 1]) {
+    l.push(done(lathe([[0.0, 0], [0.026, 0], [0.03, 0.006], [0.03, 0.022], [0.02, 0.032], [0.0, 0.034]], { n: 12 }), 0.48, { pos: [s * 0.094, 0.088, -0.006], rot: [0, 0, -s * Math.PI / 2] }));
+    l.push(done(lathe([[0.0, 0], [0.012, 0], [0.012, 0.006], [0.0, 0.006]], { n: 8 }), [2.6, 1.25, 0.3], { pos: [s * 0.126, 0.088, -0.006], rot: [0, 0, -s * Math.PI / 2] }));
+  }
+  // dorsal crest: a low ridge from brow to nape and a short antenna on the right
+  l.push(done(onShell(E, { y0: 0.12, y1: 0.19, range: () => [-0.2, 0.2], off: 0.004, thick: 0.014, bevel: 0.006, bulge: 0.012, cols: 4, rows: 8 }), 0.4));
+  l.push(done(onShell(E, { y0: 0.14, y1: 0.19, range: () => [Math.PI - 0.2, Math.PI + 0.2], off: 0.004, thick: 0.014, bevel: 0.006, bulge: 0.01, cols: 4, rows: 6 }), 0.4));
+  l.push(done(lathe([[0.0, 0], [0.016, 0], [0.016, 0.012], [0.01, 0.017], [0.0, 0.017]], { n: 8 }), 0.55, { pos: [-0.05, 0.178, -0.026] }));
+  l.push(done(rod([-0.05, 0.188, -0.026], [-0.058, 0.27, -0.04], 0.0045, 0.0022, { n: 5 }), 0.35));
+  l.push(done(lathe([[0.0, -0.005], [0.006, 0.0], [0.0, 0.005]], { n: 6 }), [2.6, 1.25, 0.3], { pos: [-0.058, 0.272, -0.04] }));
+  // back plate with a vent
+  l.push(done(onShell(E, { y0: 0.05, y1: 0.12, range: () => [Math.PI - 0.55, Math.PI + 0.55], off: 0.003, thick: 0.016, bevel: 0.007, bulge: 0.005, cols: 8, rows: 4 }), 0.5));
+  return merge(l);
+};
+
 // ---- medic: white helmet with crosses, clear goggles and a twin-canister respirator ------------------------
 HELMET.medic = () => {
   const st = [
