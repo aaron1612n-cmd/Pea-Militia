@@ -259,6 +259,16 @@ for (const [kind, loadout] of [['assault', ['smg', 'grenade']], ['gunner', ['mg'
   check('hauling a casualty: no pops, soles on the ground', S3.pop < 14 * DT && S3.below > -0.004, `pop ${fmt(S3.pop)} below ${(S3.below * 1000).toFixed(1)}mm`);
 }
 
+// ---- movement pace: a backpedal and a sidestep are slower than walking forward, and cannot sprint
+{
+  const pace = (c) => { const u = mk(), w = flat(); let sp = 0; run(u, w, [[0.2, {}], [3, c]], () => { sp = Math.hypot(u.vel.x, u.vel.z); }); return { sp, sprinting: u.sprinting }; };
+  const fwd = pace({ wx: 0, wz: 1, faceYaw: 0 }), back = pace({ wx: 0, wz: -1, faceYaw: 0, sprint: true }), side = pace({ wx: 1, wz: 0, faceYaw: 0 }), diag = pace({ wx: 0.707, wz: -0.707, faceYaw: 0 });
+  check('backpedal is about half of walking forward', back.sp / fwd.sp > 0.5 && back.sp / fwd.sp < 0.62, `${back.sp.toFixed(2)} vs ${fwd.sp.toFixed(2)} m/s`);
+  check('a sidestep is about three quarters of walking forward', side.sp / fwd.sp > 0.72 && side.sp / fwd.sp < 0.84, `${side.sp.toFixed(2)} vs ${fwd.sp.toFixed(2)} m/s`);
+  check('a backward diagonal is slower than a sidestep', diag.sp < side.sp && diag.sp > back.sp * 0.95, `${diag.sp.toFixed(2)} m/s`);
+  check('sprint is for moving forward only', !back.sprinting);
+}
+
 const failed = results.filter((r) => !r.ok);
 console.log(`\n${results.length - failed.length}/${results.length} animation checks passed`);
 process.exit(failed.length ? 1 : 0);

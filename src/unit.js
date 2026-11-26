@@ -15,6 +15,7 @@ export const SPRINT = 1.9; // a real sprint: with the stride in gait.js this rea
 const GRAVITY = 17;
 const lerp = THREE.MathUtils.lerp;
 const JUMP_V = 4.8;
+const BACK_K = 0.55, SIDE_K = 0.78; // backpedal and sidestep speed against walking forward
 // The fastest any soldier can run on their own: walk pace times the sprint multiplier. One source
 // of truth; weapon, stance and suppression modifiers only ever slow a soldier from here.
 export const MAX_SPEED = WALK * SPRINT * 1.75; // fastest class (assault) mid-dash
@@ -423,7 +424,19 @@ export class Unit {
     const def = this.weapon.def;
     // stamina: sprinting drains it; once spent you jog until it's a third back
     if (this.stamina === undefined) { this.stamina = 1; this.winded = false; }
-    let sprint = c.sprint && !c.fire && !this.busy && Math.hypot(c.wx, c.wz) > 0.3 && !this.winded && this.leg < 0.5 && !this.down && this.bandageT <= 0;
+    // Moving across or against the way the body faces is slow: a backpedal is about half a walk and a sidestep about three quarters.
+    // (A soldier walking where they look turns to face it, so only aimed or fixed-facing movement is limited.)
+    let dirK = 1, fwdK = 1;
+    {
+      const wl = Math.hypot(c.wx, c.wz);
+      if (wl > 0.05 && (aiming || c.faceYaw !== undefined)) {
+        const fy = c.faceYaw ?? this.facing;
+        fwdK = (c.wx * Math.sin(fy) + c.wz * Math.cos(fy)) / wl;
+        const sd = (c.wx * Math.cos(fy) - c.wz * Math.sin(fy)) / wl, fp = Math.max(fwdK, 0), fn = Math.max(-fwdK, 0);
+        dirK = 1 / Math.sqrt(fp * fp + (fn / BACK_K) ** 2 + (sd / SIDE_K) ** 2);
+      }
+    }
+    let sprint = c.sprint && fwdK > 0.5 && !c.fire && !this.busy && Math.hypot(c.wx, c.wz) > 0.3 && !this.winded && this.leg < 0.5 && !this.down && this.bandageT <= 0;
     if (sprint) { if (!this.mod.noTire) this.stamina -= dt / 7; this.restT = 0.9; if (this.stamina <= 0) { this.stamina = 0; this.winded = true; sprint = false; } }
     else { this.restT = Math.max(0, (this.restT || 0) - dt); if (this.restT <= 0) this.stamina = Math.min(1, this.stamina + dt / 5); }
     if (this.winded && this.stamina > 0.35) this.winded = false;
@@ -437,7 +450,7 @@ export class Unit {
     this.leanK = (this.leanK || 0) + (lean - (this.leanK || 0)) * (1 - Math.exp(-10 * dt));
     const kneel = (c.kneel || rising || this.dying || this.bandageT > 0 || this.tendT > 0) && !sprint && !prone ? 1 : 0;
     this.kneelK += (kneel - this.kneelK) * (1 - Math.exp(-9 * dt));
-    const speed = WALK * this.speedK * this.mod.speed * (c.speed ?? 1) * (def.move || 1) * (sprint ? SPRINT : 1) * (1 - 0.6 * this.kneelK) * (1 - 0.72 * this.proneK) * (1 - 0.5 * Math.abs(this.leanK)) * (1 - 0.25 * this.suppression) * (1 - 0.28 * this.ads) * (this.reloadT > 0 ? 0.82 : 1) * (1 - 0.12 * this.recoilBuild) * (1 - 0.55 * this.leg) * (this.down ? 0.28 : 1) * (this.stagger > 0 ? 0.45 : 1) * (this.dying ? 0.55 : 1) * (this.shock > 0 && !this.isPlayer ? 0.2 : 1) * (this.bandageT > 0 ? 0.2 : 1);
+    const speed = dirK * WALK * this.speedK * this.mod.speed * (c.speed ?? 1) * (def.move || 1) * (sprint ? SPRINT : 1) * (1 - 0.6 * this.kneelK) * (1 - 0.72 * this.proneK) * (1 - 0.5 * Math.abs(this.leanK)) * (1 - 0.25 * this.suppression) * (1 - 0.28 * this.ads) * (this.reloadT > 0 ? 0.82 : 1) * (1 - 0.12 * this.recoilBuild) * (1 - 0.55 * this.leg) * (this.down ? 0.28 : 1) * (this.stagger > 0 ? 0.45 : 1) * (this.dying ? 0.55 : 1) * (this.shock > 0 && !this.isPlayer ? 0.2 : 1) * (this.bandageT > 0 ? 0.2 : 1);
     this.sprinting = sprint;
     this.move(dt, c.wx, c.wz, c.jump && this.proneK < 0.3 && this.leg < 0.5 && !this.down, speed, world, aiming || c.faceYaw !== undefined);
     c.jump = false;
